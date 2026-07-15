@@ -14,6 +14,10 @@ export default async function Home({ searchParams }: { searchParams: Promise<Sea
     const token = firstValue(params.verifyEmailToken);
     return <RootAuthFlow key={`verify:${token}`} kind="verify" token={token} />;
   }
+  if (Object.prototype.hasOwnProperty.call(params, 'changeEmailToken')) {
+    const token = firstValue(params.changeEmailToken);
+    return <RootAuthFlow key={`change-email:${token}`} kind="change-email" token={token} />;
+  }
   if (Object.prototype.hasOwnProperty.call(params, 'resetPasswordToken')) {
     const token = firstValue(params.resetPasswordToken);
     return <RootAuthFlow key={`reset:${token}`} kind="reset" token={token} />;

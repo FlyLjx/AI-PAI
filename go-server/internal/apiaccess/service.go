@@ -163,6 +163,10 @@ func (s Service) ListLogs(ctx context.Context, input ListLogsInput) ([]PublicUsa
 	return result, total, nil
 }
 
+func (s Service) ListLogStats(ctx context.Context, input ListLogsInput) (UsageStats, error) {
+	return s.keys.LogStats(ctx, input)
+}
+
 func publicKeys(keys []AccessKey) []PublicAccessKey {
 	result := make([]PublicAccessKey, 0, len(keys))
 	for _, key := range keys {

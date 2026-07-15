@@ -4,40 +4,44 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   CheckCircle2,
+  Clock3,
+  Gauge,
   ImageIcon,
+  LoaderCircle,
   RefreshCw,
   RotateCcw,
   Search,
-  ServerCog,
   XCircle,
+  type LucideIcon,
 } from 'lucide-react';
 import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
-import { APIError, getSession, portalApi, type UsageLog } from '@/lib/portal-api';
+import { APIError, getSession, portalApi, type UsageLog, type UsageSummary } from '@/lib/portal-api';
 import { formatDate } from '@/lib/common/utils';
 
 function errorMessage(error: unknown): string {
   return error instanceof APIError || error instanceof Error ? error.message : '调用记录加载失败';
 }
 
-function statusMeta(status: string): { label: string; className: string } {
+function statusMeta(status: string): { label: string; className: string; icon: LucideIcon } {
   switch (status.toLowerCase()) {
     case 'success':
     case 'succeeded':
-      return { label: '成功', className: 'success' };
+      return { label: '成功', className: 'success', icon: CheckCircle2 };
     case 'failed':
-      return { label: '失败', className: 'failed' };
+      return { label: '失败', className: 'failed', icon: XCircle };
     case 'processing':
-      return { label: '处理中', className: 'processing' };
+      return { label: '处理中', className: 'processing', icon: LoaderCircle };
     default:
-      return { label: '排队中', className: 'queued' };
+      return { label: '排队中', className: 'queued', icon: Clock3 };
   }
 }
 
 export default function UsagePage() {
   const [logs, setLogs] = useState<UsageLog[]>([]);
+  const [summary, setSummary] = useState<UsageSummary>({ total: 0, success: 0, failed: 0, imageCount: 0 });
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -58,8 +62,16 @@ export default function UsagePage() {
     setError('');
     try {
       const response = await portalApi.usage(current, page, pageSize, keyword, status);
-      setLogs(response.data || []);
-      setTotal(response.pagination?.total || 0);
+      const items = response.data || [];
+      const responseTotal = response.pagination?.total || 0;
+      setLogs(items);
+      setTotal(responseTotal);
+      setSummary(response.summary || {
+        total: responseTotal,
+        success: items.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase())).length,
+        failed: items.filter((log) => log.status.toLowerCase() === 'failed').length,
+        imageCount: items.reduce((sum, log) => sum + Number(log.imageCount || 0), 0),
+      });
     } catch (loadError) {
       setError(errorMessage(loadError));
     } finally {
@@ -72,13 +84,8 @@ export default function UsagePage() {
     return () => window.clearTimeout(timer);
   }, [loadUsage]);
 
-  const pageMetrics = useMemo(() => {
-    const successes = logs.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase())).length;
-    const failures = logs.filter((log) => log.status.toLowerCase() === 'failed').length;
-    const images = logs.reduce((sum, log) => sum + Number(log.imageCount || 0), 0);
-    const models = new Set(logs.map((log) => log.model).filter(Boolean)).size;
-    return { successes, failures, images, models };
-  }, [logs]);
+  const successRate = useMemo(() => summary.total > 0 ? `${((summary.success / summary.total) * 100).toFixed(1)}%` : '0.0%', [summary.success, summary.total]);
+  const pending = Math.max(0, summary.total - summary.success - summary.failed);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -114,10 +121,10 @@ export default function UsagePage() {
       </PageHeader>
 
       <section className="metric-grid">
-        <StatBlock title="累计请求" value={total.toLocaleString()} subtext="当前筛选结果" icon={Activity} color="green" />
-        <StatBlock title="本页成功" value={pageMetrics.successes} subtext={`${pageMetrics.failures} 次失败`} icon={CheckCircle2} color="cyan" />
-        <StatBlock title="本页输出" value={pageMetrics.images} subtext="成功返回的图片" icon={ImageIcon} color="amber" />
-        <StatBlock title="涉及模型" value={pageMetrics.models} subtext={`第 ${page} / ${totalPages} 页`} icon={ServerCog} color="neutral" />
+        <StatBlock title="请求总数" value={summary.total.toLocaleString()} subtext="当前筛选范围" icon={Activity} color="green" />
+        <StatBlock title="成功请求" value={summary.success.toLocaleString()} subtext={`${summary.failed.toLocaleString()} 次失败`} icon={CheckCircle2} color="cyan" />
+        <StatBlock title="成功率" value={successRate} subtext={pending > 0 ? `${pending.toLocaleString()} 个尚未完成` : '成功请求 / 全部请求'} icon={Gauge} color="amber" />
+        <StatBlock title="输出图片" value={summary.imageCount.toLocaleString()} subtext={`第 ${page} / ${totalPages} 页`} icon={ImageIcon} color="neutral" />
       </section>
 
       <form className="section-panel section-body" onSubmit={applyFilters}>
@@ -173,9 +180,10 @@ export default function UsagePage() {
           onPageChange={setPage}
           renderRow={(log) => {
             const meta = statusMeta(log.status);
+            const StatusIcon = meta.icon;
             return (
               <tr key={log.id}>
-                <td className="px-4 py-3"><span className={`status-pill ${meta.className}`}>{meta.label}</span></td>
+                <td className="px-4 py-3"><span className={`status-pill gap-1 ${meta.className}`}><StatusIcon size={11} className={meta.className === 'processing' ? 'animate-spin' : ''} />{meta.label}</span></td>
                 <td className="px-4 py-3 mono truncate-cell" title={log.endpoint}>{log.endpoint || '-'}</td>
                 <td className="px-4 py-3">
                   <strong className="block max-w-[150px] truncate text-[11px]">{log.keyName || '已删除 Key'}</strong>
@@ -190,6 +198,7 @@ export default function UsagePage() {
           }}
           renderMobileItem={(log) => {
             const meta = statusMeta(log.status);
+            const StatusIcon = meta.icon;
             return (
               <article key={log.id} className="section-panel p-4">
                 <div className="flex items-start justify-between gap-3">
@@ -197,7 +206,7 @@ export default function UsagePage() {
                     <strong className="block truncate text-xs">{log.model || '未知模型'}</strong>
                     <code className="mt-1 block truncate text-[9px] text-zinc-500">{log.endpoint || '-'}</code>
                   </div>
-                  <span className={`status-pill ${meta.className}`}>{meta.label}</span>
+                  <span className={`status-pill gap-1 ${meta.className}`}><StatusIcon size={11} className={meta.className === 'processing' ? 'animate-spin' : ''} />{meta.label}</span>
                 </div>
                 <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[#edf0ee] pt-3 text-[10px]">
                   <div><dt className="text-zinc-400">API Key</dt><dd className="mt-0.5 truncate">{log.keyName || log.keyPrefix || '-'}</dd></div>

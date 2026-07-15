@@ -5,10 +5,11 @@ type Rule = { pattern: RegExp; methods: string[] };
 
 const CUSTOMER_ROUTES: Rule[] = [
   { pattern: /^\/api\/settings\/public$/, methods: ['GET'] },
-  { pattern: /^\/api\/users\/(login|register|verify-email)$/, methods: ['POST'] },
+  { pattern: /^\/api\/users\/(login|register|verify-email|verify-email-change)$/, methods: ['POST'] },
   { pattern: /^\/api\/users\/password\/(forgot|reset)$/, methods: ['POST'] },
   { pattern: /^\/api\/users\/[^/]+\/profile$/, methods: ['GET'] },
   { pattern: /^\/api\/users\/[^/]+\/password$/, methods: ['PATCH'] },
+  { pattern: /^\/api\/users\/[^/]+\/email$/, methods: ['POST'] },
   { pattern: /^\/api\/api-access\/keys$/, methods: ['GET', 'POST'] },
   { pattern: /^\/api\/api-access\/keys\/[^/]+$/, methods: ['PATCH', 'DELETE'] },
   { pattern: /^\/api\/api-access\/logs$/, methods: ['GET'] },
@@ -28,15 +29,19 @@ function exposesAuthActionURLs(): boolean {
   return configured === 'true' || (configured === undefined && process.env.NODE_ENV !== 'production');
 }
 
+function isAuthActionPath(path: string): boolean {
+  return ['/api/users/register', '/api/users/password/forgot'].includes(path) || /^\/api\/users\/[^/]+\/email$/.test(path);
+}
+
 async function sanitizeAuthResponse(response: Response, path: string): Promise<Response> {
-  if (exposesAuthActionURLs() || !response.ok || !['/api/users/register', '/api/users/password/forgot'].includes(path)) {
+  if (exposesAuthActionURLs() || !response.ok || !isAuthActionPath(path)) {
     return response;
   }
   const payload = await response.clone().json().catch(() => null) as { data?: Record<string, unknown> } | null;
   if (!payload?.data) return response;
 
   delete payload.data.resetUrl;
-  if (payload.data.sent) delete payload.data.verificationUrl;
+  delete payload.data.verificationUrl;
   if (path === '/api/users/password/forgot') {
     payload.data.message = '若该邮箱已注册，密码重置说明将发送到对应邮箱。';
   }

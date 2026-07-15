@@ -51,19 +51,30 @@ func (r *Router) userAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	items, total, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).ListLogs(ctx, apiaccess.ListLogsInput{
+	input := apiaccess.ListLogsInput{
 		UserID:   userID,
 		APIKeyID: req.URL.Query().Get("apiKeyId"),
 		Status:   req.URL.Query().Get("status"),
 		Keyword:  req.URL.Query().Get("keyword"),
 		Page:     queryInt(req, "page", 1),
 		PageSize: queryInt(req, "pageSize", 10),
-	})
+	}
+	service := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db))
+	items, total, err := service.ListLogs(ctx, input)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": items, "pagination": map[string]any{"total": total, "page": queryInt(req, "page", 1), "pageSize": queryInt(req, "pageSize", 10)}})
+	stats, err := service.ListLogStats(ctx, input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":       items,
+		"pagination": map[string]any{"total": total, "page": input.Page, "pageSize": input.PageSize},
+		"summary":    stats,
+	})
 }
 
 func (r *Router) listUserAPIAccessKeys(w http.ResponseWriter, req *http.Request) {

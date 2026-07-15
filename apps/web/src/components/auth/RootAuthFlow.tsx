@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
-import { BadgeCheck, CircleAlert, KeyRound, MailCheck } from 'lucide-react';
-import { resetPassword, verifyEmail } from '@/lib/portal-api';
+import { BadgeCheck, CircleAlert, KeyRound, MailCheck, MailPlus } from 'lucide-react';
+import { getSession, resetPassword, saveSession, verifyEmail, verifyEmailChange } from '@/lib/portal-api';
 
 function AuthResultShell({ children }: { children: React.ReactNode }) {
   return (
@@ -139,6 +139,66 @@ function ResetPasswordPanel({ token }: { token: string }) {
   );
 }
 
-export function RootAuthFlow({ kind, token }: { kind: 'verify' | 'reset'; token: string }) {
-  return kind === 'verify' ? <VerifyEmailPanel token={token} /> : <ResetPasswordPanel token={token} />;
+function ChangeEmailPanel({ token }: { token: string }) {
+  const attemptedToken = useRef<string | null>(null);
+  const [state, setState] = useState<{
+    status: 'loading' | 'success' | 'error';
+    message?: string;
+    sessionUpdated?: boolean;
+  }>(token ? { status: 'loading' } : { status: 'error', message: '验证链接缺少令牌，请检查链接是否完整。' });
+
+  useEffect(() => {
+    if (!token || attemptedToken.current === token) return;
+    attemptedToken.current = token;
+    verifyEmailChange(token)
+      .then((account) => {
+        const current = getSession();
+        const sessionUpdated = current?.id === account.id;
+        if (current && sessionUpdated) {
+          saveSession({
+            ...current,
+            ...account,
+            token: current.token,
+            credits: Number(account.credits ?? current.credits ?? 0),
+          });
+        }
+        setState({ status: 'success', message: `登录邮箱已修改为 ${account.email}。`, sessionUpdated });
+      })
+      .catch((error) => setState({ status: 'error', message: error instanceof Error ? error.message : '邮箱修改失败' }));
+  }, [token]);
+
+  return (
+    <AuthResultShell>
+      {state.status === 'loading' ? (
+        <div className="grid justify-items-center py-12 text-center" aria-live="polite">
+          <div className="loading-ring" />
+          <MailPlus className="mt-6 text-[#0f7a4b]" size={25} />
+          <h1 className="mt-3 text-xl font-bold">正在确认新邮箱</h1>
+          <p className="mt-2 text-xs text-[#6b756f]">确认完成前，原登录邮箱保持不变。</p>
+        </div>
+      ) : state.status === 'success' ? (
+        <div className="pt-8 text-center" aria-live="polite">
+          <BadgeCheck className="mx-auto text-[#0f7a4b]" size={36} />
+          <h1 className="mt-4 text-xl font-bold">邮箱修改成功</h1>
+          <p className="mt-2 break-all text-xs leading-6 text-[#66736c]">{state.message}</p>
+          <Link className="btn primary mt-6 w-full" href={state.sessionUpdated ? '/dashboard' : '/login'}>
+            {state.sessionUpdated ? '进入控制台' : '使用新邮箱登录'}
+          </Link>
+        </div>
+      ) : (
+        <div className="pt-8 text-center" aria-live="assertive">
+          <CircleAlert className="mx-auto text-[#b42318]" size={34} />
+          <h1 className="mt-4 text-xl font-bold">邮箱修改未完成</h1>
+          <p className="mt-2 break-all text-xs leading-6 text-[#66736c]">{state.message}</p>
+          <Link className="btn mt-6 w-full" href="/settings">返回账户设置</Link>
+        </div>
+      )}
+    </AuthResultShell>
+  );
+}
+
+export function RootAuthFlow({ kind, token }: { kind: 'verify' | 'reset' | 'change-email'; token: string }) {
+  if (kind === 'verify') return <VerifyEmailPanel token={token} />;
+  if (kind === 'change-email') return <ChangeEmailPanel token={token} />;
+  return <ResetPasswordPanel token={token} />;
 }

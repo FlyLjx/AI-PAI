@@ -49,6 +49,13 @@ export type PasswordResetRequest = {
   message?: string;
 };
 
+export type EmailChangeRequest = {
+  sent: boolean;
+  email: string;
+  verificationUrl?: string;
+  message?: string;
+};
+
 export type APIKey = {
   id: string;
   userId: string;
@@ -85,6 +92,13 @@ export type UsageLog = {
   finishedAt?: string;
 };
 
+export type UsageSummary = {
+  total: number;
+  success: number;
+  failed: number;
+  imageCount: number;
+};
+
 export type Plan = {
   id: string;
   name: string;
@@ -98,7 +112,11 @@ export type Plan = {
   status: string;
 };
 
-type Envelope<T> = { data: T; pagination?: { total: number; page: number; pageSize: number } };
+type Envelope<T> = {
+  data: T;
+  pagination?: { total: number; page: number; pageSize: number };
+  summary?: UsageSummary;
+};
 
 export class APIError extends Error {
   constructor(message: string, public status: number) {
@@ -191,6 +209,13 @@ export async function resetPassword(token: string, password: string): Promise<Ve
   return data;
 }
 
+export async function verifyEmailChange(token: string): Promise<VerifiedAccount> {
+  const { data } = await api<VerifiedAccount>('/api/users/verify-email-change', {
+    method: 'POST', body: JSON.stringify({ token }),
+  });
+  return data;
+}
+
 export async function refreshSession(user = getSession()): Promise<PortalUser> {
   if (!user) throw new APIError('请先登录', 401);
   const { data } = await api<PortalUser>(`/api/users/${encodeURIComponent(user.id)}/profile`, {}, user.token);
@@ -213,5 +238,6 @@ export const portalApi = {
   recharge: (user: PortalUser, input: { amount?: number; subscriptionPlanId?: string }) => api<Record<string, unknown>>('/api/recharge', { method: 'POST', body: JSON.stringify({ userId: user.id, ...input }) }, user.token),
   rechargeOrder: (user: PortalUser, id: string) => api<Record<string, unknown>>(`/api/recharge/${encodeURIComponent(id)}${query({ userId: user.id })}`, {}, user.token),
   syncRecharge: (user: PortalUser, id: string) => api<Record<string, unknown>>(`/api/recharge/${encodeURIComponent(id)}/sync`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }, user.token),
+  requestEmailChange: (user: PortalUser, password: string, email: string) => api<EmailChangeRequest>(`/api/users/${encodeURIComponent(user.id)}/email`, { method: 'POST', body: JSON.stringify({ userId: user.id, password, email }) }, user.token),
   changePassword: (user: PortalUser, oldPassword: string, password: string) => api(`/api/users/${encodeURIComponent(user.id)}/password`, { method: 'PATCH', body: JSON.stringify({ userId: user.id, oldPassword, password }) }, user.token),
 };

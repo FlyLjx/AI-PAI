@@ -104,6 +104,10 @@ func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 		r.changeUserPassword(w, req, strings.TrimSuffix(path, "/password"))
 		return
 	}
+	if strings.HasSuffix(path, "/email") {
+		r.changeUserEmail(w, req, strings.TrimSuffix(path, "/email"))
+		return
+	}
 	if strings.HasSuffix(path, "/status") {
 		r.updateUserStatus(w, req, strings.TrimSuffix(path, "/status"))
 		return

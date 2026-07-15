@@ -363,6 +363,22 @@ func (r *Repository) ListLogs(ctx context.Context, input ListLogsInput) ([]Usage
 	return items, total, rows.Err()
 }
 
+func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageStats, error) {
+	where, args := buildLogWhere(input)
+	var stats UsageStats
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
+			COALESCE(SUM(CASE WHEN api_access_logs.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
+			COALESCE(SUM(api_access_logs.image_count), 0) AS image_count
+		FROM api_access_logs
+		LEFT JOIN users ON users.id = api_access_logs.user_id
+		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+		`+where, args...).Scan(&stats.Total, &stats.Success, &stats.Failed, &stats.ImageCount)
+	return stats, err
+}
+
 func usageLogSelect() string {
 	return `
 		SELECT

@@ -58,6 +58,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/users/register", r.registerUser)
 	r.mux.HandleFunc("/api/users/login", r.userLogin)
 	r.mux.HandleFunc("/api/users/verify-email", r.verifyEmail)
+	r.mux.HandleFunc("/api/users/verify-email-change", r.verifyEmailChange)
 	r.mux.HandleFunc("/api/users/password/forgot", r.forgotPassword)
 	r.mux.HandleFunc("/api/users/password/reset", r.resetPassword)
 	r.mux.HandleFunc("/api/users", r.listUsers)
