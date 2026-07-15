@@ -61,11 +61,21 @@ services:
       GO_BACKEND_URL: http://api:3001
       APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN:-http://127.0.0.1:6985}
       AUTH_ACTION_URLS_IN_RESPONSE: ${AUTH_ACTION_URLS_IN_RESPONSE:-false}
+      ADMIN_INTERNAL_URL: http://admin:3002
       PORT: 3000
     depends_on:
-      - api
+      api:
+        condition: service_started
+      admin:
+        condition: service_healthy
     ports:
       - "${APP_PUBLIC_PORT:-6985}:3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
   admin:
     build:
@@ -77,12 +87,18 @@ services:
     environment:
       GO_BACKEND_URL: http://api:3001
       ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
-      ADMIN_PUBLIC_ORIGIN: ${ADMIN_PUBLIC_ORIGIN:-http://127.0.0.1:6986}
+      APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN:-http://127.0.0.1:6985}
       PORT: 3002
     depends_on:
       - api
-    ports:
-      - "${ADMIN_PUBLIC_PORT:-6986}:3002"
+    expose:
+      - "3002"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3002/sys-admins/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
 
 volumes:
   postgres_data:

@@ -11,7 +11,11 @@ import {
 export async function GET(request: Request) {
   const store = await cookies();
   const token = store.get(ADMIN_TOKEN_COOKIE)?.value;
-  if (!token) return NextResponse.json({ message: '请先登录后台' }, { status: 401 });
+  if (!token) {
+    const response = NextResponse.json({ message: '请先登录后台' }, { status: 401 });
+    clearAdminCookies(response);
+    return response;
+  }
 
   let upstream: Response;
   try {

@@ -4,6 +4,7 @@ import {
   ADMIN_ID_COOKIE,
   ADMIN_TOKEN_COOKIE,
   adminCookieOptions,
+  clearLegacyAdminCookies,
   isSameOriginRequest,
   requestGo,
 } from '@/lib/admin-proxy';
@@ -42,5 +43,6 @@ export async function POST(request: Request) {
   response.cookies.set(ADMIN_TOKEN_COOKIE, token, adminCookieOptions);
   response.cookies.set(ADMIN_ID_COOKIE, user.id, adminCookieOptions);
   response.cookies.set(ADMIN_EMAIL_COOKIE, user.email, adminCookieOptions);
+  clearLegacyAdminCookies(response);
   return response;
 }

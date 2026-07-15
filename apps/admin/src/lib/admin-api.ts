@@ -1,6 +1,8 @@
 'use client';
 
-const API_BASE = '/api/backend';
+import { ADMIN_BASE_PATH } from '../../admin-path';
+
+const API_BASE = `${ADMIN_BASE_PATH}/api/backend`;
 
 export type Subscription = {
   id?: string;
@@ -125,11 +127,11 @@ function api<T>(path: string, options: RequestInit = {}) {
 }
 
 export const adminAuth = {
-  login: (email: string, password: string) => request<AdminIdentity>('/api/auth/login', {
+  login: (email: string, password: string) => request<AdminIdentity>(`${ADMIN_BASE_PATH}/api/auth/login`, {
     method: 'POST', body: JSON.stringify({ email, password }),
   }),
-  session: () => request<AdminIdentity>('/api/auth/session'),
-  logout: () => request<void>('/api/auth/logout', { method: 'POST' }),
+  session: () => request<AdminIdentity>(`${ADMIN_BASE_PATH}/api/auth/session`),
+  logout: () => request<void>(`${ADMIN_BASE_PATH}/api/auth/logout`, { method: 'POST' }),
 };
 
 export const portalApi = {
