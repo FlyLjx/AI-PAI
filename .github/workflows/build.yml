@@ -1,0 +1,62 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build:web
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go-server/go.mod
+          cache-dependency-path: go-server/go.sum
+      - name: Test Go
+        working-directory: go-server
+        run: go test ./...
+      - name: Build Go
+        working-directory: go-server
+        run: CGO_ENABLED=0 go build -trimpath -o ../ai-pai-api ./cmd/ai-pai
+
+      - name: Build images
+        run: |
+          docker build -t ghcr.io/flyljx/ai-pai-web:ci .
+          docker build -t ghcr.io/flyljx/ai-pai-api:ci ./go-server
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push images
+        if: github.event_name != 'pull_request'
+        run: |
+          for image in web api; do
+            docker tag ghcr.io/flyljx/ai-pai-$image:ci ghcr.io/flyljx/ai-pai-$image:latest
+            docker tag ghcr.io/flyljx/ai-pai-$image:ci ghcr.io/flyljx/ai-pai-$image:${{ github.sha }}
+            docker push ghcr.io/flyljx/ai-pai-$image:latest
+            docker push ghcr.io/flyljx/ai-pai-$image:${{ github.sha }}
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-pai-api-linux-amd64
+          path: ai-pai-api

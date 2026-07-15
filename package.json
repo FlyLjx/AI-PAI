@@ -1,0 +1,39 @@
+{
+  "name": "ai-pai",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail -n web,go -c green,cyan \"npm:dev:web\" \"npm:dev:go\"",
+    "dev:web": "next dev -p 3000",
+    "dev:go": "powershell -ExecutionPolicy Bypass -File scripts/dev-go-watch.ps1 -Port 3001",
+    "build": "npm run build:web && npm run build:go",
+    "build:web": "next build",
+    "build:go": "powershell -ExecutionPolicy Bypass -File scripts/build-go.ps1",
+    "start": "next start",
+    "lint": "eslint",
+    "test:go": "go -C go-server test ./...",
+    "check": "npm run lint && npm run build:web"
+  },
+  "dependencies": {
+    "lucide-react": "^1.24.0",
+    "next": "16.2.10",
+    "qrcode.react": "^4.2.0",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "sonner": "^2.0.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "concurrently": "^10.0.3",
+    "eslint": "^9",
+    "eslint-config-next": "16.2.10",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  },
+  "overrides": {
+    "postcss": "^8.5.10"
+  }
+}

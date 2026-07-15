@@ -1,0 +1,13 @@
+node_modules
+.next
+release
+logs
+.tmp
+.git
+.codex-screenshots
+.vendor
+go-server
+*.zip
+*.log
+.env
+.env.*

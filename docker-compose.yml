@@ -1,0 +1,69 @@
+name: ai-pai
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: ai-pai-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-ai_pai}
+      POSTGRES_USER: ${DB_USER:-ai_pai}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-ai_pai_change_me}
+      TZ: ${TZ:-Asia/Shanghai}
+    ports:
+      - "${POSTGRES_PUBLIC_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-ai_pai} -d ${DB_NAME:-ai_pai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: ./go-server
+      dockerfile: Dockerfile
+      args:
+        GOPROXY: ${GOPROXY:-https://proxy.golang.org,direct}
+    image: ${API_IMAGE:-ghcr.io/flyljx/ai-pai-api:latest}
+    container_name: ai-pai-api
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      DB_DRIVER: ${DB_DRIVER:-postgres}
+      DB_HOST: ${DB_HOST:-postgres}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:-ai_pai}
+      DB_PASSWORD: ${DB_PASSWORD:-ai_pai_change_me}
+      DB_NAME: ${DB_NAME:-ai_pai}
+      DB_SSLMODE: ${DB_SSLMODE:-disable}
+      SERVE_STATIC: "false"
+      LOG_DIR: /app/logs
+      PORT: 3001
+    depends_on:
+      postgres:
+        condition: service_healthy
+    expose:
+      - "3001"
+    volumes:
+      - ./logs:/app/logs
+
+  ai-pai:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${WEB_IMAGE:-ghcr.io/flyljx/ai-pai-web:latest}
+    container_name: ai-pai
+    restart: unless-stopped
+    environment:
+      GO_BACKEND_URL: http://api:3001
+      PORT: 3000
+    depends_on:
+      - api
+    ports:
+      - "${APP_PUBLIC_PORT:-6985}:3000"
+
+volumes:
+  postgres_data:
