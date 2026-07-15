@@ -1,0 +1,89 @@
+'use client';
+
+import Link from 'next/link';
+import { usePathname, useRouter } from 'next/navigation';
+import { useEffect, useState } from 'react';
+import {
+  Activity, Cable, ChevronRight, CircleDollarSign, CreditCard, Database,
+  Gauge, LogOut, Menu, Package, ReceiptText, ShieldCheck, Users, X,
+} from 'lucide-react';
+import { adminAuth, type AdminIdentity } from '@/lib/admin-api';
+
+const adminNav = [
+  { label: '数据概览', href: '/dashboard', icon: Gauge },
+  { label: '用户管理', href: '/users', icon: Users },
+  { label: 'API 调用', href: '/api-access', icon: Activity },
+  { label: '上游接口', href: '/upstream-apis', icon: Cable },
+  { label: '模型价格', href: '/prices', icon: CircleDollarSign },
+  { label: '订阅套餐', href: '/packages', icon: Package },
+  { label: '订阅管理', href: '/subscriptions', icon: CreditCard },
+  { label: '充值流水', href: '/recharges', icon: ReceiptText },
+  { label: '系统日志', href: '/logs', icon: Database },
+  { label: '系统设置', href: '/settings', icon: ShieldCheck },
+];
+
+function Navigation({ pathname, mobile = false, onNavigate }: { pathname: string; mobile?: boolean; onNavigate: () => void }) {
+  return (
+    <nav className={mobile ? 'grid grid-cols-2 gap-2' : 'space-y-1'}>
+      {adminNav.map(({ label, href, icon: Icon }) => (
+        <Link key={href} href={href} onClick={onNavigate} className={`nav-item ${pathname === href ? 'is-active' : ''}`}>
+          <Icon size={16} />
+          <span>{label}</span>
+          {!mobile && <ChevronRight size={13} className="nav-arrow" />}
+        </Link>
+      ))}
+    </nav>
+  );
+}
+
+export function AdminShell({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
+  const router = useRouter();
+  const [identity, setIdentity] = useState<AdminIdentity | null>(null);
+  const [ready, setReady] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    void adminAuth.session()
+      .then((response) => { if (active) setIdentity(response.data); })
+      .catch(() => { if (active) router.replace('/login'); })
+      .finally(() => { if (active) setReady(true); });
+    return () => { active = false; };
+  }, [pathname, router]);
+
+  const logout = async () => {
+    await adminAuth.logout().catch(() => undefined);
+    router.replace('/login');
+    router.refresh();
+  };
+
+  if (!ready || !identity) {
+    return <div className="min-h-screen grid place-items-center bg-[#f7f8f6]"><div className="loading-ring" /></div>;
+  }
+
+  return (
+    <div className="app-frame admin-frame">
+      <aside className="app-sidebar">
+        <Link href="/dashboard" className="brand-lockup">
+          <span className="brand-mark">AI</span>
+          <span><strong>AI-PAI</strong><small>管理控制台</small></span>
+        </Link>
+        <div className="sidebar-section-label">运营管理</div>
+        <div className="sidebar-scroll"><Navigation pathname={pathname} onNavigate={() => setMobileOpen(false)} /></div>
+        <div className="sidebar-account">
+          <span className="account-avatar">{identity.email.slice(0, 1).toUpperCase()}</span>
+          <span className="account-copy"><strong>{identity.email}</strong><small>系统管理员</small></span>
+          <button type="button" onClick={() => void logout()} title="退出登录"><LogOut size={16} /></button>
+        </div>
+      </aside>
+
+      <header className="mobile-header">
+        <Link href="/dashboard" className="brand-lockup compact"><span className="brand-mark">AI</span><strong>AI-PAI 后台</strong></Link>
+        <button type="button" onClick={() => setMobileOpen(!mobileOpen)} aria-label="打开导航">{mobileOpen ? <X /> : <Menu />}</button>
+      </header>
+      {mobileOpen && <div className="mobile-drawer"><Navigation pathname={pathname} mobile onNavigate={() => setMobileOpen(false)} /><button className="mobile-logout" onClick={() => void logout()}><LogOut size={16} />退出登录</button></div>}
+      <main className="app-main">{children}</main>
+    </div>
+  );
+}

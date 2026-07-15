@@ -40,7 +40,7 @@ finally {
   Pop-Location
 }
 
-Write-Host "[postgres] starting app container..."
-docker compose up -d ai-pai
+Write-Host "[postgres] starting web and admin containers..."
+docker compose up -d ai-pai admin
 
 Write-Host "[postgres] done"

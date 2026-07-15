@@ -1,11 +1,16 @@
 name: ai-pai-build
 
 services:
-  ai-pai:
+  web:
     build:
       context: .
       dockerfile: Dockerfile
     image: ghcr.io/flyljx/ai-pai-web:latest
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    image: ghcr.io/flyljx/ai-pai-admin:latest
   api:
     build:
       context: ./go-server

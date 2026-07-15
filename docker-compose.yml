@@ -59,11 +59,30 @@ services:
     restart: unless-stopped
     environment:
       GO_BACKEND_URL: http://api:3001
+      APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN:-http://127.0.0.1:6985}
+      AUTH_ACTION_URLS_IN_RESPONSE: ${AUTH_ACTION_URLS_IN_RESPONSE:-false}
       PORT: 3000
     depends_on:
       - api
     ports:
       - "${APP_PUBLIC_PORT:-6985}:3000"
+
+  admin:
+    build:
+      context: .
+      dockerfile: Dockerfile.admin
+    image: ${ADMIN_IMAGE:-ghcr.io/flyljx/ai-pai-admin:latest}
+    container_name: ai-pai-admin
+    restart: unless-stopped
+    environment:
+      GO_BACKEND_URL: http://api:3001
+      ADMIN_COOKIE_SECURE: ${ADMIN_COOKIE_SECURE:-false}
+      ADMIN_PUBLIC_ORIGIN: ${ADMIN_PUBLIC_ORIGIN:-http://127.0.0.1:6986}
+      PORT: 3002
+    depends_on:
+      - api
+    ports:
+      - "${ADMIN_PUBLIC_PORT:-6986}:3002"
 
 volumes:
   postgres_data:

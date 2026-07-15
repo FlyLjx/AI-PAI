@@ -1,6 +1,8 @@
 FROM node:24-alpine AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
+COPY apps/web/package.json ./apps/web/package.json
+COPY apps/admin/package.json ./apps/admin/package.json
 RUN npm ci
 
 FROM node:24-alpine AS build
@@ -17,9 +19,9 @@ ENV NODE_ENV=production \
     PORT=3000 \
     HOSTNAME=0.0.0.0
 RUN addgroup -S aipai && adduser -S aipai -G aipai
-COPY --from=build --chown=aipai:aipai /app/public ./public
-COPY --from=build --chown=aipai:aipai /app/.next/standalone ./
-COPY --from=build --chown=aipai:aipai /app/.next/static ./.next/static
+COPY --from=build --chown=aipai:aipai /app/apps/web/.next/standalone ./
+COPY --from=build --chown=aipai:aipai /app/apps/web/.next/static ./apps/web/.next/static
+COPY --from=build --chown=aipai:aipai /app/apps/web/public ./apps/web/public
 USER aipai
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["node", "apps/web/server.js"]

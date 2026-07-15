@@ -1,6 +1,14 @@
 # AI-PAI
 
-AI-PAI 是面向开发者的图像 API 中转站。Next.js 提供用户控制台和管理后台，Go 服务继续使用原有数据库结构、上游调度与 OpenAI 兼容接口。
+AI-PAI 是面向开发者的图像 API 中转站。客户前台与管理后台是两个独立的 Next.js 应用，Go 服务继续使用原有数据库结构、上游调度与 OpenAI 兼容接口。
+
+## 应用边界
+
+- `apps/web`：公开首页、注册登录、客户控制台、API Key、用量、计费与文档
+- `apps/admin`：独立管理员登录、用户、上游、模型、套餐、调用与系统管理
+- `go-server`：Go API、数据库访问、任务队列、计费和 OpenAI 兼容接口
+
+两个 Next.js 应用拥有独立构建产物、端口、容器和认证会话。管理后台使用 HttpOnly Cookie，不与客户前台共享 localStorage 或管理员令牌。
 
 ## 功能
 
@@ -24,18 +32,20 @@ npm run dev
 
 默认地址：
 
-- Next.js：`http://127.0.0.1:3000`
+- 客户前台：`http://127.0.0.1:3000`
 - Go API：`http://127.0.0.1:3001`
+- 管理后台：`http://127.0.0.1:3002`
 
-Next.js 通过 `/api/backend/*` 访问 Go 管理接口，并将公网 `/v1/*` 转发给 Go。
+客户前台只代理客户接口、`/api/tasks/*` 和公网 `/v1/*`。管理后台使用独立的后台接口白名单访问 Go，不提供 `/v1` 或客户注册路由。
 
-本地开发端口是固定契约：Next.js 使用 `3000`，Go 使用 `3001`。如果 `3001` 已被其他进程占用，开发脚本会明确退出；先停止占用端口的进程后再重新运行，避免代理地址与 Go 实际监听地址不一致。
+本地开发端口是固定契约：客户前台使用 `3000`，Go 使用 `3001`，管理后台使用 `3002`。如果端口已被其他进程占用，开发脚本会明确退出。
 
 ## 验证
 
 ```powershell
 npm run lint
 npm run build:web
+npm run build:admin
 Set-Location go-server
 go test ./...
 ```
@@ -46,9 +56,14 @@ go test ./...
 docker compose up -d --build
 ```
 
-默认访问 `http://127.0.0.1:6985`。Compose 保留原 `postgres_data` 数据卷名称，升级时不会创建新的业务数据库卷。
+默认地址：
 
-生产环境至少应修改 `DB_PASSWORD`，并备份现有数据库后再升级。
+- 客户前台：`http://127.0.0.1:6985`
+- 管理后台：`http://127.0.0.1:6986`
+
+Compose 保留原 `postgres_data` 数据卷名称，升级时不会创建新的业务数据库卷。
+
+生产环境至少应修改 `DB_PASSWORD`，并备份现有数据库后再升级。为客户站设置 `APP_PUBLIC_ORIGIN` 并保持 `AUTH_ACTION_URLS_IN_RESPONSE=false`；管理后台应使用独立域名，设置 `ADMIN_PUBLIC_ORIGIN`，并在启用 HTTPS 后将 `ADMIN_COOKIE_SECURE` 设置为 `true`。
 
 ### 全新数据库的首个管理员
 
@@ -61,4 +76,4 @@ docker compose up -d --build
 docker compose exec postgres psql -U ai_pai -d ai_pai -c "UPDATE users SET role='admin', email_verified_at=COALESCE(email_verified_at, CURRENT_TIMESTAMP) WHERE email='your-admin@example.com';"
 ```
 
-3. 退出账号并重新登录，即可进入管理后台。若修改了 `DB_USER` 或 `DB_NAME`，同步调整命令中的连接参数。
+3. 打开独立管理后台 `http://127.0.0.1:6986/login`，使用该邮箱和密码登录。若修改了 `DB_USER` 或 `DB_NAME`，同步调整命令中的连接参数。
