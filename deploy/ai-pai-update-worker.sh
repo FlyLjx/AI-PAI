@@ -123,6 +123,9 @@ handle_failure() {
     set_env_value WEB_IMAGE "$previous_web"
     set_env_value ADMIN_IMAGE "$previous_admin"
     set_env_value API_IMAGE "$previous_api"
+    export WEB_IMAGE="$previous_web"
+    export ADMIN_IMAGE="$previous_admin"
+    export API_IMAGE="$previous_api"
     docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-build \
       --force-recreate --wait --wait-timeout 240 api admin ai-pai
   fi
@@ -179,9 +182,9 @@ set +a
 DB_USER=${DB_USER:-ai_pai}
 DB_NAME=${DB_NAME:-ai_pai}
 PUBLIC_ORIGIN=${APP_PUBLIC_ORIGIN:-}
-previous_web=${WEB_IMAGE:-$REGISTRY/ai-pai-web:latest}
-previous_admin=${ADMIN_IMAGE:-$REGISTRY/ai-pai-admin:latest}
-previous_api=${API_IMAGE:-$REGISTRY/ai-pai-api:latest}
+previous_web=$(docker inspect ai-pai --format '{{.Config.Image}}')
+previous_admin=$(docker inspect ai-pai-admin --format '{{.Config.Image}}')
+previous_api=$(docker inspect ai-pai-api --format '{{.Config.Image}}')
 
 timestamp=$(date +%Y%m%d-%H%M%S)
 backup_dir="$BACKUP_ROOT/$version-$timestamp"
@@ -199,6 +202,9 @@ rollback_needed=true
 set_env_value WEB_IMAGE "$web_image"
 set_env_value ADMIN_IMAGE "$admin_image"
 set_env_value API_IMAGE "$api_image"
+export WEB_IMAGE="$web_image"
+export ADMIN_IMAGE="$admin_image"
+export API_IMAGE="$api_image"
 
 write_status updating "Backup completed. Replacing application containers with $version."
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-build \
