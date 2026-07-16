@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ArrowRight,
+  CircleDollarSign,
   CreditCard,
   Crown,
   Gauge,
@@ -83,6 +85,9 @@ export default function AdminUsersPage() {
   const [editing, setEditing] = useState<PortalUser | null>(null);
   const [draft, setDraft] = useState<UserDraft>(emptyDraft);
   const [grantUser, setGrantUser] = useState<PortalUser | null>(null);
+  const [balanceUser, setBalanceUser] = useState<PortalUser | null>(null);
+  const [balanceValue, setBalanceValue] = useState('');
+  const [balanceRemark, setBalanceRemark] = useState('');
   const [grantPlanId, setGrantPlanId] = useState('');
   const [grantMode, setGrantMode] = useState<GrantMode>('plan');
   const [customGrantName, setCustomGrantName] = useState('自定义订阅');
@@ -128,6 +133,9 @@ export default function AdminUsersPage() {
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const visible = filtered.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize);
   const activePlans = plans.filter((plan) => plan.status === 'active');
+  const currentBalance = Number(balanceUser?.credits || 0);
+  const nextBalance = Number(balanceValue);
+  const balanceDelta = Number.isFinite(nextBalance) ? nextBalance - currentBalance : 0;
 
   const summary = useMemo(() => ({
     total: users.length,
@@ -219,6 +227,33 @@ export default function AdminUsersPage() {
     }
   };
 
+  const openBalance = (user: PortalUser) => {
+    setBalanceUser(user);
+    setBalanceValue(String(Math.round(Number(user.credits || 0) * 10000) / 10000));
+    setBalanceRemark('');
+  };
+
+  const updateBalance = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!balanceUser) return;
+    if (!balanceValue.trim()) return toast.error('请填写调整后的余额');
+    const value = Number(balanceValue);
+    if (!Number.isFinite(value) || value < 0 || value > 99999999.9999) return toast.error('余额必须在 0 到 99999999.9999 之间');
+    if (Math.abs(value - Number(balanceUser.credits || 0)) < 0.00005) return toast.error('调整后余额没有变化');
+    if (!balanceRemark.trim() || balanceRemark.trim().length > 120) return toast.error('请填写 1-120 字的调整备注');
+    setSaving(true);
+    try {
+      const response = await portalApi.updateUserBalance(balanceUser.id, { balance: value, remark: balanceRemark.trim() });
+      setUsers((items) => items.map((item) => (item.id === balanceUser.id ? { ...item, credits: response.data.credits } : item)));
+      toast.success(`已更新 ${balanceUser.email} 的余额`);
+      setBalanceUser(null);
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '余额更新失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const openGrant = (user: PortalUser) => {
     setGrantUser(user);
     const currentPlanId = user.subscription?.source === 'admin_custom' ? '' : user.subscription?.planId || '';
@@ -270,6 +305,7 @@ export default function AdminUsersPage() {
           {verifyingId === user.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MailCheck className="h-3.5 w-3.5" />}
         </button>
       )}
+      <button type="button" onClick={() => openBalance(user)} title="修改余额" className="rounded p-1.5 text-[#047857] hover:bg-emerald-50"><CircleDollarSign className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => openGrant(user)} title="发放订阅" className="rounded p-1.5 text-[#0891B2] hover:bg-cyan-50"><CreditCard className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => openEdit(user)} title="编辑用户" className="rounded p-1.5 text-zinc-600 hover:bg-zinc-100"><Pencil className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => void toggleStatus(user)} disabled={actionId === user.id} title={user.status === 'active' ? '停用用户' : '启用用户'} className={`rounded p-1.5 ${user.status === 'active' ? 'text-amber-600 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'} disabled:opacity-40`}><ShieldCheck className="h-3.5 w-3.5" /></button>
@@ -417,6 +453,33 @@ export default function AdminUsersPage() {
               )}
             </div>
             <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setGrantUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving || (grantMode === 'plan' && !grantPlanId)} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}确认发放</button></div>
+          </form>
+        </div>
+      )}
+
+      {balanceUser && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+          <form onSubmit={updateBalance} className="w-full max-w-md overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-emerald-50 text-[#047857]"><CircleDollarSign className="h-4 w-4" /></span>
+                <div className="min-w-0"><h2 className="text-sm font-semibold">修改账户余额</h2><p className="mt-0.5 truncate text-[11px] text-zinc-500">{balanceUser.email}</p></div>
+              </div>
+              <button type="button" onClick={() => setBalanceUser(null)} title="关闭" className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="space-y-4 p-5">
+              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-y border-[#EDF0EE] bg-[#FAFBFA] px-4 py-3">
+                <span><small className="block text-[10px] font-semibold text-zinc-400">当前余额</small><strong className="mt-1 block font-mono text-sm text-zinc-700">{formatCNY(currentBalance)}</strong></span>
+                <ArrowRight className="h-4 w-4 text-zinc-300" />
+                <span className="text-right"><small className="block text-[10px] font-semibold text-zinc-400">调整后</small><strong className={`mt-1 block font-mono text-sm ${balanceDelta < 0 ? 'text-red-600' : 'text-[#047857]'}`}>{Number.isFinite(nextBalance) ? formatCNY(nextBalance) : '--'}</strong></span>
+              </div>
+              <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">调整后余额</span><input required autoFocus min={0} max={99999999.9999} step={0.0001} type="number" value={balanceValue} onChange={(event) => setBalanceValue(event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
+              <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">调整备注</span><textarea required maxLength={120} rows={3} value={balanceRemark} onChange={(event) => setBalanceRemark(event.target.value)} placeholder="例如：活动补发、退款或余额修正" className="w-full resize-none rounded-md border border-[#DCE4DF] px-3 py-2 text-xs leading-5 outline-none focus:border-[#12B76A]" /><small className="mt-1 block text-right font-mono text-[10px] text-zinc-400">{balanceRemark.length}/120</small></label>
+              {Number.isFinite(nextBalance) && Math.abs(balanceDelta) >= 0.00005 && (
+                <div className={`flex items-center justify-between border-t border-[#EDF0EE] pt-3 text-xs ${balanceDelta < 0 ? 'text-red-600' : 'text-[#047857]'}`}><span>{balanceDelta < 0 ? '本次扣减' : '本次增加'}</span><strong className="font-mono">{formatCNY(Math.abs(balanceDelta))}</strong></div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setBalanceUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving || !balanceValue.trim() || !balanceRemark.trim() || !Number.isFinite(nextBalance) || nextBalance < 0 || nextBalance > 99999999.9999 || Math.abs(balanceDelta) < 0.00005} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}确认修改</button></div>
           </form>
         </div>
       )}

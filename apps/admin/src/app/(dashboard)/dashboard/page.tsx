@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   Cable,
+  ChartNoAxesCombined,
   CircleDollarSign,
   Clock3,
   Loader2,
@@ -11,6 +12,15 @@ import {
   TriangleAlert,
   Users,
 } from 'lucide-react';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
@@ -37,6 +47,18 @@ type UsageRow = {
   quantity?: number;
   status?: string;
   createdAt?: string;
+};
+
+type TaskTrendPoint = {
+  date: string;
+  total: number;
+  queued: number;
+  pending: number;
+  processing: number;
+  running: number;
+  success: number;
+  failed: number;
+  canceled: number;
 };
 
 type DashboardData = {
@@ -72,7 +94,21 @@ type DashboardData = {
   };
   recentOrders?: RechargeRow[];
   recentTasks?: UsageRow[];
+  taskTrend?: TaskTrendPoint[];
 };
+
+const TASK_TREND_COLORS = {
+  total: '#587FA3',
+  success: '#3F9274',
+  failed: '#D06F69',
+  running: '#D69A45',
+  canceled: '#8A7FB0',
+} as const;
+
+function shortDate(value: string): string {
+  const [, month = '', day = ''] = value.split('-');
+  return `${month}/${day}`;
+}
 
 function statusView(status = '') {
   if (status === 'paid' || status === 'success') return { label: '成功', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
@@ -86,6 +122,7 @@ export default function AdminDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
+  const [trendDays, setTrendDays] = useState<7 | 15 | 30>(7);
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -122,6 +159,21 @@ export default function AdminDashboardPage() {
   const pendingCount = Number(data.pending?.runningTasks || 0) + Number(data.pending?.pendingOrders || 0);
   const recentOrders = data.recentOrders || [];
   const recentTasks = data.recentTasks || [];
+  const taskTrend = useMemo(() => (data.taskTrend || []).slice(-trendDays), [data.taskTrend, trendDays]);
+  const taskTrendSummary = useMemo(() => taskTrend.reduce((summary, point) => ({
+    total: summary.total + Number(point.total || 0),
+    success: summary.success + Number(point.success || 0),
+    failed: summary.failed + Number(point.failed || 0),
+    running: summary.running + Number(point.running || 0),
+    canceled: summary.canceled + Number(point.canceled || 0),
+  }), { total: 0, success: 0, failed: 0, running: 0, canceled: 0 }), [taskTrend]);
+  const taskTrendSeries = [
+    { key: 'total', label: '全部任务', value: taskTrendSummary.total, color: TASK_TREND_COLORS.total },
+    { key: 'success', label: '成功', value: taskTrendSummary.success, color: TASK_TREND_COLORS.success },
+    { key: 'failed', label: '失败', value: taskTrendSummary.failed, color: TASK_TREND_COLORS.failed },
+    { key: 'running', label: '处理中', value: taskTrendSummary.running, color: TASK_TREND_COLORS.running },
+    { key: 'canceled', label: '已取消', value: taskTrendSummary.canceled, color: TASK_TREND_COLORS.canceled },
+  ] as const;
 
   const attention = useMemo(() => [
     { label: '待支付充值单', value: Number(data.pending?.pendingOrders || 0), note: '等待支付结果同步', tone: 'amber' },
@@ -162,6 +214,41 @@ export default function AdminDashboardPage() {
             <StatBlock title="请求成功率" value={`${successRate}%`} subtext={`累计返回 ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张图片`} color={successRate >= 95 ? 'green' : 'amber'} icon={Cable} />
             <StatBlock title="API 客户" value={Number(data.users?.total || 0).toLocaleString('zh-CN')} subtext={`启用 ${Number(data.users?.active || 0)}，今日新增 ${Number(data.today?.users || 0)}`} color="neutral" icon={Users} />
           </div>
+
+          <section className="min-w-0 overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="task-trend-title">
+            <header className="flex min-h-[54px] flex-col gap-3 border-b border-[#EDF0EE] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2.5">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-blue-50 text-[#587FA3]"><ChartNoAxesCombined className="h-4 w-4" /></span>
+                <div><h2 id="task-trend-title" className="text-sm font-semibold text-[#17201B]">任务处理趋势</h2><p className="mt-0.5 text-[11px] text-zinc-500">{taskTrend[0]?.date || '-'} 至 {taskTrend.at(-1)?.date || '-'}</p></div>
+              </div>
+              <div className="inline-flex self-start rounded-md border border-[#DCE4DF] bg-[#F7F8F6] p-0.5 sm:self-auto" role="group" aria-label="任务趋势时间范围">
+                {[7, 15, 30].map((days) => (
+                  <button key={days} type="button" onClick={() => setTrendDays(days as 7 | 15 | 30)} aria-pressed={trendDays === days} className={`h-7 min-w-12 rounded px-2 text-[11px] font-semibold ${trendDays === days ? 'bg-white text-[#047857] shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>{days}天</button>
+                ))}
+              </div>
+            </header>
+            <div className="flex min-h-[45px] flex-wrap items-center gap-x-5 gap-y-2 border-b border-[#EDF0EE] px-4 py-2.5" aria-label="任务趋势汇总">
+              {taskTrendSeries.map((item) => (
+                <span key={item.key} className="inline-flex items-center gap-2 text-[11px] text-zinc-500"><i className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />{item.label}<strong className="font-mono text-xs text-[#17201B]">{item.value.toLocaleString('zh-CN')}</strong></span>
+              ))}
+            </div>
+            <p className="sr-only" id="task-trend-description">当前范围共 {taskTrendSummary.total} 个任务，成功 {taskTrendSummary.success} 个，失败 {taskTrendSummary.failed} 个，处理中 {taskTrendSummary.running} 个，已取消 {taskTrendSummary.canceled} 个。</p>
+            <div className="h-[280px] w-full px-1 pb-3 pt-4 sm:h-[320px] sm:px-3" aria-describedby="task-trend-description">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart accessibilityLayer data={taskTrend} margin={{ top: 6, right: 14, left: -8, bottom: 0 }}>
+                  <CartesianGrid stroke="#EDF0EE" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: '#778079', fontSize: 9 }} tickLine={false} axisLine={{ stroke: '#DCE4DF' }} minTickGap={22} />
+                  <YAxis allowDecimals={false} tick={{ fill: '#778079', fontSize: 9 }} tickLine={false} axisLine={false} width={44} />
+                  <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `日期 ${String(label)}`} contentStyle={{ border: '1px solid #DCE4DF', borderRadius: 7, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 10 }} />
+                  <Line type="monotone" dataKey="total" name="全部任务" stroke={TASK_TREND_COLORS.total} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+                  <Line type="monotone" dataKey="success" name="成功" stroke={TASK_TREND_COLORS.success} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+                  <Line type="monotone" dataKey="failed" name="失败" stroke={TASK_TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+                  <Line type="monotone" dataKey="running" name="处理中" stroke={TASK_TREND_COLORS.running} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
+                  <Line type="monotone" dataKey="canceled" name="已取消" stroke={TASK_TREND_COLORS.canceled} strokeWidth={1.75} strokeDasharray="3 4" dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </section>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,.6fr)]">
             <section className="rounded-md border border-[#DCE4DF] bg-white">

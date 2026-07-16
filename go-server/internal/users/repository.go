@@ -4,11 +4,14 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
+	"math"
 	"math/big"
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
@@ -151,9 +154,52 @@ func (r *Repository) MarkEmailVerified(ctx context.Context, id string) (*User, e
 func (r *Repository) Update(ctx context.Context, id string, input User) (*User, error) {
 	if _, err := r.db.ExecContext(ctx, `
 		UPDATE users
-		SET email = ?, credits = ?, role = ?, status = ?
+		SET email = ?, role = ?, status = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, input.Email, input.Credits, input.Role, input.Status, id); err != nil {
+	`, input.Email, input.Role, input.Status, id); err != nil {
+		return nil, err
+	}
+	return r.FindByID(ctx, id)
+}
+
+func (r *Repository) SetCredits(ctx context.Context, id string, nextBalance float64, remark string) (*User, error) {
+	nextBalance, ok := normalizeCredits(nextBalance)
+	if !ok {
+		return nil, ErrInvalidCredits
+	}
+	remark = strings.TrimSpace(remark)
+	if remark == "" {
+		remark = "管理员调整余额"
+	}
+
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var currentBalance float64
+	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ? FOR UPDATE`, id).Scan(&currentBalance); err != nil {
+		return nil, err
+	}
+	currentBalance, _ = normalizeCredits(currentBalance)
+	delta := math.Round((nextBalance-currentBalance)*10000) / 10000
+	if delta != 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE users
+			SET credits = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, nextBalance, id); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark)
+			VALUES (?, ?, 'manual_adjust', ?, ?, ?)
+		`, newRepositoryID(), id, delta, nextBalance, remark); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
 	return r.FindByID(ctx, id)
@@ -260,6 +306,24 @@ func randomInviteCode(length int) (string, error) {
 		builder.WriteByte(inviteCodeAlphabet[index.Int64()])
 	}
 	return builder.String(), nil
+}
+
+func normalizeCredits(value float64) (float64, bool) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value < 0 || value > 99999999.9999 {
+		return 0, false
+	}
+	return math.Round(value*10000) / 10000, true
+}
+
+func newRepositoryID() string {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return fmt.Sprintf("%d", time.Now().UnixNano())
+	}
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	value := hex.EncodeToString(bytes[:])
+	return fmt.Sprintf("%s-%s-%s-%s-%s", value[0:8], value[8:12], value[12:16], value[16:20], value[20:32])
 }
 
 var compatUUIDPattern = regexp.MustCompile(`^00000000-0000-4000-8000-(\d{12})$`)

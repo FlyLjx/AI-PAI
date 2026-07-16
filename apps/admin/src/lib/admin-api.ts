@@ -182,6 +182,7 @@ export const portalApi = {
   users: () => api<PortalUser[]>('/api/users'),
   createUser: (input: Record<string, unknown>) => api<PortalUser>('/api/users', { method: 'POST', body: JSON.stringify(input) }),
   updateUser: (id: string, input: Record<string, unknown>) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  updateUserBalance: (id: string, input: { balance: number; remark: string }) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/balance`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteUser: (id: string) => api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   verifyUserEmail: (id: string) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/verify-email`, { method: 'POST' }),
   grantSubscription: (id: string, input: Record<string, unknown>) => api(`/api/users/${encodeURIComponent(id)}/subscription`, { method: 'POST', body: JSON.stringify(input) }),

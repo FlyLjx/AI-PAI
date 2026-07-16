@@ -160,3 +160,15 @@ type DashboardTaskSummary struct {
 	Status           string  `json:"status"`
 	CreatedAt        string  `json:"createdAt"`
 }
+
+type DashboardTaskTrendPoint struct {
+	Date       string `json:"date"`
+	Total      int    `json:"total"`
+	Queued     int    `json:"queued"`
+	Pending    int    `json:"pending"`
+	Processing int    `json:"processing"`
+	Running    int    `json:"running"`
+	Success    int    `json:"success"`
+	Failed     int    `json:"failed"`
+	Canceled   int    `json:"canceled"`
+}

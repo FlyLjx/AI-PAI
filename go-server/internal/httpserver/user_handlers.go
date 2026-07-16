@@ -113,6 +113,10 @@ func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 		r.updateUserStatus(w, req, strings.TrimSuffix(path, "/status"))
 		return
 	}
+	if strings.HasSuffix(path, "/balance") {
+		r.updateUserBalance(w, req, strings.TrimSuffix(path, "/balance"))
+		return
+	}
 	if strings.HasSuffix(path, "/subscription") {
 		r.grantUserSubscription(w, req, strings.TrimSuffix(path, "/subscription"))
 		return
@@ -311,6 +315,54 @@ func (r *Router) verifyUserEmailByAdmin(w http.ResponseWriter, req *http.Request
 	data := r.publicUserWithSubscription(ctx, updated)
 	r.publishCurrentUser(context.Background(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+func (r *Router) updateUserBalance(w http.ResponseWriter, req *http.Request, id string) {
+	if req.Method != http.MethodPatch {
+		writeMethodNotAllowed(w)
+		return
+	}
+	admin, err := r.requireAdmin(req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	var input struct {
+		Balance *float64 `json:"balance"`
+		Remark  string   `json:"remark"`
+	}
+	if err := decodeCompatJSON(req, &input); err != nil || input.Balance == nil {
+		writeError(w, newAppError(http.StatusBadRequest, "请填写调整后的余额"))
+		return
+	}
+	id = strings.Trim(id, "/")
+	input.Remark = strings.TrimSpace(input.Remark)
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	}
+	if input.Remark == "" || len([]rune(input.Remark)) > 120 {
+		writeError(w, newAppError(http.StatusBadRequest, "请填写 1-120 字的调整备注"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	remark := "管理员 " + admin.UserID + "：" + input.Remark
+	updated, err := users.NewRepository(r.db).SetCredits(ctx, id, *input.Balance, remark)
+	if errors.Is(err, users.ErrInvalidCredits) {
+		writeError(w, newAppError(http.StatusBadRequest, err.Error()))
+		return
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	r.publishCurrentUser(context.Background(), id)
+	writeJSON(w, http.StatusOK, map[string]any{"data": users.ToPublicUser(updated)})
 }
 
 func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string) {

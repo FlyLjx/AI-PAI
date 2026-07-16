@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"strconv"
@@ -189,6 +190,64 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	return result, nil
 }
 
+func (r *Repository) DashboardTaskTrend(ctx context.Context, days int) ([]DashboardTaskTrendPoint, error) {
+	if days < 1 {
+		days = 30
+	}
+	if days > 90 {
+		days = 90
+	}
+	now := time.Now().In(time.Local)
+	end := time.Date(now.Year(), now.Month(), now.Day()+1, 0, 0, 0, 0, time.Local)
+	start := end.AddDate(0, 0, -days)
+	dateExpr := database.DateExpr("created_at")
+	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT %s AS task_date,
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END), 0) AS queued,
+			COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0) AS pending,
+			COALESCE(SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END), 0) AS processing,
+			COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) AS success,
+			COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) AS failed,
+			COALESCE(SUM(CASE WHEN status='canceled' THEN 1 ELSE 0 END), 0) AS canceled
+		FROM generation_tasks
+		WHERE created_at >= ? AND created_at < ?
+		GROUP BY %s
+		ORDER BY %s ASC
+	`, dateExpr, dateExpr, dateExpr), start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byDate := make(map[string]DashboardTaskTrendPoint, days)
+	for rows.Next() {
+		var rawDate any
+		var point DashboardTaskTrendPoint
+		if err := rows.Scan(
+			&rawDate, &point.Total, &point.Queued, &point.Pending, &point.Processing,
+			&point.Success, &point.Failed, &point.Canceled,
+		); err != nil {
+			return nil, err
+		}
+		point.Date = sqlDateString(rawDate)
+		point.Running = point.Queued + point.Pending + point.Processing
+		byDate[point.Date] = point
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]DashboardTaskTrendPoint, 0, days)
+	for offset := 0; offset < days; offset++ {
+		date := start.AddDate(0, 0, offset).Format("2006-01-02")
+		point := byDate[date]
+		point.Date = date
+		result = append(result, point)
+	}
+	return result, nil
+}
+
 func (r *Repository) DashboardSummary(ctx context.Context, limit int) (map[string]any, error) {
 	if limit < 1 {
 		limit = 8
@@ -208,8 +267,13 @@ func (r *Repository) DashboardSummary(ctx context.Context, limit int) (map[strin
 	if err != nil {
 		return nil, err
 	}
+	trend, err := r.DashboardTaskTrend(ctx, 30)
+	if err != nil {
+		return nil, err
+	}
 	result["recentOrders"] = orders
 	result["recentTasks"] = tasks
+	result["taskTrend"] = trend
 	return result, nil
 }
 

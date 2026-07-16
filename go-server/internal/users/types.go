@@ -5,7 +5,10 @@ import (
 	"time"
 )
 
-var ErrEmailNotVerified = errors.New("请先完成邮箱验证后创建 API Key")
+var (
+	ErrEmailNotVerified = errors.New("请先完成邮箱验证后创建 API Key")
+	ErrInvalidCredits   = errors.New("余额必须在 0 到 99999999.9999 之间")
+)
 
 type User struct {
 	ID              string
