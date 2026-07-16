@@ -324,7 +324,11 @@ func (r *Repository) FindPlan(ctx context.Context, id string) (*SubscriptionPlan
 }
 
 func (r *Repository) DeletePlan(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM subscription_plans WHERE id=?`, id)
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE subscription_plans
+		SET status='disabled', updated_at=CURRENT_TIMESTAMP
+		WHERE id=? AND status<>'disabled'
+	`, id)
 	return affected(result, err)
 }
 
@@ -530,6 +534,49 @@ type paidSubscriptionEntitlement struct {
 	periodEnd   time.Time
 }
 
+func encodeSubscriptionPlanSnapshot(plan *SubscriptionPlan) (string, error) {
+	if plan == nil || strings.TrimSpace(plan.ID) == "" {
+		return "", sql.ErrNoRows
+	}
+	item := *plan
+	item.DiscountPercent = 0
+	if item.AllowedProviderIDs == nil {
+		item.AllowedProviderIDs = []string{}
+	}
+	if item.AllowedModelIDs == nil {
+		item.AllowedModelIDs = []string{}
+	}
+	payload, err := json.Marshal(item)
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
+}
+
+func subscriptionPlanFromSnapshot(snapshot string, fallback *SubscriptionPlan) *SubscriptionPlan {
+	var item SubscriptionPlan
+	if strings.TrimSpace(snapshot) != "" && json.Unmarshal([]byte(snapshot), &item) == nil && strings.TrimSpace(item.ID) != "" {
+		item.DiscountPercent = 0
+		if item.AllowedProviderIDs == nil {
+			item.AllowedProviderIDs = []string{}
+		}
+		if item.AllowedModelIDs == nil {
+			item.AllowedModelIDs = []string{}
+		}
+		return &item
+	}
+	if fallback != nil {
+		fallback.DiscountPercent = 0
+		if fallback.AllowedProviderIDs == nil {
+			fallback.AllowedProviderIDs = []string{}
+		}
+		if fallback.AllowedModelIDs == nil {
+			fallback.AllowedModelIDs = []string{}
+		}
+	}
+	return fallback
+}
+
 func (item *paidSubscriptionEntitlement) public(used int) *SubscriptionEntitlement {
 	limit := item.plan.QuotaImages
 	if limit < 0 {
@@ -551,25 +598,29 @@ func (item *paidSubscriptionEntitlement) public(used int) *SubscriptionEntitleme
 func (r *Repository) currentPaidSubscription(ctx context.Context, userID string) (*paidSubscriptionEntitlement, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT user_subscriptions.id, user_subscriptions.status, user_subscriptions.started_at, user_subscriptions.expires_at,
-			subscription_plans.id, subscription_plans.name, subscription_plans.description, subscription_plans.amount,
-			subscription_plans.duration_days, subscription_plans.quota_images, subscription_plans.bonus_credits, subscription_plans.discount_percent,
-			subscription_plans.allowed_provider_ids, subscription_plans.allowed_model_ids, subscription_plans.badge,
-			subscription_plans.sort_order, subscription_plans.status, subscription_plans.created_at, subscription_plans.updated_at
+			user_subscriptions.plan_snapshot,
+			COALESCE(subscription_plans.id, user_subscriptions.plan_id), COALESCE(subscription_plans.name, ''), subscription_plans.description,
+			COALESCE(subscription_plans.amount, 0), COALESCE(subscription_plans.duration_days, 0), COALESCE(subscription_plans.quota_images, 0),
+			COALESCE(subscription_plans.bonus_credits, 0), COALESCE(subscription_plans.discount_percent, 0),
+			COALESCE(subscription_plans.allowed_provider_ids, '[]'), COALESCE(subscription_plans.allowed_model_ids, '[]'), subscription_plans.badge,
+			COALESCE(subscription_plans.sort_order, 0), COALESCE(subscription_plans.status, 'disabled'),
+			COALESCE(subscription_plans.created_at, user_subscriptions.created_at), COALESCE(subscription_plans.updated_at, user_subscriptions.updated_at)
 		FROM user_subscriptions
-		INNER JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
+		LEFT JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
 		WHERE user_subscriptions.user_id = ?
 			AND user_subscriptions.status = 'active'
 			AND user_subscriptions.expires_at > NOW()
-			AND subscription_plans.status = 'active'
 		ORDER BY user_subscriptions.expires_at DESC
 		LIMIT 1
 	`, strings.TrimSpace(userID))
 	var subscriptionID, subscriptionStatus string
+	var snapshot sql.NullString
 	var started, expires time.Time
-	plan, err := scanPlanWithPrefix(row, &subscriptionID, &subscriptionStatus, &started, &expires)
+	plan, err := scanPlanWithPrefix(row, &subscriptionID, &subscriptionStatus, &started, &expires, &snapshot)
 	if err != nil {
 		return nil, err
 	}
+	plan = subscriptionPlanFromSnapshot(snapshot.String, plan)
 	source := "plan"
 	tier := "paid"
 	if IsAdminCustomSubscriptionPlan(plan) {
@@ -818,32 +869,8 @@ func (r *Repository) RewardInviteSubscription(ctx context.Context, inviterID str
 	if existing > 0 {
 		return tx.Commit()
 	}
-	now := time.Now()
-	baseTime := now
-	var currentExpires sql.NullTime
-	err = tx.QueryRowContext(ctx, `SELECT expires_at FROM user_subscriptions WHERE user_id=? FOR UPDATE`, inviterID).Scan(&currentExpires)
-	if err != nil && err != sql.ErrNoRows {
+	if err := grantSubscriptionInTx(ctx, tx, inviterID, plan.ID, plan.DurationDays, time.Now()); err != nil {
 		return err
-	}
-	if currentExpires.Valid && currentExpires.Time.After(now) {
-		baseTime = currentExpires.Time
-	}
-	expiresAt := baseTime.AddDate(0, 0, plan.DurationDays)
-	if err == sql.ErrNoRows {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO user_subscriptions (id, user_id, plan_id, status, started_at, expires_at)
-			VALUES (?, ?, ?, 'active', ?, ?)
-		`, newOperationID(), inviterID, plan.ID, now, expiresAt); err != nil {
-			return err
-		}
-	} else {
-		if _, err := tx.ExecContext(ctx, `
-			UPDATE user_subscriptions
-			SET plan_id=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
-			WHERE user_id=?
-		`, plan.ID, now, expiresAt, inviterID); err != nil {
-			return err
-		}
 	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO user_invites (id, inviter_id, invitee_id, reward_credits, reward_type, reward_plan_id, reward_label, invitee_ip)
@@ -1652,17 +1679,29 @@ func grantSubscriptionInTx(ctx context.Context, tx *database.Tx, userID string, 
 	if userID == "" || planID == "" {
 		return sql.ErrNoRows
 	}
+	plan, err := scanPlan(tx.QueryRowContext(ctx, `
+		SELECT id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent,
+			allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at
+		FROM subscription_plans
+		WHERE id=?
+		FOR UPDATE
+	`, planID))
+	if err != nil {
+		return err
+	}
 	if durationDays <= 0 {
-		if err := tx.QueryRowContext(ctx, `SELECT duration_days FROM subscription_plans WHERE id=? AND status='active'`, planID).Scan(&durationDays); err != nil {
-			return err
-		}
+		durationDays = plan.DurationDays
 	}
 	if durationDays <= 0 {
 		return ErrNoLotteryPrize
 	}
+	snapshot, err := encodeSubscriptionPlanSnapshot(&plan)
+	if err != nil {
+		return err
+	}
 	baseTime := now
 	var currentExpires sql.NullTime
-	err := tx.QueryRowContext(ctx, `SELECT expires_at FROM user_subscriptions WHERE user_id=? FOR UPDATE`, userID).Scan(&currentExpires)
+	err = tx.QueryRowContext(ctx, `SELECT expires_at FROM user_subscriptions WHERE user_id=? FOR UPDATE`, userID).Scan(&currentExpires)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
@@ -1672,16 +1711,16 @@ func grantSubscriptionInTx(ctx context.Context, tx *database.Tx, userID string, 
 	expiresAt := baseTime.AddDate(0, 0, durationDays)
 	if err == sql.ErrNoRows {
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO user_subscriptions (id, user_id, plan_id, status, started_at, expires_at)
-			VALUES (?, ?, ?, 'active', ?, ?)
-		`, newOperationID(), userID, planID, now, expiresAt)
+			INSERT INTO user_subscriptions (id, user_id, plan_id, plan_snapshot, status, started_at, expires_at)
+			VALUES (?, ?, ?, ?, 'active', ?, ?)
+		`, newOperationID(), userID, planID, snapshot, now, expiresAt)
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
 		UPDATE user_subscriptions
-		SET plan_id=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
+		SET plan_id=?, plan_snapshot=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
 		WHERE user_id=?
-	`, planID, now, expiresAt, userID)
+	`, planID, snapshot, now, expiresAt, userID)
 	return err
 }
 

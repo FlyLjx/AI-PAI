@@ -56,6 +56,9 @@ func main() {
 			log.Fatalf("migrate %s failed: %v", spec.name, err)
 		}
 	}
+	if err := database.EnsureSchema(pg.Raw()); err != nil {
+		log.Fatalf("finalize postgres schema failed: %v", err)
+	}
 
 	if err := normalizeImportedSettings(ctx, pg); err != nil {
 		log.Fatalf("normalize settings failed: %v", err)

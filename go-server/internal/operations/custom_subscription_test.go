@@ -33,11 +33,18 @@ func TestGrantCustomSubscriptionCreatesEntitlementWithoutOrder(t *testing.T) {
 	mock.ExpectExec(`INSERT INTO subscription_plans`).
 		WithArgs(planID, "合作客户额度", &description, 45, 1234, `[]`, `[]`, &badge).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	now := time.Now()
+	mock.ExpectQuery(`SELECT id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent,`).
+		WithArgs(planID).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"id", "name", "description", "amount", "duration_days", "quota_images", "bonus_credits", "discount_percent",
+			"allowed_provider_ids", "allowed_model_ids", "badge", "sort_order", "status", "created_at", "updated_at",
+		}).AddRow(planID, "合作客户额度", description, 0, 45, 1234, 0, 0, `[]`, `[]`, badge, 0, "active", now, now))
 	mock.ExpectQuery(`SELECT expires_at FROM user_subscriptions WHERE user_id=\? FOR UPDATE`).
 		WithArgs(userID).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO user_subscriptions`).
-		WithArgs(sqlmock.AnyArg(), userID, planID, sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), userID, planID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 
@@ -106,10 +113,12 @@ func TestCurrentSubscriptionMarksAdminCustomSource(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"subscription_id", "subscription_status", "started_at", "expires_at",
+			"plan_snapshot",
 			"plan_id", "plan_name", "description", "amount", "duration_days", "quota_images", "bonus_credits", "discount_percent",
 			"allowed_provider_ids", "allowed_model_ids", "badge", "sort_order", "plan_status", "created_at", "updated_at",
 		}).AddRow(
 			"subscription-1", "active", now, now.AddDate(0, 1, 0),
+			nil,
 			"plan-custom", "合作客户额度", nil, 0, 30, 1000, 0, 0,
 			`[]`, `[]`, adminCustomSubscriptionBadge, 0, "active", now, now,
 		))

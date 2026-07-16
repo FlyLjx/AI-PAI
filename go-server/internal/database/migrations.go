@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"math/big"
 	"strings"
@@ -43,6 +44,12 @@ func EnsureSchema(db *sql.DB) error {
 		return err
 	}
 	if err := backfillSubscriptionPlanQuotas(ctx, db); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_subscriptions", "plan_snapshot", JSONTextType()+" NULL", "plan_id"); err != nil {
+		return err
+	}
+	if err := backfillUserSubscriptionPlanSnapshots(ctx, db); err != nil {
 		return err
 	}
 	if err := addColumnIfMissing(ctx, db, "announcements", "display_mode", "VARCHAR(20) NOT NULL DEFAULT 'popup'", "content"); err != nil {
@@ -122,6 +129,109 @@ func backfillSubscriptionPlanQuotas(ctx context.Context, db *sql.DB) error {
 			OR (quota_images = 100 AND duration_days <= 31)
 	`))
 	return err
+}
+
+type migrationSubscriptionPlanSnapshot struct {
+	ID                 string   `json:"id"`
+	Name               string   `json:"name"`
+	Description        *string  `json:"description"`
+	Amount             float64  `json:"amount"`
+	DurationDays       int      `json:"durationDays"`
+	QuotaImages        int      `json:"quotaImages"`
+	BonusCredits       float64  `json:"bonusCredits"`
+	DiscountPercent    float64  `json:"discountPercent"`
+	AllowedProviderIDs []string `json:"allowedProviderIds"`
+	AllowedModelIDs    []string `json:"allowedModelIds"`
+	Badge              *string  `json:"badge"`
+	SortOrder          int      `json:"sortOrder"`
+	Status             string   `json:"status"`
+	CreatedAt          string   `json:"createdAt"`
+	UpdatedAt          string   `json:"updatedAt"`
+}
+
+func backfillUserSubscriptionPlanSnapshots(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, Rebind(`
+		SELECT user_subscriptions.id,
+			subscription_plans.id, subscription_plans.name, subscription_plans.description, subscription_plans.amount,
+			subscription_plans.duration_days, subscription_plans.quota_images, subscription_plans.bonus_credits,
+			subscription_plans.allowed_provider_ids, subscription_plans.allowed_model_ids, subscription_plans.badge,
+			subscription_plans.sort_order, subscription_plans.status, subscription_plans.created_at, subscription_plans.updated_at
+		FROM user_subscriptions
+		INNER JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
+		WHERE user_subscriptions.plan_snapshot IS NULL
+	`))
+	if err != nil {
+		return err
+	}
+	type pendingSnapshot struct {
+		subscriptionID string
+		payload        string
+	}
+	pending := make([]pendingSnapshot, 0)
+	for rows.Next() {
+		var subscriptionID string
+		var item migrationSubscriptionPlanSnapshot
+		var description, providers, models, badge sql.NullString
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(
+			&subscriptionID,
+			&item.ID, &item.Name, &description, &item.Amount,
+			&item.DurationDays, &item.QuotaImages, &item.BonusCredits,
+			&providers, &models, &badge,
+			&item.SortOrder, &item.Status, &createdAt, &updatedAt,
+		); err != nil {
+			rows.Close()
+			return err
+		}
+		item.Description = migrationNullString(description)
+		item.AllowedProviderIDs = migrationJSONStringList(providers.String)
+		item.AllowedModelIDs = migrationJSONStringList(models.String)
+		item.Badge = migrationNullString(badge)
+		item.CreatedAt = createdAt.Format(time.RFC3339)
+		item.UpdatedAt = updatedAt.Format(time.RFC3339)
+		payload, err := json.Marshal(item)
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		pending = append(pending, pendingSnapshot{subscriptionID: subscriptionID, payload: string(payload)})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	for _, item := range pending {
+		if _, err := db.ExecContext(ctx, Rebind(`
+			UPDATE user_subscriptions
+			SET plan_snapshot=?
+			WHERE id=? AND plan_snapshot IS NULL
+		`), item.payload, item.subscriptionID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func migrationNullString(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	result := value.String
+	return &result
+}
+
+func migrationJSONStringList(value string) []string {
+	items := []string{}
+	if strings.TrimSpace(value) == "" {
+		return items
+	}
+	if err := json.Unmarshal([]byte(value), &items); err != nil {
+		return []string{}
+	}
+	return items
 }
 
 func backfillUserInviteCodes(ctx context.Context, db *sql.DB) error {
@@ -397,6 +507,7 @@ func schemaBootstrapStatements() []string {
 				id VARCHAR(36) PRIMARY KEY,
 				user_id VARCHAR(36) NOT NULL UNIQUE,
 				plan_id VARCHAR(36) NOT NULL,
+				plan_snapshot JSONB NULL,
 				status VARCHAR(16) NOT NULL DEFAULT 'active',
 				started_at TIMESTAMP NOT NULL,
 				expires_at TIMESTAMP NOT NULL,
