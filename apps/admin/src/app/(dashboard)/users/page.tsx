@@ -305,7 +305,6 @@ export default function AdminUsersPage() {
           {verifyingId === user.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MailCheck className="h-3.5 w-3.5" />}
         </button>
       )}
-      <button type="button" onClick={() => openBalance(user)} title="修改余额" className="rounded p-1.5 text-[#047857] hover:bg-emerald-50"><CircleDollarSign className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => openGrant(user)} title="发放订阅" className="rounded p-1.5 text-[#0891B2] hover:bg-cyan-50"><CreditCard className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => openEdit(user)} title="编辑用户" className="rounded p-1.5 text-zinc-600 hover:bg-zinc-100"><Pencil className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => void toggleStatus(user)} disabled={actionId === user.id} title={user.status === 'active' ? '停用用户' : '启用用户'} className={`rounded p-1.5 ${user.status === 'active' ? 'text-amber-600 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'} disabled:opacity-40`}><ShieldCheck className="h-3.5 w-3.5" /></button>
@@ -402,7 +401,11 @@ export default function AdminUsersPage() {
               <td className="px-4 py-3"><span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px]">{user.role === 'admin' ? '管理员' : 'API 客户'}</span></td>
               <td className="px-4 py-3"><BillingModeLabel user={user} /></td>
               <td className="px-4 py-3"><SubscriptionStatusBadge user={user} /></td>
-              <td className="px-4 py-3 text-right font-mono font-semibold text-[#047857]">{formatCNY(Number(user.credits || 0))}</td>
+              <td className="px-4 py-3 text-right">
+                <button type="button" onClick={() => openBalance(user)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-[11px] font-semibold text-[#047857] hover:border-emerald-300 hover:bg-emerald-100" title={`修改 ${user.email} 的余额`}>
+                  <span>{formatCNY(Number(user.credits || 0))}</span><Pencil className="h-3 w-3" /><span className="font-sans">修改</span>
+                </button>
+              </td>
               <td className="px-4 py-3"><StatusBadge status={user.status === 'active' ? 'active' : 'disabled'} /></td>
               <td className="whitespace-nowrap px-4 py-3 text-zinc-500">{formatDate(user.createdAt || '')}</td>
               <td className="px-4 py-3">{rowActions(user)}</td>
@@ -411,7 +414,7 @@ export default function AdminUsersPage() {
           renderMobileItem={(user) => (
             <article key={user.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{user.email}</strong><small className="font-mono text-[10px] text-zinc-400">{user.id}</small></div><StatusBadge status={user.status === 'active' ? 'active' : 'disabled'} /></div>
-              <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-y border-[#EDF0EE] py-3 text-xs"><span><small className="mb-0.5 block text-[10px] text-zinc-400">计费方式</small><BillingModeLabel user={user} /></span><span className="text-right"><small className="mb-0.5 block text-[10px] text-zinc-400">订阅状态</small><SubscriptionStatusBadge user={user} /></span><span><small className="block text-[10px] text-zinc-400">邮箱验证</small><span className={user.emailVerifiedAt ? 'text-emerald-700' : 'text-amber-700'}>{user.emailVerifiedAt ? '已验证' : '未验证'}</span></span><span className="text-right"><small className="block text-[10px] text-zinc-400">账户余额</small><strong className="text-[#047857]">{formatCNY(Number(user.credits || 0))}</strong></span></div>
+              <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-y border-[#EDF0EE] py-3 text-xs"><span><small className="mb-0.5 block text-[10px] text-zinc-400">计费方式</small><BillingModeLabel user={user} /></span><span className="text-right"><small className="mb-0.5 block text-[10px] text-zinc-400">订阅状态</small><SubscriptionStatusBadge user={user} /></span><span><small className="block text-[10px] text-zinc-400">邮箱验证</small><span className={user.emailVerifiedAt ? 'text-emerald-700' : 'text-amber-700'}>{user.emailVerifiedAt ? '已验证' : '未验证'}</span></span><span className="text-right"><small className="block text-[10px] text-zinc-400">账户余额</small><button type="button" onClick={() => openBalance(user)} className="mt-0.5 inline-flex items-center gap-1 font-semibold text-[#047857]"><strong>{formatCNY(Number(user.credits || 0))}</strong><Pencil className="h-3 w-3" />修改</button></span></div>
               <div className="mt-2 flex items-center justify-between"><small className="text-[10px] text-zinc-400">{formatDate(user.createdAt || '')}</small>{rowActions(user)}</div>
             </article>
           )}

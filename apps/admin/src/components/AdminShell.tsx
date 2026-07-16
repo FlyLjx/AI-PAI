@@ -7,7 +7,9 @@ import {
   Activity, Cable, ChevronRight, CircleDollarSign, CreditCard, Database,
   Gauge, LogOut, Menu, Package, ReceiptText, ShieldCheck, Users, X,
 } from 'lucide-react';
+import { ADMIN_BASE_PATH } from '../../admin-path';
 import { adminAuth, type AdminIdentity } from '@/lib/admin-api';
+import { ADMIN_BUILD_COMMIT, ADMIN_BUILD_VERSION, reloadForBuild } from '@/lib/build-version';
 
 const adminNav = [
   { label: '数据概览', href: '/dashboard', icon: Gauge },
@@ -52,6 +54,29 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
     return () => { active = false; };
   }, [pathname, router]);
 
+  useEffect(() => {
+    let active = true;
+    const checkBuild = async () => {
+      try {
+        const response = await fetch(`${ADMIN_BASE_PATH}/api/build?_=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok || !active) return;
+        const build = await response.json() as { version?: string };
+        if (build.version && build.version !== 'local' && build.version !== ADMIN_BUILD_VERSION) {
+          reloadForBuild(build.version);
+        }
+      } catch {
+        // The admin container may be restarting during an update; the next check retries.
+      }
+    };
+    const firstCheck = window.setTimeout(() => void checkBuild(), 3_000);
+    const timer = window.setInterval(() => void checkBuild(), 30_000);
+    return () => {
+      active = false;
+      window.clearTimeout(firstCheck);
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const logout = async () => {
     await adminAuth.logout().catch(() => undefined);
     router.replace('/login');
@@ -67,7 +92,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       <aside className="app-sidebar">
         <Link href="/dashboard" className="brand-lockup">
           <span className="brand-mark">AI</span>
-          <span><strong>AI-PAI</strong><small>管理控制台</small></span>
+          <span><strong>AI-PAI</strong><small title={`Commit ${ADMIN_BUILD_COMMIT}`}>管理控制台 · {ADMIN_BUILD_VERSION}</small></span>
         </Link>
         <div className="sidebar-section-label">运营管理</div>
         <div className="sidebar-scroll"><Navigation pathname={pathname} onNavigate={() => setMobileOpen(false)} /></div>

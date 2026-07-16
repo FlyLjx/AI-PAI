@@ -16,6 +16,7 @@ import {
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { portalApi, type SystemBuildVersion, type SystemUpdateInfo, type SystemUpdateState } from '@/lib/admin-api';
+import { reloadForBuild } from '@/lib/build-version';
 
 const activeStatuses = new Set<SystemUpdateState['status']>([
   'queued', 'checking', 'pulling', 'backing_up', 'updating', 'rolling_back',
@@ -100,13 +101,18 @@ export function SystemUpdatePanel() {
     return () => window.clearInterval(timer);
   }, [active, load]);
 
+  const updateStatus = info?.state.status;
+  const currentVersion = info?.current.version || '';
   useEffect(() => {
-    const status = info?.state.status;
+    const status = updateStatus;
     if (!status || previousStatus.current === status) return;
-    if (status === 'success' && previousStatus.current && activeStatuses.has(previousStatus.current)) toast.success('系统已更新到最新版本');
+    if (status === 'success' && previousStatus.current && activeStatuses.has(previousStatus.current)) {
+      toast.success('系统已更新，正在载入新版本');
+      window.setTimeout(() => reloadForBuild(currentVersion), 1_000);
+    }
     if (status === 'failed' && previousStatus.current && activeStatuses.has(previousStatus.current)) toast.error('更新失败，服务器已恢复上一版本');
     previousStatus.current = status;
-  }, [info?.state.status]);
+  }, [currentVersion, updateStatus]);
 
   const startUpdate = async () => {
     setSubmitting(true);
