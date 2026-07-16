@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
+import { UsageTrendPanel } from '@/components/dashboard/UsageTrendPanel';
 import {
   APIError,
   getSession,
@@ -56,6 +57,7 @@ export default function DashboardPage() {
   const [totalCalls, setTotalCalls] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [trendRefreshSignal, setTrendRefreshSignal] = useState(0);
 
   const loadDashboard = useCallback(async () => {
     const current = getSession();
@@ -111,11 +113,15 @@ export default function DashboardPage() {
     subscription?.effectiveQuotaRemaining ?? subscription?.quotaRemaining ?? 0,
   );
   const subscriptionActive = Boolean(subscription?.isPaid && subscription?.status === 'active');
+  const refreshDashboard = () => {
+    setTrendRefreshSignal((current) => current + 1);
+    void loadDashboard();
+  };
 
   return (
     <div className="page-stack">
       <PageHeader title="控制台" description="API 接入、额度与调用状态总览">
-        <button className="btn" type="button" onClick={() => void loadDashboard()} disabled={loading}>
+        <button className="btn" type="button" onClick={refreshDashboard} disabled={loading}>
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
           刷新
         </button>
@@ -157,6 +163,8 @@ export default function DashboardPage() {
           color="neutral"
         />
       </section>
+
+      <UsageTrendPanel user={user} refreshSignal={trendRefreshSignal} />
 
       <section className="section-panel">
         <div className="section-head">

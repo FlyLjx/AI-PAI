@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"strings"
+	"time"
 
 	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
@@ -256,6 +257,11 @@ func (r *Repository) FinishLogsForTask(ctx context.Context, taskID string, statu
 }
 
 func (r *Repository) SyncTerminalTaskLogs(ctx context.Context, limit int) error {
+	_, err := r.syncTerminalTaskLogBatch(ctx, limit)
+	return err
+}
+
+func (r *Repository) syncTerminalTaskLogBatch(ctx context.Context, limit int) (int, error) {
 	if limit < 1 {
 		limit = 100
 	}
@@ -279,7 +285,7 @@ func (r *Repository) SyncTerminalTaskLogs(ctx context.Context, limit int) error 
 		LIMIT ?
 	`, limit)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer rows.Close()
 
@@ -293,12 +299,12 @@ func (r *Repository) SyncTerminalTaskLogs(ctx context.Context, limit int) error 
 	for rows.Next() {
 		var item terminalUpdate
 		if err := rows.Scan(&item.id, &item.status, &item.quantity, &item.errorMessage); err != nil {
-			return err
+			return 0, err
 		}
 		updates = append(updates, item)
 	}
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
 	for _, item := range updates {
 		status := "failed"
@@ -319,10 +325,10 @@ func (r *Repository) SyncTerminalTaskLogs(ctx context.Context, limit int) error 
 			}
 		}
 		if err := r.FinishLog(ctx, item.id, status, imageCount, message); err != nil {
-			return err
+			return 0, err
 		}
 	}
-	return nil
+	return len(updates), nil
 }
 
 func (r *Repository) FindLogByID(ctx context.Context, id string) (*UsageLog, error) {
@@ -377,6 +383,36 @@ func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageSt
 		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
 		`+where, args...).Scan(&stats.Total, &stats.Success, &stats.Failed, &stats.ImageCount)
 	return stats, err
+}
+
+func (r *Repository) DailyUsageTrend(ctx context.Context, userID string, startAt time.Time, endAt time.Time) ([]UsageTrendPoint, error) {
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			DATE(created_at) AS usage_date,
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
+			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+		FROM api_access_logs
+		WHERE user_id = ? AND created_at >= ? AND created_at < ?
+		GROUP BY DATE(created_at)
+		ORDER BY DATE(created_at)
+	`, strings.TrimSpace(userID), startAt, endAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []UsageTrendPoint{}
+	for rows.Next() {
+		var day time.Time
+		var item UsageTrendPoint
+		if err := rows.Scan(&day, &item.Total, &item.Success, &item.Failed); err != nil {
+			return nil, err
+		}
+		item.Date = appclock.DatabaseTime(day).Format("2006-01-02")
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func usageLogSelect() string {

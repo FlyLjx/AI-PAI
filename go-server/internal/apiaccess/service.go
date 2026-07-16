@@ -170,6 +170,41 @@ func (s Service) ListLogStats(ctx context.Context, input ListLogsInput) (UsageSt
 	return s.keys.LogStats(ctx, input)
 }
 
+func (s Service) UsageTrend(ctx context.Context, userID string, startDate time.Time, endDate time.Time) ([]UsageTrendPoint, error) {
+	for {
+		synced, err := s.keys.syncTerminalTaskLogBatch(ctx, 500)
+		if err != nil {
+			return nil, err
+		}
+		if synced < 500 {
+			break
+		}
+	}
+	items, err := s.keys.DailyUsageTrend(ctx, userID, startDate, endDate.AddDate(0, 0, 1))
+	if err != nil {
+		return nil, err
+	}
+	return fillUsageTrend(startDate, endDate, items), nil
+}
+
+func fillUsageTrend(startDate time.Time, endDate time.Time, items []UsageTrendPoint) []UsageTrendPoint {
+	byDate := make(map[string]UsageTrendPoint, len(items))
+	for _, item := range items {
+		byDate[item.Date] = item
+	}
+
+	result := make([]UsageTrendPoint, 0)
+	for day := startDate; !day.After(endDate); day = day.AddDate(0, 0, 1) {
+		date := day.Format("2006-01-02")
+		item, ok := byDate[date]
+		if !ok {
+			item = UsageTrendPoint{Date: date}
+		}
+		result = append(result, item)
+	}
+	return result
+}
+
 func publicKeys(keys []AccessKey) []PublicAccessKey {
 	result := make([]PublicAccessKey, 0, len(keys))
 	for _, key := range keys {

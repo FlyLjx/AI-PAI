@@ -104,6 +104,13 @@ type UsageStats struct {
 	ImageCount int `json:"imageCount"`
 }
 
+type UsageTrendPoint struct {
+	Date    string `json:"date"`
+	Total   int    `json:"total"`
+	Success int    `json:"success"`
+	Failed  int    `json:"failed"`
+}
+
 type AdminStats struct {
 	TotalKeys       int `json:"totalKeys"`
 	ActiveKeys      int `json:"activeKeys"`

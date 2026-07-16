@@ -77,6 +77,72 @@ func (r *Router) userAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
+func (r *Router) userAPIAccessTrend(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	userID, err := r.requireFrontUser(req, req.URL.Query().Get("userId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	startDate, endDate, err := usageTrendRange(req, time.Now())
+	if err != nil {
+		writeError(w, newAppError(http.StatusBadRequest, err.Error()))
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	items, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).UsageTrend(ctx, userID, startDate, endDate)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": items,
+		"range": map[string]string{
+			"startDate": startDate.Format("2006-01-02"),
+			"endDate":   endDate.Format("2006-01-02"),
+		},
+	})
+}
+
+func usageTrendRange(req *http.Request, now time.Time) (time.Time, time.Time, error) {
+	location := now.Location()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, location)
+	parseDate := func(value string) (time.Time, error) {
+		return time.ParseInLocation("2006-01-02", strings.TrimSpace(value), location)
+	}
+
+	endDate := today
+	if value := strings.TrimSpace(req.URL.Query().Get("endDate")); value != "" {
+		parsed, err := parseDate(value)
+		if err != nil {
+			return time.Time{}, time.Time{}, errors.New("结束日期格式不正确")
+		}
+		endDate = parsed
+	}
+	startDate := endDate.AddDate(0, 0, -6)
+	if value := strings.TrimSpace(req.URL.Query().Get("startDate")); value != "" {
+		parsed, err := parseDate(value)
+		if err != nil {
+			return time.Time{}, time.Time{}, errors.New("开始日期格式不正确")
+		}
+		startDate = parsed
+	}
+	if endDate.After(today) {
+		return time.Time{}, time.Time{}, errors.New("结束日期不能晚于今天")
+	}
+	if startDate.After(endDate) {
+		return time.Time{}, time.Time{}, errors.New("开始日期不能晚于结束日期")
+	}
+	if int(endDate.Sub(startDate).Hours()/24)+1 > 366 {
+		return time.Time{}, time.Time{}, errors.New("单次最多查询 366 天数据")
+	}
+	return startDate, endDate, nil
+}
+
 func (r *Router) listUserAPIAccessKeys(w http.ResponseWriter, req *http.Request) {
 	userID, err := r.requireFrontUser(req, req.URL.Query().Get("userId"))
 	if err != nil {

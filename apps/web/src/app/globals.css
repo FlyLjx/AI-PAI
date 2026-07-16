@@ -117,7 +117,7 @@ button { cursor: pointer; }
 .app-main { min-width: 0; width: 100%; max-width: 1480px; margin: 0 auto; padding: 26px 30px 42px; }
 .mobile-header, .mobile-drawer, .bottom-nav { display: none; }
 
-.page-stack { display: grid; gap: 18px; }
+.page-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
 .section-panel { border: 1px solid #dce4df; border-radius: 8px; background: #fff; }
 .section-head { min-height: 50px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 16px; border-bottom: 1px solid #edf0ee; }
 .section-head strong { font-size: 13px; }
