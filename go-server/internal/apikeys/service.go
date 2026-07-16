@@ -88,6 +88,9 @@ func (s Service) CreateUserKey(ctx context.Context, userID string, name string) 
 	if user.Status != "active" {
 		return nil, errors.New("用户已被禁用")
 	}
+	if err := users.RequireEmailVerifiedForAPIKey(user); err != nil {
+		return nil, err
+	}
 	existing, err := s.keys.FindByUserID(ctx, userID)
 	if err != nil {
 		return nil, err

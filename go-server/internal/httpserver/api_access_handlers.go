@@ -111,6 +111,10 @@ func (r *Router) createUserAPIAccessKey(w http.ResponseWriter, req *http.Request
 	defer cancel()
 	item, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).CreateUserKey(ctx, userID, input.Name)
 	if err != nil {
+		if errors.Is(err, users.ErrEmailNotVerified) {
+			writeError(w, newAppError(http.StatusForbidden, err.Error()))
+			return
+		}
 		writeError(w, err)
 		return
 	}

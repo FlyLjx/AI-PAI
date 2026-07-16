@@ -1,11 +1,13 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Check,
   Copy,
   LoaderCircle,
   LockKeyhole,
+  MailWarning,
   Plus,
   Power,
   PowerOff,
@@ -54,6 +56,7 @@ export default function ApiKeysPage() {
   const [copied, setCopied] = useState(false);
 
   const [keyToDelete, setKeyToDelete] = useState<APIKey | null>(null);
+  const canCreateKey = Boolean(user?.emailVerifiedAt);
 
   const loadKeys = useCallback(async () => {
     const current = getSession();
@@ -87,9 +90,22 @@ export default function ApiKeysPage() {
     setCopied(false);
   };
 
+  const openCreateModal = () => {
+    if (!canCreateKey) {
+      toast.error('请先完成邮箱验证后创建 API Key');
+      return;
+    }
+    setShowCreateModal(true);
+  };
+
   const handleCreate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!user || !newKeyName.trim()) return;
+    if (!user.emailVerifiedAt) {
+      closeCreateModal();
+      toast.error('请先完成邮箱验证后创建 API Key');
+      return;
+    }
     setCreating(true);
     try {
       const response = await portalApi.createKey(user, newKeyName.trim());
@@ -198,12 +214,19 @@ export default function ApiKeysPage() {
         <button className="btn" type="button" onClick={() => void loadKeys()} disabled={loading}>
           <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />刷新
         </button>
-        <button className="btn primary" type="button" onClick={() => setShowCreateModal(true)}>
+        <button className={`btn ${canCreateKey ? 'primary' : ''}`} type="button" onClick={openCreateModal} disabled={!canCreateKey} title={canCreateKey ? '创建 API Key' : '请先验证邮箱'}>
           <Plus size={14} />创建 Key
         </button>
       </PageHeader>
 
       {error && <div className="notice" role="alert">{error}</div>}
+      {user && !canCreateKey && (
+        <div className="flex flex-col items-start gap-3 rounded-[7px] border border-[#fed7aa] bg-[#fff7ed] px-3 py-2.5 text-[11px] leading-5 text-[#9a4a08] sm:flex-row sm:items-center" role="status">
+          <MailWarning size={16} className="shrink-0" />
+          <span className="min-w-0 flex-1">邮箱尚未验证，当前账户可以登录和查看用量，但暂不能创建 API Key。</span>
+          <Link className="btn shrink-0" href="/settings">验证邮箱</Link>
+        </div>
+      )}
 
       {loading && apiKeys.length === 0 ? (
         <div className="section-panel empty-row">正在读取 API Key...</div>
@@ -244,9 +267,11 @@ export default function ApiKeysPage() {
           emptyState={(
             <EmptyState
               title="还没有 API Key"
-              description="创建凭证后即可调用 OpenAI 兼容 API。"
+              description={canCreateKey ? '创建凭证后即可调用 OpenAI 兼容 API。' : '完成邮箱验证后即可创建访问凭证。'}
               icon={LockKeyhole}
-              action={<button className="btn primary" type="button" onClick={() => setShowCreateModal(true)}><Plus size={14} />创建 Key</button>}
+              action={canCreateKey
+                ? <button className="btn primary" type="button" onClick={openCreateModal}><Plus size={14} />创建 Key</button>
+                : <Link className="btn primary" href="/settings"><MailWarning size={14} />验证邮箱</Link>}
             />
           )}
         />

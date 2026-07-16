@@ -1,6 +1,11 @@
 package users
 
-import "time"
+import (
+	"errors"
+	"time"
+)
+
+var ErrEmailNotVerified = errors.New("请先完成邮箱验证后创建 API Key")
 
 type User struct {
 	ID              string
@@ -28,6 +33,13 @@ type PublicUser struct {
 	CreatedAt       string  `json:"createdAt"`
 	UpdatedAt       string  `json:"updatedAt"`
 	Subscription    any     `json:"subscription"`
+}
+
+func RequireEmailVerifiedForAPIKey(user *User) error {
+	if user == nil || user.EmailVerifiedAt == nil {
+		return ErrEmailNotVerified
+	}
+	return nil
 }
 
 func ToPublicUser(user *User) PublicUser {

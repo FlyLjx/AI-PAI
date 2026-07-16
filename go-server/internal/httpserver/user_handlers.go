@@ -48,13 +48,6 @@ func (r *Router) userLogin(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusForbidden, "用户已被禁用"))
 		return
 	}
-	if values, err := settings.NewRepository(r.db).Get(ctx); err != nil {
-		writeError(w, err)
-		return
-	} else if anyBool(values["registerEmailVerification"]) && user.EmailVerifiedAt == nil {
-		writeError(w, newAppError(http.StatusForbidden, "请先完成邮箱验证后登录"))
-		return
-	}
 	token, err := r.tokens.CreateUserToken(user.ID)
 	if err != nil {
 		writeError(w, err)

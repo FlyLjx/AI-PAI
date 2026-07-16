@@ -190,6 +190,10 @@ func (r *Router) oauthMe(w http.ResponseWriter, req *http.Request) {
 	if selected == nil {
 		created, err := keyService.CreateUserKey(ctx, userID, "Canvas OAuth")
 		if err != nil {
+			if errors.Is(err, users.ErrEmailNotVerified) {
+				writeError(w, newAppError(http.StatusForbidden, err.Error()))
+				return
+			}
 			writeError(w, err)
 			return
 		}

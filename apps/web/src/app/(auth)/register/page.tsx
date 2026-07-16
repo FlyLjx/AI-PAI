@@ -61,6 +61,7 @@ export default function RegisterPage() {
           <p className="mt-3 text-xs leading-6 text-[#6b756f]">
             {verification.message || (verification.sent ? '验证邮件已发送，请查收后完成验证。' : '验证链接已生成，请完成验证后登录。')}
           </p>
+          <p className="mt-2 text-xs leading-6 text-[#9a4a08]">未验证邮箱也可以登录控制台；完成验证后才能创建 API Key。</p>
 
           {!verification.sent && verification.verificationUrl && (
             <div className="notice mt-5 min-w-0">
@@ -72,7 +73,7 @@ export default function RegisterPage() {
             </div>
           )}
 
-          <Link className="btn mt-6 w-full" href="/login">返回登录</Link>
+          <Link className="btn mt-6 w-full" href="/login">前往登录</Link>
         </section>
       </main>
     );
@@ -84,7 +85,7 @@ export default function RegisterPage() {
         <div className="flex items-center gap-2"><span className="brand-mark">AI</span><strong>AI-PAI</strong></div>
         <UserPlus className="mt-8 text-[#0f7a4b]" size={26} />
         <h1 className="mt-4 text-xl font-bold">创建 API 账户</h1>
-        <p className="mt-1 text-xs text-[#6b756f]">注册后即可创建 Key、查看用量并选择计费方式</p>
+        <p className="mt-1 text-xs text-[#6b756f]">注册后可登录控制台，验证邮箱后创建 Key</p>
         <div className="mt-7 space-y-4">
           <label className="field"><span>邮箱</span><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
           <label className="field"><span>密码</span><input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>

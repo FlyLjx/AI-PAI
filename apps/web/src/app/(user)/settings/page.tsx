@@ -156,14 +156,14 @@ export default function SettingsPage() {
       {error && <div className="notice" role="alert">{error}</div>}
 
       <section className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <section className="section-panel overflow-hidden">
-          <form onSubmit={(event) => void requestEmailChange(event)}>
+        <section className="section-panel grid overflow-hidden xl:grid-cols-2">
+          <form className="min-w-0" onSubmit={(event) => void requestEmailChange(event)}>
             <div className="section-head">
               <div className="flex items-center gap-2"><MailPlus size={16} className="text-blue-600" /><strong>修改登录邮箱</strong></div>
               <span className="status-pill processing">验证后生效</span>
             </div>
             <div className="section-body">
-              <div className="grid max-w-xl gap-4">
+              <div className="grid gap-4">
                 <div className="field">
                   <label htmlFor="current-email">当前邮箱</label>
                   <input id="current-email" type="email" value={user?.email || ''} disabled />
@@ -213,13 +213,13 @@ export default function SettingsPage() {
             </div>
           </form>
 
-          <form className="border-t border-[#dce4df]" onSubmit={(event) => void updatePassword(event)}>
+          <form className="min-w-0 border-t border-[#dce4df] xl:border-l xl:border-t-0" onSubmit={(event) => void updatePassword(event)}>
             <div className="section-head">
               <div className="flex items-center gap-2"><LockKeyhole size={16} className="text-[#087443]" /><strong>修改密码</strong></div>
               <span className="status-pill active">账户安全</span>
             </div>
             <div className="section-body">
-              <div className="grid max-w-xl gap-4">
+              <div className="grid gap-4">
                 <PasswordField
                   id="current-password"
                   label="当前密码"
@@ -273,10 +273,11 @@ export default function SettingsPage() {
                 <dl className="grid gap-3 border-y border-[#edf0ee] py-4 text-[10px]">
                   <div className="flex items-center justify-between gap-3"><dt className="text-zinc-500">账户 ID</dt><dd className="mono max-w-[190px] truncate" title={user.id}>{user.id}</dd></div>
                   <div className="flex items-center justify-between gap-3"><dt className="text-zinc-500">账户状态</dt><dd><span className={`status-pill ${user.status === 'active' ? 'active' : 'disabled'}`}>{user.status === 'active' ? '正常' : user.status}</span></dd></div>
+                  <div className="flex items-center justify-between gap-3"><dt className="text-zinc-500">邮箱验证</dt><dd><span className={`status-pill ${user.emailVerifiedAt ? 'active' : 'processing'}`}>{user.emailVerifiedAt ? '已验证' : '未验证'}</span></dd></div>
                   <div className="flex items-center justify-between gap-3"><dt className="text-zinc-500">注册时间</dt><dd className="mono">{user.createdAt ? formatDate(user.createdAt, false) : '-'}</dd></div>
                 </dl>
                 <div className="grid gap-2 text-[10px] text-zinc-500">
-                  <span className="flex items-center gap-2"><MailCheck size={13} className="text-blue-600" />登录邮箱：{user.emailVerifiedAt ? '已验证' : '未验证'}</span>
+                  <span className="flex items-center gap-2"><MailCheck size={13} className="text-blue-600" />{user.emailVerifiedAt ? '邮箱已验证，可创建 API Key' : '邮箱未验证，暂不能创建 API Key'}</span>
                   <span className="flex items-center gap-2"><BadgeCheck size={13} className="text-[#087443]" />API 权限与账户状态同步</span>
                 </div>
               </div>
