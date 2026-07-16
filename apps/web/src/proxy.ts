@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 const DEFAULT_ADMIN_INTERNAL_URL = 'http://127.0.0.1:3002';
+const ADMIN_CACHE_CONTROL = 'private, no-cache, no-store, max-age=0, must-revalidate';
 
 export function proxy(request: NextRequest) {
   const configured = process.env.ADMIN_INTERNAL_URL || DEFAULT_ADMIN_INTERNAL_URL;
@@ -13,7 +14,9 @@ export function proxy(request: NextRequest) {
   }
 
   const destination = new URL(`${request.nextUrl.pathname}${request.nextUrl.search}`, adminOrigin);
-  return NextResponse.rewrite(destination);
+  const response = NextResponse.rewrite(destination);
+  response.headers.set('Cache-Control', ADMIN_CACHE_CONTROL);
+  return response;
 }
 
 export const config = {
