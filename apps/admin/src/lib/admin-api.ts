@@ -106,6 +106,37 @@ export type ProviderModel = {
   cost4k: number;
 };
 
+export type SystemBuildVersion = {
+  version: string;
+  runId?: number;
+  runNumber?: number;
+  commit: string;
+  publishedAt?: string;
+  url?: string;
+};
+
+export type SystemUpdateState = {
+  status: 'unconfigured' | 'idle' | 'queued' | 'checking' | 'pulling' | 'backing_up' | 'updating' | 'rolling_back' | 'success' | 'failed';
+  targetVersion?: string;
+  targetRunId?: number;
+  targetCommit?: string;
+  message?: string;
+  backupDirectory?: string;
+  startedAt?: string;
+  finishedAt?: string;
+};
+
+export type SystemUpdateInfo = {
+  configured: boolean;
+  current: SystemBuildVersion;
+  latest: SystemBuildVersion;
+  updateAvailable: boolean;
+  canUpdate: boolean;
+  checkError?: string;
+  state: SystemUpdateState;
+  checkedAt: string;
+};
+
 type Envelope<T> = { data: T; pagination?: { total: number; page: number; pageSize: number } };
 
 export class APIError extends Error {
@@ -176,6 +207,8 @@ export const portalApi = {
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),
   settings: () => api<Record<string, unknown>>('/api/settings'),
   updateSettings: (input: Record<string, unknown>) => api('/api/settings', { method: 'PATCH', body: JSON.stringify(input) }),
+  systemUpdate: (refresh = false) => api<SystemUpdateInfo>(`/api/admin/system-update${query({ refresh: refresh ? 1 : undefined })}`),
+  startSystemUpdate: () => api<SystemUpdateInfo>('/api/admin/system-update', { method: 'POST' }),
   logs: () => api<SystemLogFile[]>('/api/system-logs'),
   systemLogDetail: (name: string, maxBytes = 300000) => api<SystemLogDetail>(`/api/system-logs/detail${query({ name, maxBytes })}`),
   deleteSystemLog: (name: string) => api(`/api/system-logs/${encodeURIComponent(name)}`, { method: 'DELETE' }),

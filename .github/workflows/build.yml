@@ -35,13 +35,36 @@ jobs:
         run: go test ./...
       - name: Build Go
         working-directory: go-server
-        run: CGO_ENABLED=0 go build -trimpath -o ../ai-pai-api ./cmd/ai-pai
+        env:
+          BUILD_VERSION: build-${{ github.run_number }}
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          LDFLAGS="-s -w -X aipi-go/internal/build.Version=$BUILD_VERSION -X aipi-go/internal/build.Commit=$BUILD_COMMIT -X aipi-go/internal/build.Time=$BUILD_TIME"
+          CGO_ENABLED=0 go build -trimpath -ldflags "$LDFLAGS" -o ../ai-pai-api ./cmd/ai-pai
 
       - name: Build images
+        env:
+          BUILD_VERSION: build-${{ github.run_number }}
+          BUILD_COMMIT: ${{ github.sha }}
         run: |
-          docker build -t ghcr.io/flyljx/ai-pai-web:ci .
-          docker build -f Dockerfile.admin -t ghcr.io/flyljx/ai-pai-admin:ci .
-          docker build -t ghcr.io/flyljx/ai-pai-api:ci ./go-server
+          BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+          docker build \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            --label org.opencontainers.image.version=$BUILD_VERSION \
+            -t ghcr.io/flyljx/ai-pai-web:ci .
+          docker build \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            --label org.opencontainers.image.version=$BUILD_VERSION \
+            -f Dockerfile.admin \
+            -t ghcr.io/flyljx/ai-pai-admin:ci .
+          docker build \
+            --label org.opencontainers.image.revision=${{ github.sha }} \
+            --label org.opencontainers.image.version=$BUILD_VERSION \
+            --build-arg BUILD_VERSION=$BUILD_VERSION \
+            --build-arg BUILD_COMMIT=$BUILD_COMMIT \
+            --build-arg BUILD_TIME=$BUILD_TIME \
+            -t ghcr.io/flyljx/ai-pai-api:ci ./go-server
 
       - uses: docker/login-action@v3
         if: github.event_name != 'pull_request'
@@ -51,15 +74,26 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Push images
         if: github.event_name != 'pull_request'
+        env:
+          BUILD_VERSION: build-${{ github.run_number }}
         run: |
           for image in web admin api; do
             docker tag ghcr.io/flyljx/ai-pai-$image:ci ghcr.io/flyljx/ai-pai-$image:latest
             docker tag ghcr.io/flyljx/ai-pai-$image:ci ghcr.io/flyljx/ai-pai-$image:${{ github.sha }}
+            docker tag ghcr.io/flyljx/ai-pai-$image:ci ghcr.io/flyljx/ai-pai-$image:$BUILD_VERSION
             docker push ghcr.io/flyljx/ai-pai-$image:latest
             docker push ghcr.io/flyljx/ai-pai-$image:${{ github.sha }}
+            docker push ghcr.io/flyljx/ai-pai-$image:$BUILD_VERSION
           done
+
+      - name: Publish build version
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "### AI-PAI build-${{ github.run_number }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: \`${{ github.sha }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Images: web, admin, api" >> "$GITHUB_STEP_SUMMARY"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ai-pai-api-linux-amd64
+          name: ai-pai-api-linux-amd64-build-${{ github.run_number }}
           path: ai-pai-api

@@ -1,0 +1,14 @@
+[Unit]
+Description=Apply an AI-PAI update selected in the admin console
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+ConditionPathExists=/opt/ai-pai/update/request.json
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=AI_PAI_ROOT=/opt/ai-pai
+ExecStart=/opt/ai-pai/bin/ai-pai-update-worker
+TimeoutStartSec=30min
+Nice=10

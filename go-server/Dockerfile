@@ -3,11 +3,16 @@ WORKDIR /src
 ARG TARGETOS=linux
 ARG TARGETARCH=amd64
 ARG GOPROXY=https://proxy.golang.org,direct
+ARG BUILD_VERSION=go-dev
+ARG BUILD_COMMIT=local
+ARG BUILD_TIME=
 ENV GOPROXY=$GOPROXY
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/ai-pai ./cmd/ai-pai
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
+    -ldflags "-s -w -X aipi-go/internal/build.Version=$BUILD_VERSION -X aipi-go/internal/build.Commit=$BUILD_COMMIT -X aipi-go/internal/build.Time=$BUILD_TIME" \
+    -o /out/ai-pai ./cmd/ai-pai
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app

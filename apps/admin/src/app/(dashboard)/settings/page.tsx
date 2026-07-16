@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { CreditCard, Loader2, Mail, RefreshCw, Save, Server, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/PageHeader';
+import { SystemUpdatePanel } from '@/components/settings/SystemUpdatePanel';
 import { portalApi } from '@/lib/admin-api';
 
 type SettingsForm = {
@@ -152,6 +153,8 @@ export default function AdminSettingsPage() {
       <PageHeader title="系统设置" description="配置 API 中转站的注册、请求处理、支付和通知参数。">
         <button type="button" onClick={() => void load()} disabled={loading} title="重新加载" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
       </PageHeader>
+
+      <SystemUpdatePanel />
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>}
 

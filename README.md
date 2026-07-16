@@ -67,6 +67,22 @@ docker compose up -d --build
 
 Compose 保留原 `postgres_data` 数据卷名称，升级时不会创建新的业务数据库卷。
 
+### 后台手动更新
+
+成功的 `main` 分支 Build 会发布 `build-<Actions run_number>` 版本标签。管理后台“系统设置”会显示当前版本和 GitHub Actions 最新成功版本；检测到新版本后，由管理员确认并手动触发更新，不会定时自动部署。
+
+宿主机更新 worker 收到请求后会拉取同一个 `build-N` 的 Web、Admin 和 API 镜像，先创建并校验 PostgreSQL 逻辑备份，再替换应用容器。健康检查失败时自动恢复更新前的应用镜像，数据库备份保留在 `/opt/ai-pai/backups/manual-updates`，默认保留最近 3 份。
+
+```bash
+install -D -m 0750 deploy/ai-pai-update-worker.sh /opt/ai-pai/bin/ai-pai-update-worker
+install -D -m 0644 deploy/systemd/ai-pai-update.service /etc/systemd/system/ai-pai-update.service
+install -D -m 0644 deploy/systemd/ai-pai-update.path /etc/systemd/system/ai-pai-update.path
+mkdir -p /opt/ai-pai/update
+chmod 700 /opt/ai-pai/update
+systemctl daemon-reload
+systemctl enable --now ai-pai-update.path
+```
+
 生产环境至少应修改 `DB_PASSWORD`，并备份现有数据库后再升级。将 `APP_PUBLIC_ORIGIN` 设置为唯一的外部来源地址，并保持 `AUTH_ACTION_URLS_IN_RESPONSE=false`；启用 HTTPS 后将 `ADMIN_COOKIE_SECURE` 设置为 `true`。
 
 ### 全新数据库的首个管理员

@@ -41,6 +41,9 @@ services:
       DB_SSLMODE: ${DB_SSLMODE:-disable}
       SERVE_STATIC: "false"
       LOG_DIR: /app/logs
+      SYSTEM_UPDATE_DIR: /app/update
+      GITHUB_UPDATE_REPOSITORY: ${GITHUB_UPDATE_REPOSITORY:-FlyLjx/AI-PAI}
+      GITHUB_UPDATE_WORKFLOW: ${GITHUB_UPDATE_WORKFLOW:-build.yml}
       PORT: 3001
     depends_on:
       postgres:
@@ -49,6 +52,7 @@ services:
       - "3001"
     volumes:
       - ./logs:/app/logs
+      - ./update:/app/update
 
   ai-pai:
     build:

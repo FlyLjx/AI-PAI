@@ -15,6 +15,10 @@ type Config struct {
 	PublicDir        string
 	LogDir           string
 	LogLevel         string
+	SystemUpdateDir  string
+	GitHubRepository string
+	GitHubWorkflow   string
+	GitHubAPIBaseURL string
 	Database         DatabaseConfig
 }
 
@@ -49,6 +53,10 @@ func Load() Config {
 		PublicDir:        envString("PUBLIC_DIR", "public"),
 		LogDir:           envString("LOG_DIR", "logs"),
 		LogLevel:         strings.ToLower(envString("LOG_LEVEL", "info")),
+		SystemUpdateDir:  envString("SYSTEM_UPDATE_DIR", ""),
+		GitHubRepository: envString("GITHUB_UPDATE_REPOSITORY", "FlyLjx/AI-PAI"),
+		GitHubWorkflow:   envString("GITHUB_UPDATE_WORKFLOW", "build.yml"),
+		GitHubAPIBaseURL: strings.TrimRight(envString("GITHUB_API_BASE_URL", "https://api.github.com"), "/"),
 		Database: DatabaseConfig{
 			Driver:       strings.ToLower(envString("DB_DRIVER", envString("DATABASE_DRIVER", "mysql"))),
 			Host:         envString("DB_HOST", envString("MYSQL_HOST", "127.0.0.1")),

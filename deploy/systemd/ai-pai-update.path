@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for AI-PAI update requests from the admin console
+
+[Path]
+PathExists=/opt/ai-pai/update/request.json
+Unit=ai-pai-update.service
+
+[Install]
+WantedBy=paths.target
