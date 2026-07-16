@@ -156,8 +156,8 @@ export default function SettingsPage() {
       {error && <div className="notice" role="alert">{error}</div>}
 
       <section className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="grid gap-4">
-          <form className="section-panel" onSubmit={(event) => void requestEmailChange(event)}>
+        <section className="section-panel overflow-hidden">
+          <form onSubmit={(event) => void requestEmailChange(event)}>
             <div className="section-head">
               <div className="flex items-center gap-2"><MailPlus size={16} className="text-blue-600" /><strong>修改登录邮箱</strong></div>
               <span className="status-pill processing">验证后生效</span>
@@ -213,7 +213,7 @@ export default function SettingsPage() {
             </div>
           </form>
 
-          <form className="section-panel" onSubmit={(event) => void updatePassword(event)}>
+          <form className="border-t border-[#dce4df]" onSubmit={(event) => void updatePassword(event)}>
             <div className="section-head">
               <div className="flex items-center gap-2"><LockKeyhole size={16} className="text-[#087443]" /><strong>修改密码</strong></div>
               <span className="status-pill active">账户安全</span>
@@ -257,7 +257,7 @@ export default function SettingsPage() {
               </div>
             </div>
           </form>
-        </div>
+        </section>
 
         <aside className="section-panel">
           <div className="section-head"><strong>账户信息</strong><UserRound size={16} className="text-zinc-400" /></div>
