@@ -72,6 +72,9 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "api_access_keys", "concurrency_limit", "INTEGER NOT NULL DEFAULT 10", "status"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "api_access_keys", "billing_mode", "VARCHAR(16) NULL", "concurrency_limit"); err != nil {
+		return err
+	}
 	if err := normalizeAPIAccessKeyConcurrencyDefaults(ctx, db); err != nil {
 		return err
 	}
@@ -92,6 +95,7 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_user_checkins_user_id_checkin_date", `CREATE INDEX idx_user_checkins_user_id_checkin_date ON user_checkins (user_id, checkin_date)`},
 		{"idx_user_invites_invitee_id", `CREATE INDEX idx_user_invites_invitee_id ON user_invites (invitee_id)`},
 		{"idx_user_invites_inviter_id", `CREATE INDEX idx_user_invites_inviter_id ON user_invites (inviter_id)`},
+		{"idx_api_access_logs_task_id", `CREATE INDEX idx_api_access_logs_task_id ON api_access_logs (task_id)`},
 		{"idx_subscription_lottery_prizes_status_sort", `CREATE INDEX idx_subscription_lottery_prizes_status_sort ON subscription_lottery_prizes (status, sort_order)`},
 		{"idx_subscription_lottery_records_user_created", `CREATE INDEX idx_subscription_lottery_records_user_created ON subscription_lottery_records (user_id, created_at)`},
 		{"idx_subscription_lottery_records_prize_date", `CREATE INDEX idx_subscription_lottery_records_prize_date ON subscription_lottery_records (prize_id, draw_date)`},
@@ -534,6 +538,7 @@ func schemaBootstrapStatements() []string {
 				key_plain VARCHAR(255) NULL,
 				status VARCHAR(16) NOT NULL DEFAULT 'active',
 				concurrency_limit INTEGER NOT NULL DEFAULT 10,
+				billing_mode VARCHAR(16) NULL,
 				last_used_at TIMESTAMP NULL,
 				deleted_at TIMESTAMP NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -586,6 +591,7 @@ func schemaBootstrapStatements() []string {
 			`CREATE INDEX IF NOT EXISTS idx_api_access_keys_prefix_status ON api_access_keys (key_prefix, status)`,
 			`CREATE INDEX IF NOT EXISTS idx_api_access_logs_user_created ON api_access_logs (user_id, created_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_api_access_logs_key_created ON api_access_logs (api_key_id, created_at)`,
+			`CREATE INDEX IF NOT EXISTS idx_api_access_logs_task_id ON api_access_logs (task_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_api_access_logs_status_created ON api_access_logs (status, created_at)`,
 		}
 	}
@@ -609,6 +615,7 @@ func schemaBootstrapStatements() []string {
 			key_plain VARCHAR(255) NULL,
 			status VARCHAR(16) NOT NULL DEFAULT 'active',
 			concurrency_limit INTEGER NOT NULL DEFAULT 10,
+			billing_mode VARCHAR(16) NULL,
 			last_used_at DATETIME NULL,
 			deleted_at DATETIME NULL,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -635,6 +642,7 @@ func schemaBootstrapStatements() []string {
 			finished_at DATETIME NULL,
 			INDEX idx_api_access_logs_user_created (user_id, created_at),
 			INDEX idx_api_access_logs_key_created (api_key_id, created_at),
+			INDEX idx_api_access_logs_task_id (task_id),
 			INDEX idx_api_access_logs_status_created (status, created_at)
 		)`,
 		`CREATE TABLE IF NOT EXISTS subscription_lottery_prizes (

@@ -49,6 +49,7 @@ type compatTaskResult struct {
 	urls       []string
 	message    string
 	statusCode int
+	errorType  string
 	err        error
 }
 
@@ -71,10 +72,11 @@ func (r *Router) compatModels(w http.ResponseWriter, req *http.Request) {
 	data := []map[string]any{}
 	for _, item := range uniqueCompatModels(items) {
 		data = append(data, map[string]any{
-			"id":       item.DisplayName,
-			"object":   "model",
-			"created":  item.CreatedAt.Unix(),
-			"owned_by": "AI PAI",
+			"id":                 item.DisplayName,
+			"object":             "model",
+			"created":            item.CreatedAt.Unix(),
+			"owned_by":           "AI PAI",
+			"enabled_size_tiers": models.ParseEnabledSizeTiersFromStrings(item.EnabledSizeTiers),
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -153,7 +155,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 	accessLogID := newID()
 	var savedTask *tasks.Task
 	if err := r.withUserGenerationLock(ctx, auth.User.ID, func(tx *database.Tx) error {
-		costCredits, err := r.generationBillingQuote(ctx, tx, auth.User.ID, *model, sizeTier, input.N)
+		costCredits, err := r.generationBillingQuote(ctx, tx, auth.User.ID, *model, sizeTier, input.N, auth.APIKey.BillingMode)
 		if err != nil {
 			return err
 		}
@@ -205,9 +207,8 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		var appErr appError
 		if errors.As(err, &appErr) {
 			status = appErr.status
-			errorType = "insufficient_quota"
 			if status == http.StatusPaymentRequired {
-				message = "用户 Key 额度不足"
+				errorType = "insufficient_quota"
 				logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				errorMessage := message
 				_, _ = apiaccess.NewRepository(r.db).CreateLog(logCtx, apiaccess.UsageLog{
@@ -226,6 +227,8 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 					ErrorMessage:   &errorMessage,
 				})
 				logCancel()
+			} else if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
+				errorType = "invalid_request_error"
 			}
 		}
 		writeOpenAIError(w, status, message, errorType)
@@ -257,7 +260,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		if message == "" {
 			message = result.err.Error()
 		}
-		writeOpenAIError(w, status, message, "api_error")
+		writeOpenAIError(w, status, message, defaultString(result.errorType, "api_error"))
 		return
 	}
 
@@ -292,16 +295,25 @@ func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string) compat
 		if finalTask.ErrorMessage != nil && *finalTask.ErrorMessage != "" {
 			message = *finalTask.ErrorMessage
 		}
+		statusCode, errorType := compatTaskFailureResponse(message)
 		r.finishCompatAccessLog(accessLogID, "failed", 0, message)
 		return compatTaskResult{
 			message:    message,
-			statusCode: http.StatusInternalServerError,
+			statusCode: statusCode,
+			errorType:  errorType,
 			err:        errors.New(message),
 		}
 	}
 	urls := tasks.ToPublic(finalTask).ResultURLs
 	r.finishCompatAccessLog(accessLogID, "success", len(urls), "")
 	return compatTaskResult{urls: urls}
+}
+
+func compatTaskFailureResponse(message string) (int, string) {
+	if strings.Contains(message, generation.ErrInsufficientCredits.Error()) {
+		return http.StatusPaymentRequired, "insufficient_quota"
+	}
+	return http.StatusInternalServerError, "api_error"
 }
 
 func (r *Router) finishCompatAccessLog(accessLogID string, status string, imageCount int, message string) {

@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { ArrowRight, KeyRound, LockKeyhole, Mail } from 'lucide-react';
+import { ArrowRight, LoaderCircle, LockKeyhole, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { login } from '@/lib/portal-api';
 import { useRegistrationAvailability } from '@/lib/use-registration-availability';
@@ -27,30 +27,25 @@ export default function LoginPage() {
   };
 
   return (
-    <main className="min-h-screen grid lg:grid-cols-[minmax(0,1fr)_460px] bg-white">
-      <section className="hidden lg:flex flex-col justify-between bg-[#17201b] text-white p-12">
-        <div className="flex items-center gap-3"><span className="brand-mark !bg-white !text-[#17201b]">AI</span><strong>AI-PAI</strong></div>
-        <div className="max-w-xl">
-          <span className="text-xs text-emerald-300 font-mono">OPENAI-COMPATIBLE API GATEWAY</span>
-          <h1 className="mt-5 text-4xl font-bold leading-tight">稳定连接上游模型，<br />统一管理调用与成本。</h1>
-          <p className="mt-5 text-sm leading-7 text-white/60">面向开发者和团队的图像 API 中转站。支持订阅额度与账户余额两种计费方式。</p>
+    <main className="grid min-h-screen place-items-center bg-[#F6F8F7] p-5">
+      <section className="w-full max-w-[390px]">
+        <div className="mb-6 flex items-center justify-center gap-2.5">
+          <span className="brand-mark">AI</span>
+          <span className="flex flex-col"><strong className="text-sm leading-4 text-[#17201B]">AI-PAI</strong><small className="text-[10px] text-zinc-500">开发者控制台</small></span>
         </div>
-        <div className="flex gap-7 text-xs text-white/55"><span>API Key 隔离</span><span>用量可追溯</span><span>失败不扣费</span></div>
-      </section>
-      <section className="flex items-center justify-center p-6 sm:p-10 bg-[#f7f8f6]">
-        <form onSubmit={submit} className="w-full max-w-sm section-panel p-6 sm:p-8">
-          <div className="lg:hidden flex items-center gap-2 mb-8"><span className="brand-mark">AI</span><strong>AI-PAI</strong></div>
-          <KeyRound className="text-[#0f7a4b]" size={25} />
-          <h2 className="mt-4 text-xl font-bold">登录开发者控制台</h2>
-          <p className="mt-1 text-xs text-[#6b756f]">使用账户邮箱和密码继续</p>
-          <div className="mt-7 space-y-4">
-            <label className="field"><span className="flex items-center gap-1.5"><Mail size={13} />邮箱</span><input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" /></label>
-            <label className="field"><span className="flex items-center gap-1.5"><LockKeyhole size={13} />密码</span><input type="password" required minLength={6} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="至少 6 位" /></label>
+        <form onSubmit={submit} className="section-panel w-full p-6 sm:p-7">
+          <div className="text-center">
+            <h1 className="text-lg font-bold text-[#17201B]">登录开发者控制台</h1>
+            <p className="mt-1 text-[11px] text-zinc-500">使用账户邮箱和密码继续</p>
+          </div>
+          <div className="mt-6 space-y-4">
+            <label className="field"><span className="flex items-center gap-1.5"><Mail size={13} />邮箱</span><input type="email" required autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" autoFocus /></label>
+            <label className="field"><span className="flex items-center gap-1.5"><LockKeyhole size={13} />密码</span><input type="password" required minLength={6} autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="请输入密码" /></label>
           </div>
           <div className="mt-3 flex justify-end">
             <Link className="text-xs font-semibold text-[#087443] hover:text-[#065f37]" href="/forgot-password">忘记密码？</Link>
           </div>
-          <button className="btn primary w-full mt-6" disabled={loading}>{loading ? '登录中...' : <><span>登录</span><ArrowRight size={15} /></>}</button>
+          <button className="btn primary mt-6 w-full" disabled={loading}>{loading ? <><LoaderCircle size={15} className="animate-spin" /><span>登录中</span></> : <><span>登录</span><ArrowRight size={15} /></>}</button>
           {registrationAvailability === 'open' && <p className="mt-5 text-center text-xs text-[#748078]">还没有账户？ <Link className="text-[#087443] font-bold" href="/register">注册账户</Link></p>}
         </form>
       </section>

@@ -2,7 +2,6 @@ package pricing
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"math"
 	"sort"
@@ -118,27 +117,7 @@ func ApplyUnitPrice(unitPrice float64, incentive Result, subscriptionDiscountPer
 }
 
 func CurrentSubscriptionDiscount(ctx context.Context, db *database.DB, userID string) (float64, error) {
-	var discount sql.NullFloat64
-	err := db.QueryRowContext(ctx, `
-		SELECT subscription_plans.discount_percent
-		FROM user_subscriptions
-		LEFT JOIN subscription_plans ON subscription_plans.id = user_subscriptions.plan_id
-		WHERE user_subscriptions.user_id = ?
-			AND user_subscriptions.status = 'active'
-			AND user_subscriptions.expires_at > NOW()
-		ORDER BY user_subscriptions.expires_at DESC
-		LIMIT 1
-	`, userID).Scan(&discount)
-	if err == sql.ErrNoRows {
-		return 0, nil
-	}
-	if err != nil {
-		return 0, err
-	}
-	if !discount.Valid {
-		return 0, nil
-	}
-	return normalizeDiscount(discount.Float64), nil
+	return 0, nil
 }
 
 func ParsePlan(values map[string]any) Plan {

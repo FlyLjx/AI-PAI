@@ -34,6 +34,12 @@ type generateImageInput struct {
 	OpenAIParams          any      `json:"openaiParams"`
 }
 
+const (
+	generationBillingModeAuto         = "auto"
+	generationBillingModeSubscription = "subscription"
+	generationBillingModeBalance      = "balance"
+)
+
 func (r *Router) generateImage(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
@@ -147,7 +153,7 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	prompt := input.Prompt
 	var savedTask *tasks.Task
 	if err := r.withUserGenerationLock(ctx, user.ID, func(tx *database.Tx) error {
-		costCredits, err := r.generationBillingQuote(ctx, tx, user.ID, *model, input.SizeTier, input.Quantity)
+		costCredits, err := r.generationBillingQuote(ctx, tx, user.ID, *model, input.SizeTier, input.Quantity, generationBillingModeAuto)
 		if err != nil {
 			return err
 		}
@@ -192,19 +198,26 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	return savedTask, nil
 }
 
-func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, userID string, model models.Model, sizeTier string, quantity int) (float64, error) {
+func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, userID string, model models.Model, sizeTier string, quantity int, billingMode string) (float64, error) {
 	if quantity < 1 {
 		quantity = 1
 	}
-	entitlement, err := r.currentSubscriptionEntitlement(ctx, userID)
-	if err != nil {
-		return 0, err
+	billingMode = normalizeGenerationBillingMode(billingMode)
+	if billingMode == "" {
+		return 0, newAppError(http.StatusBadRequest, "API Key 计费模式不正确")
 	}
-	if entitlement != nil && entitlement.IsPaid {
-		if err := requireGenerationQuotaForEntitlement(entitlement, model, quantity); err != nil {
+	if billingMode != generationBillingModeBalance {
+		entitlement, err := r.currentSubscriptionEntitlement(ctx, userID)
+		if err != nil {
 			return 0, err
 		}
-		return 0, nil
+		handled, err := generationSubscriptionBillingQuote(entitlement, model, quantity, billingMode == generationBillingModeSubscription)
+		if err != nil {
+			return 0, err
+		}
+		if handled {
+			return 0, nil
+		}
 	}
 
 	price := generationBalanceCost(modelPriceForTier(model, sizeTier), quantity)
@@ -221,9 +234,42 @@ func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, us
 		return 0, err
 	}
 	if !hasAvailableGenerationBalance(credits, reserved, price) {
-		return 0, newAppError(http.StatusPaymentRequired, "账户余额不足，请充值或开通订阅")
+		return 0, newAppError(http.StatusPaymentRequired, generationBalanceInsufficientMessage(billingMode))
 	}
 	return price, nil
+}
+
+func generationBalanceInsufficientMessage(billingMode string) string {
+	if billingMode == generationBillingModeBalance {
+		return "账户余额不足，请先充值"
+	}
+	return "账户余额不足，请充值或开通订阅"
+}
+
+func generationSubscriptionBillingQuote(entitlement *operations.SubscriptionEntitlement, model models.Model, quantity int, required bool) (bool, error) {
+	if entitlement == nil || !entitlement.IsPaid {
+		if required {
+			return true, newAppError(http.StatusPaymentRequired, "订阅已到期或未开通，请续费后再调用")
+		}
+		return false, nil
+	}
+	if err := requireGenerationQuotaForEntitlement(entitlement, model, quantity); err != nil {
+		return true, err
+	}
+	return true, nil
+}
+
+func normalizeGenerationBillingMode(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", generationBillingModeAuto:
+		return generationBillingModeAuto
+	case generationBillingModeSubscription:
+		return generationBillingModeSubscription
+	case generationBillingModeBalance:
+		return generationBillingModeBalance
+	default:
+		return ""
+	}
 }
 
 func generationBalanceCost(unitPrice float64, quantity int) float64 {

@@ -102,7 +102,7 @@ export function StatusBadge({ status, customLabel }: StatusBadgeProps) {
   const style = getStyles();
 
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-medium leading-4 ${style.bg} ${style.text} ${style.border}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[12px] font-medium leading-4 ${style.bg} ${style.text} ${style.border}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`}></span>
       <span>{customLabel || style.label}</span>
     </span>

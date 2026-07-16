@@ -2,6 +2,12 @@ package apiaccess
 
 import "time"
 
+const (
+	BillingModeAuto         = "auto"
+	BillingModeSubscription = "subscription"
+	BillingModeBalance      = "balance"
+)
+
 type AccessKey struct {
 	ID               string
 	UserID           string
@@ -12,6 +18,7 @@ type AccessKey struct {
 	KeyPlain         *string
 	Status           string
 	ConcurrencyLimit int
+	BillingMode      string
 	LastUsedAt       *time.Time
 	DeletedAt        *time.Time
 	CreatedAt        time.Time
@@ -51,10 +58,10 @@ type PublicAccessKey struct {
 	UserEmail        *string `json:"userEmail,omitempty"`
 	Name             string  `json:"name"`
 	KeyPrefix        string  `json:"keyPrefix"`
-	KeyPlain         *string `json:"keyPlain,omitempty"`
 	Key              *string `json:"key,omitempty"`
 	Status           string  `json:"status"`
 	ConcurrencyLimit int     `json:"concurrencyLimit"`
+	BillingMode      string  `json:"billingMode"`
 	LastUsedAt       *string `json:"lastUsedAt"`
 	DeletedAt        *string `json:"deletedAt,omitempty"`
 	CreatedAt        string  `json:"createdAt"`
@@ -127,9 +134,9 @@ func ToPublicKey(key AccessKey) PublicAccessKey {
 		UserEmail:        key.UserEmail,
 		Name:             key.Name,
 		KeyPrefix:        key.KeyPrefix,
-		KeyPlain:         key.KeyPlain,
 		Status:           key.Status,
 		ConcurrencyLimit: normalizedConcurrencyLimit(key.ConcurrencyLimit),
+		BillingMode:      normalizedStoredBillingMode(key.BillingMode),
 		LastUsedAt:       formatTime(key.LastUsedAt),
 		DeletedAt:        formatTime(key.DeletedAt),
 		CreatedAt:        key.CreatedAt.Format(time.RFC3339),
@@ -179,4 +186,13 @@ func normalizedConcurrencyLimit(value int) int {
 		return 10
 	}
 	return value
+}
+
+func normalizedStoredBillingMode(value string) string {
+	switch value {
+	case BillingModeSubscription, BillingModeBalance:
+		return value
+	default:
+		return BillingModeAuto
+	}
 }

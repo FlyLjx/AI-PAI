@@ -3,7 +3,9 @@ package operations
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math"
@@ -11,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
@@ -22,10 +25,12 @@ type Repository struct {
 }
 
 var (
-	ErrNoLotteryPrize       = errors.New("no active lottery prize")
-	ErrInvalidRechargeOrder = errors.New("充值订单的余额数量不正确")
+	ErrNoLotteryPrize            = errors.New("no active lottery prize")
+	ErrInvalidRechargeOrder      = errors.New("充值订单的余额数量不正确")
+	ErrInvalidCustomSubscription = errors.New("自定义订阅参数不正确")
 )
 
+const adminCustomSubscriptionBadge = "__admin_custom__"
 const lotteryAutoThanksPrizeID = "auto-thanks"
 const lotteryChanceScale = 10000
 const lotteryBaselineDailyDraws = 100
@@ -39,6 +44,7 @@ type PageInput struct {
 	PageSize int
 	Keyword  string
 	Status   string
+	UserID   string
 }
 
 func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
@@ -269,12 +275,12 @@ func (r *Repository) DashboardTasks(ctx context.Context, limit int) ([]Dashboard
 }
 
 func (r *Repository) Plans(ctx context.Context, activeOnly bool) ([]SubscriptionPlan, error) {
-	query := `SELECT id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at FROM subscription_plans`
+	query := `SELECT id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at FROM subscription_plans WHERE (badge IS NULL OR badge <> ?)`
 	if activeOnly {
-		query += ` WHERE status='active'`
+		query += ` AND status='active'`
 	}
 	query += ` ORDER BY sort_order ASC, amount ASC`
-	rows, err := r.db.QueryContext(ctx, query)
+	rows, err := r.db.QueryContext(ctx, query, adminCustomSubscriptionBadge)
 	if err != nil {
 		return nil, err
 	}
@@ -292,6 +298,7 @@ func (r *Repository) Plans(ctx context.Context, activeOnly bool) ([]Subscription
 
 func (r *Repository) SavePlan(ctx context.Context, item SubscriptionPlan) (*SubscriptionPlan, error) {
 	item.BonusCredits = 0
+	item.DiscountPercent = 0
 	if item.QuotaImages <= 0 {
 		item.QuotaImages = defaultPlanQuotaImages(item.DurationDays)
 	}
@@ -345,6 +352,57 @@ func (r *Repository) GrantSubscription(ctx context.Context, userID string, planI
 		return err
 	}
 	return tx.Commit()
+}
+
+func (r *Repository) GrantCustomSubscription(ctx context.Context, userID string, input CustomSubscriptionGrant) error {
+	userID = strings.TrimSpace(userID)
+	input.Name = strings.TrimSpace(input.Name)
+	if input.Name == "" {
+		input.Name = "自定义订阅"
+	}
+	if userID == "" {
+		return sql.ErrNoRows
+	}
+	if utf8.RuneCountInString(input.Name) > 80 || input.DurationDays < 1 || input.DurationDays > 3650 || input.QuotaImages < 1 || input.QuotaImages > 100000000 {
+		return ErrInvalidCustomSubscription
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var existingUserID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=? FOR UPDATE`, userID).Scan(&existingUserID); err != nil {
+		return err
+	}
+	planID := adminCustomSubscriptionPlanID(existingUserID)
+	description := "管理员直接发放，不关联支付订单"
+	badge := adminCustomSubscriptionBadge
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO subscription_plans (id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent, allowed_provider_ids, allowed_model_ids, badge, sort_order, status)
+		VALUES (?, ?, ?, 0, ?, ?, 0, 0, ?, ?, ?, 0, 'active')
+		ON DUPLICATE KEY UPDATE name=VALUES(name), description=VALUES(description), amount=0, duration_days=VALUES(duration_days),
+			quota_images=VALUES(quota_images), bonus_credits=0, discount_percent=0, allowed_provider_ids=VALUES(allowed_provider_ids),
+			allowed_model_ids=VALUES(allowed_model_ids), badge=VALUES(badge), status='active', updated_at=CURRENT_TIMESTAMP
+	`, planID, input.Name, &description, input.DurationDays, input.QuotaImages, `[]`, `[]`, &badge); err != nil {
+		return err
+	}
+	if err := grantSubscriptionInTx(ctx, tx, existingUserID, planID, input.DurationDays, time.Now()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func IsAdminCustomSubscriptionPlan(plan *SubscriptionPlan) bool {
+	return plan != nil && plan.Badge != nil && strings.TrimSpace(*plan.Badge) == adminCustomSubscriptionBadge
+}
+
+func adminCustomSubscriptionPlanID(userID string) string {
+	sum := sha256.Sum256([]byte("aipi-admin-custom-subscription:" + strings.TrimSpace(userID)))
+	value := hex.EncodeToString(sum[:16])
+	return value[0:8] + "-" + value[8:12] + "-" + value[12:16] + "-" + value[16:20] + "-" + value[20:32]
 }
 
 func (r *Repository) CurrentSubscription(ctx context.Context, userID string, freeLimits FreeQuotaLimits) (*SubscriptionEntitlement, error) {
@@ -415,6 +473,13 @@ func (r *Repository) GenerationUsage(ctx context.Context, userID string, start t
 			AND status IN ('queued', 'pending', 'processing', 'success')
 			AND created_at >= ?
 			AND created_at < ?
+			AND NOT EXISTS (
+				SELECT 1
+				FROM api_access_logs
+				INNER JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+				WHERE api_access_logs.task_id = generation_tasks.id
+					AND api_access_keys.billing_mode = 'balance'
+			)
 	`, strings.TrimSpace(userID), start, end)
 	if err != nil {
 		return 0, err
@@ -505,12 +570,20 @@ func (r *Repository) currentPaidSubscription(ctx context.Context, userID string)
 	if err != nil {
 		return nil, err
 	}
+	source := "plan"
+	tier := "paid"
+	if IsAdminCustomSubscriptionPlan(plan) {
+		source = "admin_custom"
+		tier = "custom"
+		plan.Badge = nil
+	}
 	return &paidSubscriptionEntitlement{
 		SubscriptionEntitlement: &SubscriptionEntitlement{
 			ID:                 subscriptionID,
 			Status:             subscriptionStatus,
-			Tier:               "paid",
+			Tier:               tier,
 			IsPaid:             true,
+			Source:             source,
 			StartedAt:          appclock.DatabaseTime(started).Format(time.RFC3339),
 			ExpiresAt:          appclock.DatabaseTime(expires).Format(time.RFC3339),
 			PeriodStartedAt:    appclock.DatabaseTime(started).Format(time.RFC3339),
@@ -1629,6 +1702,10 @@ func (r *Repository) Orders(ctx context.Context, input PageInput) ([]RechargeOrd
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
 	where := []string{}
 	args := []any{}
+	if userID := strings.TrimSpace(input.UserID); userID != "" {
+		where = append(where, "recharge_orders.user_id=?")
+		args = append(args, userID)
+	}
 	if input.Status != "" && input.Status != "all" {
 		where = append(where, "recharge_orders.status=?")
 		args = append(args, input.Status)
@@ -1643,7 +1720,7 @@ func (r *Repository) Orders(ctx context.Context, input PageInput) ([]RechargeOrd
 			recharge_orders.order_type, recharge_orders.subscription_plan_id, recharge_orders.amount, recharge_orders.credits,
 			recharge_orders.status, recharge_orders.pay_url, recharge_orders.qr_code, recharge_orders.paid_at, recharge_orders.created_at, recharge_orders.updated_at
 		FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id
-		`+whereSQL+` ORDER BY recharge_orders.created_at DESC LIMIT ? OFFSET ?
+		`+whereSQL+` ORDER BY recharge_orders.created_at DESC, recharge_orders.id DESC LIMIT ? OFFSET ?
 	`, append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
@@ -1846,6 +1923,7 @@ func scanPlanWithPrefix(row interface{ Scan(dest ...any) error }, prefix ...any)
 		&item.SortOrder, &item.Status, &created, &updated,
 	)
 	err := row.Scan(dest...)
+	item.DiscountPercent = 0
 	item.Description = nullString(description)
 	item.Badge = nullString(badge)
 	item.AllowedProviderIDs = jsonStringList(providers.String)

@@ -46,7 +46,7 @@ export default function ForgotPasswordPage() {
             {showLocalLink && result.resetUrl && (
               <div className="mt-4 min-w-0 rounded-[7px] border border-[#dce4df] bg-[#fafbf9] p-3">
                 <strong className="text-xs text-[#27332c]">本地重置链接</strong>
-                <p className="mt-1 break-all text-[10px] leading-5 text-[#66736c]">{result.resetUrl}</p>
+                <p className="mt-1 break-all text-[11px] leading-5 text-[#66736c]">{result.resetUrl}</p>
                 <a className="btn primary mt-3 w-full" href={result.resetUrl}>
                   设置新密码 <ExternalLink size={14} />
                 </a>

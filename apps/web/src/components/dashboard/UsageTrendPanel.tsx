@@ -11,12 +11,18 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { TrendDateRangePicker } from '@/components/dashboard/TrendDateRangePicker';
 import { APIError, portalApi, type PortalUser, type UsageTrendPoint } from '@/lib/portal-api';
 
 type RangePreset = 7 | 15 | 30 | 'custom';
 type DateRange = { startDate: string; endDate: string };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
+const TREND_COLORS = {
+  total: '#587FA3',
+  success: '#3F9274',
+  failed: '#D06F69',
+} as const;
 
 function localDateValue(date: Date): string {
   const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
@@ -119,9 +125,9 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
   };
 
   const series = [
-    { key: 'total', label: '调用量', value: summary.total, color: '#2563eb' },
-    { key: 'success', label: '成功', value: summary.success, color: '#0f7a4b' },
-    { key: 'failed', label: '失败', value: summary.failed, color: '#d92d20' },
+    { key: 'total', label: '调用量', value: summary.total, color: TREND_COLORS.total },
+    { key: 'success', label: '成功', value: summary.success, color: TREND_COLORS.success },
+    { key: 'failed', label: '失败', value: summary.failed, color: TREND_COLORS.failed },
   ] as const;
 
   return (
@@ -130,8 +136,8 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
         <div className="flex items-center gap-2.5">
           <span className="grid size-8 shrink-0 place-items-center rounded-[7px] bg-blue-50 text-blue-600"><ChartNoAxesCombined size={16} /></span>
           <div>
-            <strong id="usage-trend-title" className="block text-[13px]">调用趋势</strong>
-            <small className="mt-0.5 block text-[10px] text-zinc-500">{range.startDate} 至 {range.endDate}</small>
+            <strong id="usage-trend-title" className="block text-[14px]">调用趋势</strong>
+            <small className="mt-0.5 block text-[11px] text-zinc-500">{range.startDate} 至 {range.endDate}</small>
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -140,7 +146,7 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
               <button
                 key={days}
                 type="button"
-                className={`h-7 min-w-11 rounded-[5px] border-0 px-2 text-[10px] font-bold ${preset === days ? 'bg-white text-[#087443] shadow-sm' : 'bg-transparent text-zinc-500 hover:text-zinc-800'}`}
+                className={`h-7 min-w-11 rounded-[5px] border-0 px-2 text-[11px] font-bold ${preset === days ? 'bg-white text-[#087443] shadow-sm' : 'bg-transparent text-zinc-500 hover:text-zinc-800'}`}
                 onClick={() => selectPreset(days as 7 | 15 | 30)}
                 aria-pressed={preset === days}
               >
@@ -149,7 +155,7 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
             ))}
             <button
               type="button"
-              className={`h-7 rounded-[5px] border-0 px-2.5 text-[10px] font-bold ${preset === 'custom' ? 'bg-white text-[#087443] shadow-sm' : 'bg-transparent text-zinc-500 hover:text-zinc-800'}`}
+              className={`h-7 rounded-[5px] border-0 px-2.5 text-[11px] font-bold ${preset === 'custom' ? 'bg-white text-[#087443] shadow-sm' : 'bg-transparent text-zinc-500 hover:text-zinc-800'}`}
               onClick={() => setPreset('custom')}
               aria-pressed={preset === 'custom'}
             >
@@ -160,17 +166,17 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
       </header>
 
       {preset === 'custom' && (
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-b border-[#edf0ee] bg-[#fafbf9] px-4 py-3 sm:flex sm:justify-end">
-          <label className="min-w-0">
-            <span className="sr-only">开始日期</span>
-            <input className="h-8 w-full rounded-[7px] border border-[#dce4df] bg-white px-2 text-[11px] outline-none focus:border-[#86efac] sm:w-[142px]" type="date" value={customStart} max={customEnd || today} onChange={(event) => setCustomStart(event.target.value)} />
-          </label>
-          <span className="text-[10px] text-zinc-400">至</span>
-          <label className="min-w-0">
-            <span className="sr-only">结束日期</span>
-            <input className="h-8 w-full rounded-[7px] border border-[#dce4df] bg-white px-2 text-[11px] outline-none focus:border-[#86efac] sm:w-[142px]" type="date" value={customEnd} min={customStart} max={today} onChange={(event) => setCustomEnd(event.target.value)} />
-          </label>
-          <button className="btn primary col-span-3 w-full sm:col-span-1 sm:w-auto" type="button" onClick={applyCustomRange}>
+        <div className="flex flex-col gap-2 border-b border-[#edf0ee] bg-[#fafbf9] px-4 py-3 sm:flex-row sm:items-center sm:justify-end">
+          <TrendDateRangePicker
+            startDate={customStart}
+            endDate={customEnd}
+            maxDate={today}
+            onChange={(startDate, endDate) => {
+              setCustomStart(startDate);
+              setCustomEnd(endDate);
+            }}
+          />
+          <button className="btn trend-query-button w-full sm:w-auto" type="button" onClick={applyCustomRange}>
             <Search size={13} />查询
           </button>
         </div>
@@ -178,13 +184,13 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
 
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-[#edf0ee] px-4 py-3" aria-label="趋势汇总">
         {series.map((item) => (
-          <span key={item.key} className="inline-flex items-center gap-2 text-[10px] text-zinc-500">
+          <span key={item.key} className="inline-flex items-center gap-2 text-[11px] text-zinc-500">
             <i className="size-2 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />
-            {item.label}<strong className="mono text-[12px] text-[#17201b]">{item.value.toLocaleString()}</strong>
+            {item.label}<strong className="mono text-[13px] text-[#17201b]">{item.value.toLocaleString()}</strong>
           </span>
         ))}
-        {loading && <span className="ml-auto inline-flex items-center gap-1.5 text-[10px] text-zinc-400" role="status" aria-live="polite"><LoaderCircle size={12} className="animate-spin" />更新中</span>}
-        {!loading && error && <span className="ml-auto text-[10px] font-semibold text-[#b42318]" role="alert">{error}</span>}
+        {loading && <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-zinc-400" role="status" aria-live="polite"><LoaderCircle size={12} className="animate-spin" />更新中</span>}
+        {!loading && error && <span className="ml-auto text-[11px] font-semibold text-[#b42318]" role="alert">{error}</span>}
       </div>
 
       <p className="sr-only" id="usage-trend-description">
@@ -194,12 +200,12 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
         {!loading && error ? (
           <div className="grid h-full place-items-center text-center">
             <div>
-              <p className="text-[11px] font-semibold text-[#b42318]">趋势数据加载失败</p>
+              <p className="text-[12px] font-semibold text-[#b42318]">趋势数据加载失败</p>
               <button className="btn mt-3" type="button" onClick={() => setRequestNonce((current) => current + 1)}><RefreshCw size={13} />重试</button>
             </div>
           </div>
         ) : !loading && data.length === 0 ? (
-          <div className="grid h-full place-items-center text-[11px] text-zinc-400">当前范围暂无调用数据</div>
+          <div className="grid h-full place-items-center text-[12px] text-zinc-400">当前范围暂无调用数据</div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             <LineChart accessibilityLayer data={data} margin={{ top: 8, right: 14, left: -8, bottom: 0 }}>
@@ -211,9 +217,9 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
                 labelFormatter={(label) => `日期 ${String(label)}`}
                 contentStyle={{ border: '1px solid #dce4df', borderRadius: 7, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 10 }}
               />
-              <Line type="monotone" dataKey="total" name="调用量" stroke="#2563eb" strokeWidth={2} dot={data.length <= 15 ? { r: 2 } : false} activeDot={{ r: 4 }} />
-              <Line type="monotone" dataKey="success" name="成功" stroke="#0f7a4b" strokeWidth={2} dot={data.length <= 15 ? { r: 2 } : false} activeDot={{ r: 4 }} />
-              <Line type="monotone" dataKey="failed" name="失败" stroke="#d92d20" strokeWidth={2} dot={data.length <= 15 ? { r: 2 } : false} activeDot={{ r: 4 }} />
+              <Line type="monotone" dataKey="total" name="调用量" stroke={TREND_COLORS.total} strokeWidth={2.25} dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+              <Line type="monotone" dataKey="success" name="成功" stroke={TREND_COLORS.success} strokeWidth={2.25} dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+              <Line type="monotone" dataKey="failed" name="失败" stroke={TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
             </LineChart>
           </ResponsiveContainer>
         )}

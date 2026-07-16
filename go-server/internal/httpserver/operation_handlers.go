@@ -74,6 +74,7 @@ func (r *Router) planCollection(w http.ResponseWriter, req *http.Request, public
 			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
 			return
 		}
+		input.DiscountPercent = 0
 		input.ID = newID()
 		item, err := repo.SavePlan(ctx, input)
 		if err != nil {
@@ -102,6 +103,7 @@ func (r *Router) planByID(w http.ResponseWriter, req *http.Request) {
 			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
 			return
 		}
+		input.DiscountPercent = 0
 		input.ID = id
 		item, err := repo.SavePlan(ctx, input)
 		if err != nil {
@@ -466,7 +468,7 @@ func (r *Router) recharge(w http.ResponseWriter, req *http.Request) {
 	if input.SubscriptionPlanID != nil && strings.TrimSpace(*input.SubscriptionPlanID) != "" {
 		planID := strings.TrimSpace(*input.SubscriptionPlanID)
 		plan, findErr := repo.FindPlan(ctx, planID)
-		if errors.Is(findErr, sql.ErrNoRows) || plan == nil || plan.Status != "active" {
+		if errors.Is(findErr, sql.ErrNoRows) || plan == nil || plan.Status != "active" || operations.IsAdminCustomSubscriptionPlan(plan) {
 			writeError(w, newAppError(http.StatusNotFound, "订阅套餐不存在或已下架"))
 			return
 		}
@@ -485,7 +487,7 @@ func (r *Router) recharge(w http.ResponseWriter, req *http.Request) {
 			writeError(w, newAppError(http.StatusBadRequest, fmt.Sprintf("余额充值最低 %.2f 元", minimum)))
 			return
 		}
-		credits = normalizedCreditAmount(amount * anyFloat(values["rechargeRate"], 1))
+		credits = normalizedCreditAmount(amount * anyFloat(values["rechargeRate"], 10))
 		if credits <= 0 {
 			writeError(w, newAppError(http.StatusBadRequest, "充值兑换比例不正确"))
 			return
@@ -597,6 +599,28 @@ func (r *Router) rechargeOrders(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	items, total, err := operations.NewRepository(r.db).Orders(ctx, operationPage(req))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, paginated(items, total, req))
+}
+
+func (r *Router) rechargeHistory(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	userID, err := r.requireFrontUser(req, req.URL.Query().Get("userId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	input := operationPage(req)
+	input.UserID = userID
+	items, total, err := operations.NewRepository(r.db).Orders(ctx, input)
 	if err != nil {
 		writeError(w, err)
 		return

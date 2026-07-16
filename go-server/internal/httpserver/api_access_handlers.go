@@ -24,7 +24,21 @@ func (r *Router) userAPIAccessKeys(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) userAPIAccessKeyByID(w http.ResponseWriter, req *http.Request) {
-	id := strings.Trim(strings.TrimPrefix(req.URL.Path, "/api/api-access/keys/"), "/")
+	path := strings.Trim(strings.TrimPrefix(req.URL.Path, "/api/api-access/keys/"), "/")
+	if strings.HasSuffix(path, "/reveal") {
+		id := strings.TrimSuffix(path, "/reveal")
+		if id == "" || strings.Contains(id, "/") {
+			writeError(w, newAppError(http.StatusNotFound, "API Key 不存在"))
+			return
+		}
+		if req.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		r.revealUserAPIAccessKey(w, req, id)
+		return
+	}
+	id := path
 	if id == "" || strings.Contains(id, "/") {
 		writeError(w, newAppError(http.StatusNotFound, "API Key 不存在"))
 		return
@@ -161,8 +175,9 @@ func (r *Router) listUserAPIAccessKeys(w http.ResponseWriter, req *http.Request)
 
 func (r *Router) createUserAPIAccessKey(w http.ResponseWriter, req *http.Request) {
 	var input struct {
-		UserID string `json:"userId"`
-		Name   string `json:"name"`
+		UserID      string `json:"userId"`
+		Name        string `json:"name"`
+		BillingMode string `json:"billingMode"`
 	}
 	if err := decodeCompatJSON(req, &input); err != nil {
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
@@ -175,8 +190,12 @@ func (r *Router) createUserAPIAccessKey(w http.ResponseWriter, req *http.Request
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	item, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).CreateUserKey(ctx, userID, input.Name)
+	item, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).CreateUserKey(ctx, userID, input.Name, input.BillingMode)
 	if err != nil {
+		if errors.Is(err, apiaccess.ErrInvalidBillingMode) {
+			writeError(w, newAppError(http.StatusBadRequest, err.Error()))
+			return
+		}
 		if errors.Is(err, users.ErrEmailNotVerified) {
 			writeError(w, newAppError(http.StatusForbidden, err.Error()))
 			return
@@ -185,6 +204,31 @@ func (r *Router) createUserAPIAccessKey(w http.ResponseWriter, req *http.Request
 		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{"data": item})
+}
+
+func (r *Router) revealUserAPIAccessKey(w http.ResponseWriter, req *http.Request, id string) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Pragma", "no-cache")
+	userID, err := r.requireFrontUser(req, req.URL.Query().Get("userId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	key, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).RevealUserKey(ctx, id, userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, apiaccess.ErrAccessKeyNotFound):
+			writeError(w, newAppError(http.StatusNotFound, err.Error()))
+		case errors.Is(err, apiaccess.ErrKeyPlainUnavailable):
+			writeError(w, newAppError(http.StatusConflict, err.Error()))
+		default:
+			writeError(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"key": key}})
 }
 
 func (r *Router) updateUserAPIAccessKey(w http.ResponseWriter, req *http.Request, id string) {

@@ -1,14 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Calculator, CircleDollarSign, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
+import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { portalApi } from '@/lib/admin-api';
+import { portalApi, type ProviderModel } from '@/lib/admin-api';
 import { formatDate } from '@/lib/common/utils';
 
 type Provider = {
@@ -103,6 +104,10 @@ export default function AdminPricesPage() {
   const [draft, setDraft] = useState<ModelDraft>(emptyDraft);
   const [deleteCandidate, setDeleteCandidate] = useState<Model | null>(null);
   const [actionId, setActionId] = useState('');
+  const [providerModels, setProviderModels] = useState<ProviderModel[]>([]);
+  const [providerModelsLoading, setProviderModelsLoading] = useState(false);
+  const [providerModelsError, setProviderModelsError] = useState('');
+  const providerModelsRequest = useRef(0);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -126,6 +131,29 @@ export default function AdminPricesPage() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
+  const loadProviderModels = useCallback(async (providerId: string) => {
+    const requestId = ++providerModelsRequest.current;
+    if (!providerId) {
+      setProviderModels([]);
+      setProviderModelsError('');
+      setProviderModelsLoading(false);
+      return;
+    }
+    setProviderModelsLoading(true);
+    setProviderModelsError('');
+    setProviderModels([]);
+    try {
+      const response = await portalApi.providerModels(providerId);
+      if (providerModelsRequest.current === requestId) setProviderModels(response.data);
+    } catch (requestError) {
+      if (providerModelsRequest.current !== requestId) return;
+      setProviderModels([]);
+      setProviderModelsError(requestError instanceof Error ? requestError.message : '上游模型获取失败');
+    } finally {
+      if (providerModelsRequest.current === requestId) setProviderModelsLoading(false);
+    }
+  }, []);
+
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return models.filter((model) => {
@@ -146,16 +174,46 @@ export default function AdminPricesPage() {
   const updateDraft = <K extends keyof ModelDraft>(key: K, value: ModelDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
 
   const openCreate = () => {
+    const providerId = providers.find((provider) => provider.status === 'active')?.id || providers[0]?.id || '';
     setEditing(null);
-    setDraft({ ...emptyDraft, providerId: providers.find((provider) => provider.status === 'active')?.id || providers[0]?.id || '' });
+    setDraft({ ...emptyDraft, providerId });
     setEditorOpen(true);
+    void loadProviderModels(providerId);
   };
 
   const openEdit = (model: Model) => {
     setEditing(model);
     setDraft(modelInput(model));
     setEditorOpen(true);
+    void loadProviderModels(model.providerId);
   };
+
+  const changeProvider = (providerId: string) => {
+    setDraft((current) => ({
+      ...current,
+      providerId,
+      modelName: '',
+      displayName: current.displayName === current.modelName ? '' : current.displayName,
+    }));
+    void loadProviderModels(providerId);
+  };
+
+  const changeProviderModel = (modelName: string) => {
+    setDraft((current) => ({
+      ...current,
+      modelName,
+      displayName: current.displayName.trim() ? current.displayName : modelName,
+    }));
+  };
+
+  const providerModelOptions = useMemo(() => {
+    const names = [...new Set(providerModels.map((model) => model.name.trim()).filter(Boolean))];
+    const options = names.map((name) => ({ value: name, label: name }));
+    if (draft.modelName && !options.some((option) => option.value === draft.modelName)) {
+      options.unshift({ value: draft.modelName, label: `${draft.modelName}（当前配置）` });
+    }
+    return options;
+  }, [draft.modelName, providerModels]);
 
   const calculatePrices = () => {
     const multiplier = 1 + Number(draft.markupPercent || 0) / 100;
@@ -238,7 +296,7 @@ export default function AdminPricesPage() {
   const rowActions = (model: Model) => (
     <div className="flex items-center justify-end gap-1">
       <button type="button" onClick={() => openEdit(model)} title="编辑模型" className="rounded p-1.5 text-zinc-600 hover:bg-zinc-100"><Pencil className="h-3.5 w-3.5" /></button>
-      <button type="button" onClick={() => void toggleStatus(model)} disabled={actionId === model.id} className={`rounded px-2 py-1 text-[10px] font-semibold ${model.status === 'active' ? 'text-amber-700 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'} disabled:opacity-40`}>{model.status === 'active' ? '停用' : '启用'}</button>
+      <button type="button" onClick={() => void toggleStatus(model)} disabled={actionId === model.id} className={`rounded px-2 py-1 text-[11px] font-semibold ${model.status === 'active' ? 'text-amber-700 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'} disabled:opacity-40`}>{model.status === 'active' ? '停用' : '启用'}</button>
       <button type="button" onClick={() => setDeleteCandidate(model)} title="删除模型" className="rounded p-1.5 text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /></button>
     </div>
   );
@@ -256,7 +314,7 @@ export default function AdminPricesPage() {
           ['启用模型', summary.active, '对外可调用'],
           ['已接入上游', summary.providers, '模型来源'],
           ['平均加价率', `${summary.avgMarkup.toFixed(1)}%`, '成本到售价'],
-        ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[10px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[10px] text-zinc-400">{note}</small></div>)}
+        ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
       </div>
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>}
@@ -281,27 +339,27 @@ export default function AdminPricesPage() {
           onSearchChange={setSearch}
           filterControls={(
             <>
-              <select value={providerFilter} onChange={(event) => setProviderFilter(event.target.value)} className="h-8 max-w-[180px] rounded-md border border-[#DCE4DF] bg-white px-2 text-xs"><option value="all">全部上游</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select>
-              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-2 text-xs"><option value="all">全部状态</option><option value="active">已启用</option><option value="disabled">已停用</option></select>
-              <span className="text-[10px] text-zinc-400">{filtered.length} 条</span>
+              <AppSelect compact value={providerFilter} onValueChange={setProviderFilter} ariaLabel="筛选上游接口" className="max-w-[180px]" options={[{ value: 'all', label: '全部上游' }, ...providers.map((provider) => ({ value: provider.id, label: provider.name }))]} />
+              <AppSelect compact value={statusFilter} onValueChange={setStatusFilter} ariaLabel="筛选模型状态" options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已启用' }, { value: 'disabled', label: '已停用' }]} />
+              <span className="text-[11px] text-zinc-400">{filtered.length} 条</span>
             </>
           )}
           emptyState={<EmptyState title="暂无模型价格" description="先添加上游接口，再创建可对外调用的模型。" icon={CircleDollarSign} />}
           renderRow={(model) => (
             <tr key={model.id} className="hover:bg-[#FAFBFA]">
-              <td className="px-4 py-3"><strong className="block max-w-[180px] truncate font-medium">{model.displayName}</strong><small className="mt-0.5 block max-w-[180px] truncate font-mono text-[9px] text-zinc-400">{model.modelName}</small></td>
+              <td className="px-4 py-3"><strong className="block max-w-[180px] truncate font-medium">{model.displayName}</strong><small className="mt-0.5 block max-w-[180px] truncate font-mono text-[10px] text-zinc-400">{model.modelName}</small></td>
               <td className="max-w-[140px] truncate px-4 py-3">{model.providerName || providers.find((provider) => provider.id === model.providerId)?.name || model.providerId}</td>
-              {(['1k', '2k', '4k'] as const).map((tier) => <td key={tier} className="px-4 py-3 font-mono"><small className="block text-[9px] text-zinc-400">{money(model[`cost${tier}`])}</small><strong className="block text-[11px] text-[#047857]">{money(model[`price${tier}`])}</strong></td>)}
-              <td className="px-4 py-3"><span className="text-[10px] font-semibold text-zinc-600">{(model.enabledSizeTiers || []).map((tier) => tier.toUpperCase()).join(' / ') || '-'}</span></td>
+              {(['1k', '2k', '4k'] as const).map((tier) => <td key={tier} className="px-4 py-3 font-mono"><small className="block text-[10px] text-zinc-400">{money(model[`cost${tier}`])}</small><strong className="block text-[12px] text-[#047857]">{money(model[`price${tier}`])}</strong></td>)}
+              <td className="px-4 py-3"><span className="text-[11px] font-semibold text-zinc-600">{(model.enabledSizeTiers || []).map((tier) => tier.toUpperCase()).join(' / ') || '-'}</span></td>
               <td className="px-4 py-3"><StatusBadge status={model.status === 'active' ? 'active' : 'disabled'} /></td>
               <td className="px-4 py-3">{rowActions(model)}</td>
             </tr>
           )}
           renderMobileItem={(model) => (
             <article key={model.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
-              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{model.displayName}</strong><small className="block truncate font-mono text-[9px] text-zinc-400">{model.modelName}</small></div><StatusBadge status={model.status === 'active' ? 'active' : 'disabled'} /></div>
-              <div className="mt-3 grid grid-cols-3 divide-x divide-[#EDF0EE] border-y border-[#EDF0EE] py-2 text-center">{(['1k', '2k', '4k'] as const).map((tier) => <div key={tier}><small className="block text-[9px] text-zinc-400">{tier.toUpperCase()} 售价</small><strong className="font-mono text-[11px] text-[#047857]">{money(model[`price${tier}`])}</strong></div>)}</div>
-              <div className="mt-2 flex items-center justify-between"><small className="max-w-[180px] truncate text-[9px] text-zinc-400">{model.providerName || model.providerId} · {formatDate(model.updatedAt || '')}</small>{rowActions(model)}</div>
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{model.displayName}</strong><small className="block truncate font-mono text-[10px] text-zinc-400">{model.modelName}</small></div><StatusBadge status={model.status === 'active' ? 'active' : 'disabled'} /></div>
+              <div className="mt-3 grid grid-cols-3 divide-x divide-[#EDF0EE] border-y border-[#EDF0EE] py-2 text-center">{(['1k', '2k', '4k'] as const).map((tier) => <div key={tier}><small className="block text-[10px] text-zinc-400">{tier.toUpperCase()} 售价</small><strong className="font-mono text-[12px] text-[#047857]">{money(model[`price${tier}`])}</strong></div>)}</div>
+              <div className="mt-2 flex items-center justify-between"><small className="max-w-[180px] truncate text-[10px] text-zinc-400">{model.providerName || model.providerId} · {formatDate(model.updatedAt || '')}</small>{rowActions(model)}</div>
             </article>
           )}
         />
@@ -310,24 +368,31 @@ export default function AdminPricesPage() {
       {editorOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 sm:grid sm:place-items-center">
           <form onSubmit={saveModel} className="mx-auto w-full max-w-3xl overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5"><div><h2 className="text-sm font-semibold">{editing ? '编辑模型与价格' : '新增模型'}</h2><p className="mt-0.5 text-[10px] text-zinc-500">售价单位与 Go 后端现有模型价格字段保持一致。</p></div><button type="button" onClick={() => setEditorOpen(false)} className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button></div>
+            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5"><div><h2 className="text-sm font-semibold">{editing ? '编辑模型与价格' : '新增模型'}</h2><p className="mt-0.5 text-[11px] text-zinc-500">售价单位与 Go 后端现有模型价格字段保持一致。</p></div><button type="button" onClick={() => setEditorOpen(false)} className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button></div>
             <div className="space-y-5 p-5">
               <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">上游接口</span><select required value={draft.providerId} onChange={(event) => updateDraft('providerId', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs"><option value="">请选择上游</option>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.name} {provider.status === 'disabled' ? '（停用）' : ''}</option>)}</select></label>
-                <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">状态</span><select value={draft.status} onChange={(event) => updateDraft('status', event.target.value as Model['status'])} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs"><option value="active">启用</option><option value="disabled">停用</option></select></label>
-                <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">上游模型名</span><input required value={draft.modelName} onChange={(event) => updateDraft('modelName', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
-                <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">对外展示名</span><input required value={draft.displayName} onChange={(event) => updateDraft('displayName', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">上游接口</span><AppSelect required value={draft.providerId} onValueChange={changeProvider} placeholder="请选择上游" ariaLabel="上游接口" options={[{ value: '', label: '请选择上游' }, ...providers.map((provider) => ({ value: provider.id, label: `${provider.name} ${provider.status === 'disabled' ? '（停用）' : ''}`.trim() }))]} /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">状态</span><AppSelect value={draft.status} onValueChange={(value) => updateDraft('status', value as Model['status'])} ariaLabel="模型状态" options={[{ value: 'active', label: '启用' }, { value: 'disabled', label: '停用' }]} /></label>
+                <div>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <span className="text-[11px] font-semibold text-zinc-500">上游模型名</span>
+                    <button type="button" onClick={() => void loadProviderModels(draft.providerId)} disabled={!draft.providerId || providerModelsLoading} title="重新获取上游模型" aria-label="重新获取上游模型" className="inline-flex h-6 w-6 items-center justify-center rounded border border-[#DCE4DF] bg-white text-zinc-500 hover:border-[#12B76A] hover:text-[#047857] disabled:opacity-40"><RefreshCw className={`h-3.5 w-3.5 ${providerModelsLoading ? 'animate-spin' : ''}`} /></button>
+                  </div>
+                  <AppSelect required value={draft.modelName} onValueChange={changeProviderModel} disabled={!draft.providerId || providerModelsLoading || !providerModelOptions.length} placeholder={providerModelsLoading ? '正在获取上游模型...' : '请选择上游模型'} ariaLabel="上游模型名" options={[{ value: '', label: providerModelsLoading ? '正在获取上游模型...' : '请选择上游模型' }, ...providerModelOptions]} />
+                  {providerModelsError ? <div className="mt-1.5 flex items-center justify-between gap-2 text-[10px] text-red-600"><span className="min-w-0 truncate">{providerModelsError}</span><button type="button" onClick={() => void loadProviderModels(draft.providerId)} className="shrink-0 font-semibold underline">重试</button></div> : !providerModelsLoading && draft.providerId && !providerModelOptions.length ? <p className="mt-1.5 text-[10px] text-zinc-400">该上游暂未返回可选模型</p> : null}
+                </div>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">对外展示名</span><input required value={draft.displayName} onChange={(event) => updateDraft('displayName', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
               </section>
 
               <section className="border-t border-[#DCE4DF] pt-4">
-                <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-xs font-semibold">成本与售价</h3><p className="mt-0.5 text-[10px] text-zinc-400">保留四位小数，按单张图片计费。</p></div><div className="flex items-end gap-2"><label><span className="mb-1 block text-[9px] text-zinc-400">加价率 %</span><input type="number" step="0.01" value={draft.markupPercent} onChange={(event) => updateDraft('markupPercent', Number(event.target.value))} className="w-24 rounded-md border border-[#DCE4DF] px-2 py-1.5 font-mono text-xs" /></label><button type="button" onClick={calculatePrices} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#86EFAC] bg-[#F0FDF4] px-3 text-[10px] font-semibold text-[#047857]"><Calculator className="h-3.5 w-3.5" />计算售价</button></div></div>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">{(['1k', '2k', '4k'] as const).map((tier) => <div key={tier} className="grid grid-cols-2 gap-2 rounded-md border border-[#E5E9E6] bg-[#FAFBFA] p-3"><strong className="col-span-2 text-[10px]">{tier.toUpperCase()} 清晰度</strong><label><span className="mb-1 block text-[9px] text-zinc-400">成本</span><input min={0} type="number" step="0.0001" value={draft[`cost${tier}`]} onChange={(event) => updateDraft(`cost${tier}`, Number(event.target.value))} className="w-full rounded border border-[#DCE4DF] px-2 py-1.5 font-mono text-xs" /></label><label><span className="mb-1 block text-[9px] text-zinc-400">售价</span><input min={0} type="number" step="0.0001" value={draft[`price${tier}`]} onChange={(event) => updateDraft(`price${tier}`, Number(event.target.value))} className="w-full rounded border border-[#86EFAC] px-2 py-1.5 font-mono text-xs text-[#047857]" /></label></div>)}</div>
+                <div className="mb-3 flex flex-wrap items-end justify-between gap-3"><div><h3 className="text-xs font-semibold">成本与售价</h3><p className="mt-0.5 text-[11px] text-zinc-400">保留四位小数，按单张图片计费。</p></div><div className="flex items-end gap-2"><label><span className="mb-1 block text-[10px] text-zinc-400">加价率 %</span><input type="number" step="0.01" value={draft.markupPercent} onChange={(event) => updateDraft('markupPercent', Number(event.target.value))} className="w-24 rounded-md border border-[#DCE4DF] px-2 py-1.5 font-mono text-xs" /></label><button type="button" onClick={calculatePrices} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#86EFAC] bg-[#F0FDF4] px-3 text-[11px] font-semibold text-[#047857]"><Calculator className="h-3.5 w-3.5" />计算售价</button></div></div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">{(['1k', '2k', '4k'] as const).map((tier) => <div key={tier} className="grid grid-cols-2 gap-2 rounded-md border border-[#E5E9E6] bg-[#FAFBFA] p-3"><strong className="col-span-2 text-[11px]">{tier.toUpperCase()} 清晰度</strong><label><span className="mb-1 block text-[10px] text-zinc-400">成本</span><input min={0} type="number" step="0.0001" value={draft[`cost${tier}`]} onChange={(event) => updateDraft(`cost${tier}`, Number(event.target.value))} className="w-full rounded border border-[#DCE4DF] px-2 py-1.5 font-mono text-xs" /></label><label><span className="mb-1 block text-[10px] text-zinc-400">售价</span><input min={0} type="number" step="0.0001" value={draft[`price${tier}`]} onChange={(event) => updateDraft(`price${tier}`, Number(event.target.value))} className="w-full rounded border border-[#86EFAC] px-2 py-1.5 font-mono text-xs text-[#047857]" /></label></div>)}</div>
               </section>
 
               <section className="grid grid-cols-1 gap-4 border-t border-[#DCE4DF] pt-4 sm:grid-cols-3">
-                <div><span className="mb-2 block text-[10px] font-semibold text-zinc-500">对外开放清晰度</span><div className="flex gap-2">{['1k', '2k', '4k'].map((tier) => <label key={tier} className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[10px] font-semibold ${draft.enabledSizeTiers.includes(tier) ? 'border-[#86EFAC] bg-[#F0FDF4] text-[#047857]' : 'border-[#DCE4DF] text-zinc-500'}`}><input type="checkbox" checked={draft.enabledSizeTiers.includes(tier)} onChange={() => toggleTier(tier)} className="h-3 w-3 accent-[#047857]" />{tier.toUpperCase()}</label>)}</div></div>
-                <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">排序值</span><input min={0} type="number" value={draft.sortOrder} onChange={(event) => updateDraft('sortOrder', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
-                <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2 text-xs"><span><strong className="block text-[10px]">附加尺寸提示</strong><small className="text-[9px] text-zinc-400">将清晰度传给上游</small></span><input type="checkbox" checked={draft.appendSizeToPrompt} onChange={(event) => updateDraft('appendSizeToPrompt', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
+                <div><span className="mb-2 block text-[11px] font-semibold text-zinc-500">对外开放清晰度</span><div className="flex gap-2">{['1k', '2k', '4k'].map((tier) => <label key={tier} className={`flex cursor-pointer items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-[11px] font-semibold ${draft.enabledSizeTiers.includes(tier) ? 'border-[#86EFAC] bg-[#F0FDF4] text-[#047857]' : 'border-[#DCE4DF] text-zinc-500'}`}><input type="checkbox" checked={draft.enabledSizeTiers.includes(tier)} onChange={() => toggleTier(tier)} className="h-3 w-3 accent-[#047857]" />{tier.toUpperCase()}</label>)}</div></div>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">排序值</span><input min={0} type="number" value={draft.sortOrder} onChange={(event) => updateDraft('sortOrder', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2 text-xs"><span><strong className="block text-[11px]">附加尺寸提示</strong><small className="text-[10px] text-zinc-400">将清晰度传给上游</small></span><input type="checkbox" checked={draft.appendSizeToPrompt} onChange={(event) => updateDraft('appendSizeToPrompt', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
               </section>
             </div>
             <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setEditorOpen(false)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}保存模型</button></div>

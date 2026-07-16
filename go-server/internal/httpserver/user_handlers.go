@@ -97,6 +97,14 @@ func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 		r.changeUserPassword(w, req, strings.TrimSuffix(path, "/password"))
 		return
 	}
+	if strings.HasSuffix(path, "/verify-email") {
+		r.verifyUserEmailByAdmin(w, req, strings.TrimSuffix(path, "/verify-email"))
+		return
+	}
+	if strings.HasSuffix(path, "/resend-verification") {
+		r.resendEmailVerification(w, req, strings.TrimSuffix(path, "/resend-verification"))
+		return
+	}
 	if strings.HasSuffix(path, "/email") {
 		r.changeUserEmail(w, req, strings.TrimSuffix(path, "/email"))
 		return
@@ -271,6 +279,40 @@ func (r *Router) updateUserStatus(w http.ResponseWriter, req *http.Request, id s
 	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(ctx, updated)})
 }
 
+func (r *Router) verifyUserEmailByAdmin(w http.ResponseWriter, req *http.Request, id string) {
+	if req.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	id = strings.Trim(id, "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	updated, err := users.NewRepository(r.db).MarkEmailVerified(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if updated == nil {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	}
+	data := r.publicUserWithSubscription(ctx, updated)
+	r.publishCurrentUser(context.Background(), id)
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
 func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string) {
 	if _, err := r.requireAdmin(req); err != nil {
 		writeError(w, err)
@@ -370,27 +412,55 @@ func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request,
 		return
 	}
 	var input struct {
-		PlanID string `json:"planId"`
+		GrantType    string `json:"grantType"`
+		PlanID       string `json:"planId"`
+		Name         string `json:"name"`
+		DurationDays int    `json:"durationDays"`
+		QuotaImages  int    `json:"quotaImages"`
 	}
 	if err := decodeCompatJSON(req, &input); err != nil {
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
 		return
 	}
 	id = strings.Trim(id, "/")
+	input.GrantType = strings.ToLower(strings.TrimSpace(input.GrantType))
 	input.PlanID = strings.TrimSpace(input.PlanID)
-	if id == "" || input.PlanID == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "请选择用户和订阅套餐"))
+	if input.GrantType == "" {
+		input.GrantType = "plan"
+	}
+	if id == "" {
+		writeError(w, newAppError(http.StatusBadRequest, "请选择用户"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	repo := operations.NewRepository(r.db)
-	if err := repo.GrantSubscription(ctx, id, input.PlanID); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
+	var grantErr error
+	switch input.GrantType {
+	case "custom":
+		grantErr = repo.GrantCustomSubscription(ctx, id, operations.CustomSubscriptionGrant{
+			Name: input.Name, DurationDays: input.DurationDays, QuotaImages: input.QuotaImages,
+		})
+	case "plan":
+		if input.PlanID == "" {
+			writeError(w, newAppError(http.StatusBadRequest, "请选择订阅套餐"))
+			return
+		}
+		grantErr = repo.GrantSubscription(ctx, id, input.PlanID)
+	default:
+		writeError(w, newAppError(http.StatusBadRequest, "发放方式不正确"))
+		return
+	}
+	if grantErr != nil {
+		if errors.Is(grantErr, operations.ErrInvalidCustomSubscription) {
+			writeError(w, newAppError(http.StatusBadRequest, "自定义订阅需要 1-3650 天有效期和大于 0 的图片额度"))
+			return
+		}
+		if errors.Is(grantErr, sql.ErrNoRows) {
 			writeError(w, newAppError(http.StatusNotFound, "用户或订阅套餐不存在"))
 			return
 		}
-		writeError(w, err)
+		writeError(w, grantErr)
 		return
 	}
 	user, err := users.NewRepository(r.db).FindByID(ctx, id)

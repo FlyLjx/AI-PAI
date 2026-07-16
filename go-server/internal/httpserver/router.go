@@ -82,6 +82,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/subscriptions/plans/", r.planByID)
 	r.mux.HandleFunc("/api/recharge/qr-code", r.rechargeQRCode)
 	r.mux.HandleFunc("/api/recharge/alipay/notify", r.alipayNotify)
+	r.mux.HandleFunc("/api/recharge/history", r.rechargeHistory)
 	r.mux.HandleFunc("/api/recharge/orders", r.rechargeOrders)
 	r.mux.HandleFunc("/api/recharge", r.recharge)
 	r.mux.HandleFunc("/api/recharge/", r.rechargeByID)

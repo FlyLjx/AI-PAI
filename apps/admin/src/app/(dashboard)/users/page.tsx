@@ -3,16 +3,23 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CreditCard,
+  Crown,
+  Gauge,
   Loader2,
+  MailCheck,
+  MailWarning,
+  PackageCheck,
   Pencil,
   Plus,
   RefreshCw,
   ShieldCheck,
   Trash2,
   UserRoundCog,
+  Wallet,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -28,6 +35,8 @@ type UserDraft = {
   status: 'active' | 'disabled';
 };
 
+type GrantMode = 'plan' | 'custom';
+
 const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active' };
 const pageSize = 12;
 
@@ -38,6 +47,26 @@ function subscriptionActive(user: PortalUser) {
 function subscriptionName(user: PortalUser) {
   if (!subscriptionActive(user)) return '按余额计费';
   return user.subscription?.planName || user.subscription?.tier || '订阅套餐';
+}
+
+function BillingModeLabel({ user }: { user: PortalUser }) {
+  if (subscriptionActive(user)) {
+    return (
+      <span className="inline-flex flex-col items-start gap-0.5">
+        <span className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800"><Crown className="h-3 w-3" />{subscriptionName(user)}</span>
+        <small className="text-[10px] text-zinc-400">至 {formatDate(user.subscription?.expiresAt || '', false)}</small>
+      </span>
+    );
+  }
+  return <span className="inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700"><Wallet className="h-3 w-3" />按余额计费</span>;
+}
+
+function SubscriptionStatusBadge({ user }: { user: PortalUser }) {
+  const status = user.subscription?.status;
+  if (status === 'active') return <span className="inline-flex rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">生效中</span>;
+  if (status === 'expired') return <span className="inline-flex rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">已到期</span>;
+  if (status === 'canceled' || status === 'cancelled') return <span className="inline-flex rounded border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700">已取消</span>;
+  return <span className="inline-flex rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">未订阅</span>;
 }
 
 export default function AdminUsersPage() {
@@ -55,8 +84,13 @@ export default function AdminUsersPage() {
   const [draft, setDraft] = useState<UserDraft>(emptyDraft);
   const [grantUser, setGrantUser] = useState<PortalUser | null>(null);
   const [grantPlanId, setGrantPlanId] = useState('');
+  const [grantMode, setGrantMode] = useState<GrantMode>('plan');
+  const [customGrantName, setCustomGrantName] = useState('自定义订阅');
+  const [customGrantDays, setCustomGrantDays] = useState(30);
+  const [customGrantQuota, setCustomGrantQuota] = useState(100);
   const [deleteCandidate, setDeleteCandidate] = useState<PortalUser | null>(null);
   const [actionId, setActionId] = useState('');
+  const [verifyingId, setVerifyingId] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -171,18 +205,43 @@ export default function AdminUsersPage() {
     }
   };
 
+  const verifyEmail = async (user: PortalUser) => {
+    if (user.emailVerifiedAt) return;
+    setVerifyingId(user.id);
+    try {
+      const response = await portalApi.verifyUserEmail(user.id);
+      setUsers((items) => items.map((item) => (item.id === user.id ? response.data : item)));
+      toast.success(`已验证 ${user.email}`);
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '邮箱验证失败');
+    } finally {
+      setVerifyingId('');
+    }
+  };
+
   const openGrant = (user: PortalUser) => {
     setGrantUser(user);
-    setGrantPlanId(user.subscription?.planId || activePlans[0]?.id || '');
+    const currentPlanId = user.subscription?.source === 'admin_custom' ? '' : user.subscription?.planId || '';
+    setGrantPlanId(activePlans.some((plan) => plan.id === currentPlanId) ? currentPlanId : activePlans[0]?.id || '');
+    setGrantMode(user.subscription?.source === 'admin_custom' ? 'custom' : 'plan');
+    setCustomGrantName(user.subscription?.source === 'admin_custom' ? user.subscription.planName || '自定义订阅' : '自定义订阅');
+    setCustomGrantDays(30);
+    setCustomGrantQuota(user.subscription?.source === 'admin_custom' ? Number(user.subscription.quotaLimit || 100) : 100);
   };
 
   const grantSubscription = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!grantUser || !grantPlanId) return toast.error('请选择订阅套餐');
+    if (!grantUser) return;
+    if (grantMode === 'plan' && !grantPlanId) return toast.error('请选择订阅套餐');
+    if (grantMode === 'custom' && (!customGrantName.trim() || customGrantDays < 1 || customGrantDays > 3650 || customGrantQuota < 1)) {
+      return toast.error('请填写有效的自定义订阅参数');
+    }
     setSaving(true);
     try {
-      await portalApi.grantSubscription(grantUser.id, { planId: grantPlanId });
-      toast.success(`已为 ${grantUser.email} 发放订阅`);
+      await portalApi.grantSubscription(grantUser.id, grantMode === 'custom'
+        ? { grantType: 'custom', name: customGrantName.trim(), durationDays: customGrantDays, quotaImages: customGrantQuota }
+        : { grantType: 'plan', planId: grantPlanId });
+      toast.success(`已为 ${grantUser.email} 发放${grantMode === 'custom' ? '自定义' : '套餐'}订阅`);
       setGrantUser(null);
       await load();
     } catch (requestError) {
@@ -206,6 +265,11 @@ export default function AdminUsersPage() {
 
   const rowActions = (user: PortalUser) => (
     <div className="flex items-center justify-end gap-1">
+      {!user.emailVerifiedAt && (
+        <button type="button" onClick={() => void verifyEmail(user)} disabled={Boolean(verifyingId)} title="直接验证邮箱" aria-label={`直接验证 ${user.email} 的邮箱`} className="rounded p-1.5 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40">
+          {verifyingId === user.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MailCheck className="h-3.5 w-3.5" />}
+        </button>
+      )}
       <button type="button" onClick={() => openGrant(user)} title="发放订阅" className="rounded p-1.5 text-[#0891B2] hover:bg-cyan-50"><CreditCard className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => openEdit(user)} title="编辑用户" className="rounded p-1.5 text-zinc-600 hover:bg-zinc-100"><Pencil className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => void toggleStatus(user)} disabled={actionId === user.id} title={user.status === 'active' ? '停用用户' : '启用用户'} className={`rounded p-1.5 ${user.status === 'active' ? 'text-amber-600 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'} disabled:opacity-40`}><ShieldCheck className="h-3.5 w-3.5" /></button>
@@ -228,9 +292,9 @@ export default function AdminUsersPage() {
           ['账户总余额', formatCNY(summary.balance), '按量计费余额'],
         ].map(([label, value, note]) => (
           <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
-            <span className="text-[10px] font-semibold text-zinc-500">{label}</span>
+            <span className="text-[11px] font-semibold text-zinc-500">{label}</span>
             <strong className="mt-1.5 block text-xl text-[#17201B]">{value}</strong>
-            <small className="mt-1 block text-[10px] text-zinc-400">{note}</small>
+            <small className="mt-1 block text-[11px] text-zinc-400">{note}</small>
           </div>
         ))}
       </div>
@@ -245,8 +309,10 @@ export default function AdminUsersPage() {
         <DataTable
           headers={[
             { key: 'account', label: '账户' },
+            { key: 'emailVerification', label: '邮箱验证' },
             { key: 'role', label: '角色' },
             { key: 'billing', label: '计费方式' },
+            { key: 'subscriptionStatus', label: '订阅状态' },
             { key: 'balance', label: '余额', className: 'text-right' },
             { key: 'status', label: '状态' },
             { key: 'created', label: '注册时间' },
@@ -258,13 +324,29 @@ export default function AdminUsersPage() {
           onSearchChange={(value) => { setSearch(value); resetPage(); }}
           filterControls={(
             <>
-              <select value={billingFilter} onChange={(event) => { setBillingFilter(event.target.value); resetPage(); }} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-2 text-xs outline-none focus:border-[#12B76A]">
-                <option value="all">全部计费</option><option value="payg">余额计费</option><option value="subscription">订阅计费</option>
-              </select>
-              <select value={statusFilter} onChange={(event) => { setStatusFilter(event.target.value); resetPage(); }} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-2 text-xs outline-none focus:border-[#12B76A]">
-                <option value="all">全部状态</option><option value="active">已启用</option><option value="disabled">已停用</option>
-              </select>
-              <span className="text-[10px] text-zinc-400">{filtered.length} 条</span>
+              <AppSelect
+                compact
+                value={billingFilter}
+                onValueChange={(value) => { setBillingFilter(value); resetPage(); }}
+                ariaLabel="计费方式筛选"
+                options={[
+                  { value: 'all', label: '全部计费' },
+                  { value: 'payg', label: '余额计费' },
+                  { value: 'subscription', label: '订阅计费' },
+                ]}
+              />
+              <AppSelect
+                compact
+                value={statusFilter}
+                onValueChange={(value) => { setStatusFilter(value); resetPage(); }}
+                ariaLabel="用户状态筛选"
+                options={[
+                  { value: 'all', label: '全部状态' },
+                  { value: 'active', label: '已启用' },
+                  { value: 'disabled', label: '已停用' },
+                ]}
+              />
+              <span className="text-[11px] text-zinc-400">{filtered.length} 条</span>
             </>
           )}
           currentPage={Math.min(page, totalPages)}
@@ -273,9 +355,17 @@ export default function AdminUsersPage() {
           emptyState={<EmptyState title="暂无用户" description="调整筛选条件或创建一个 API 客户。" icon={UserRoundCog} />}
           renderRow={(user) => (
             <tr key={user.id} className="hover:bg-[#FAFBFA]">
-              <td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{user.email}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[9px] text-zinc-400">{user.id}</small></td>
-              <td className="px-4 py-3"><span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px]">{user.role === 'admin' ? '管理员' : 'API 客户'}</span></td>
-              <td className="px-4 py-3"><strong className="block text-[11px] font-medium">{subscriptionName(user)}</strong>{subscriptionActive(user) && <small className="mt-0.5 block text-[9px] text-zinc-400">至 {formatDate(user.subscription?.expiresAt || '', false)}</small>}</td>
+              <td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{user.email}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{user.id}</small></td>
+              <td className="px-4 py-3">
+                {user.emailVerifiedAt ? (
+                  <span className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700" title={`验证时间：${formatDate(user.emailVerifiedAt)}`}><MailCheck className="h-3 w-3" />已验证</span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700"><MailWarning className="h-3 w-3" />未验证</span>
+                )}
+              </td>
+              <td className="px-4 py-3"><span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px]">{user.role === 'admin' ? '管理员' : 'API 客户'}</span></td>
+              <td className="px-4 py-3"><BillingModeLabel user={user} /></td>
+              <td className="px-4 py-3"><SubscriptionStatusBadge user={user} /></td>
               <td className="px-4 py-3 text-right font-mono font-semibold text-[#047857]">{formatCNY(Number(user.credits || 0))}</td>
               <td className="px-4 py-3"><StatusBadge status={user.status === 'active' ? 'active' : 'disabled'} /></td>
               <td className="whitespace-nowrap px-4 py-3 text-zinc-500">{formatDate(user.createdAt || '')}</td>
@@ -284,9 +374,9 @@ export default function AdminUsersPage() {
           )}
           renderMobileItem={(user) => (
             <article key={user.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
-              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{user.email}</strong><small className="font-mono text-[9px] text-zinc-400">{user.id}</small></div><StatusBadge status={user.status === 'active' ? 'active' : 'disabled'} /></div>
-              <div className="mt-3 grid grid-cols-2 gap-2 border-y border-[#EDF0EE] py-3 text-xs"><span><small className="block text-[9px] text-zinc-400">计费方式</small>{subscriptionName(user)}</span><span className="text-right"><small className="block text-[9px] text-zinc-400">账户余额</small><strong className="text-[#047857]">{formatCNY(Number(user.credits || 0))}</strong></span></div>
-              <div className="mt-2 flex items-center justify-between"><small className="text-[9px] text-zinc-400">{formatDate(user.createdAt || '')}</small>{rowActions(user)}</div>
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{user.email}</strong><small className="font-mono text-[10px] text-zinc-400">{user.id}</small></div><StatusBadge status={user.status === 'active' ? 'active' : 'disabled'} /></div>
+              <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-y border-[#EDF0EE] py-3 text-xs"><span><small className="mb-0.5 block text-[10px] text-zinc-400">计费方式</small><BillingModeLabel user={user} /></span><span className="text-right"><small className="mb-0.5 block text-[10px] text-zinc-400">订阅状态</small><SubscriptionStatusBadge user={user} /></span><span><small className="block text-[10px] text-zinc-400">邮箱验证</small><span className={user.emailVerifiedAt ? 'text-emerald-700' : 'text-amber-700'}>{user.emailVerifiedAt ? '已验证' : '未验证'}</span></span><span className="text-right"><small className="block text-[10px] text-zinc-400">账户余额</small><strong className="text-[#047857]">{formatCNY(Number(user.credits || 0))}</strong></span></div>
+              <div className="mt-2 flex items-center justify-between"><small className="text-[10px] text-zinc-400">{formatDate(user.createdAt || '')}</small>{rowActions(user)}</div>
             </article>
           )}
         />
@@ -295,12 +385,12 @@ export default function AdminUsersPage() {
       {editorOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
           <form onSubmit={saveUser} className="w-full max-w-lg overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5"><div><h2 className="text-sm font-semibold">{editing ? '编辑用户' : '新增用户'}</h2><p className="mt-0.5 text-[10px] text-zinc-500">账户用于登录开发者工作台并调用 API。</p></div><button type="button" onClick={() => setEditorOpen(false)} className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button></div>
+            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5"><div><h2 className="text-sm font-semibold">{editing ? '编辑用户' : '新增用户'}</h2><p className="mt-0.5 text-[11px] text-zinc-500">账户用于登录开发者工作台并调用 API。</p></div><button type="button" onClick={() => setEditorOpen(false)} className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button></div>
             <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
-              <label className="sm:col-span-2"><span className="mb-1 block text-[10px] font-semibold text-zinc-500">邮箱</span><input required type="email" value={draft.email} onChange={(event) => updateDraft('email', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
-              <label className="sm:col-span-2"><span className="mb-1 block text-[10px] font-semibold text-zinc-500">{editing ? '重置密码（留空保持不变）' : '初始密码'}</span><input required={!editing} minLength={editing ? undefined : 6} type="password" value={draft.password} onChange={(event) => updateDraft('password', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
-              <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">角色</span><select value={draft.role} onChange={(event) => updateDraft('role', event.target.value as UserDraft['role'])} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs"><option value="user">API 客户</option><option value="admin">管理员</option></select></label>
-              <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">状态</span><select value={draft.status} onChange={(event) => updateDraft('status', event.target.value as UserDraft['status'])} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs"><option value="active">启用</option><option value="disabled">停用</option></select></label>
+              <label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">邮箱</span><input required type="email" value={draft.email} onChange={(event) => updateDraft('email', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
+              <label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">{editing ? '重置密码（留空保持不变）' : '初始密码'}</span><input required={!editing} minLength={editing ? undefined : 6} type="password" value={draft.password} onChange={(event) => updateDraft('password', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
+              <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">角色</span><AppSelect value={draft.role} onValueChange={(value) => updateDraft('role', value as UserDraft['role'])} options={[{ value: 'user', label: 'API 客户' }, { value: 'admin', label: '管理员' }]} /></label>
+              <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">状态</span><AppSelect value={draft.status} onValueChange={(value) => updateDraft('status', value as UserDraft['status'])} options={[{ value: 'active', label: '启用' }, { value: 'disabled', label: '停用' }]} /></label>
             </div>
             <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setEditorOpen(false)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}保存</button></div>
           </form>
@@ -309,10 +399,24 @@ export default function AdminUsersPage() {
 
       {grantUser && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
-          <form onSubmit={grantSubscription} className="w-full max-w-md overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl">
-            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5"><div><h2 className="text-sm font-semibold">发放订阅</h2><p className="mt-0.5 max-w-[300px] truncate text-[10px] text-zinc-500">{grantUser.email}</p></div><button type="button" onClick={() => setGrantUser(null)} className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button></div>
-            <div className="p-5"><label><span className="mb-1.5 block text-[10px] font-semibold text-zinc-500">订阅套餐</span><select required value={grantPlanId} onChange={(event) => setGrantPlanId(event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]"><option value="">请选择套餐</option>{activePlans.map((plan) => <option key={plan.id} value={plan.id}>{plan.name} · {plan.durationDays} 天 · {plan.quotaImages} 张</option>)}</select></label><p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-5 text-amber-800">发放后立即生效；已有订阅将按 Go 后端现有规则续期或替换。</p></div>
-            <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setGrantUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving || !activePlans.length} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}确认发放</button></div>
+          <form onSubmit={grantSubscription} className="w-full max-w-lg overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5"><div><h2 className="text-sm font-semibold">发放订阅</h2><p className="mt-0.5 max-w-[300px] truncate text-[11px] text-zinc-500">{grantUser.email}</p></div><button type="button" onClick={() => setGrantUser(null)} className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button></div>
+            <div className="space-y-4 p-5">
+              <div className="grid grid-cols-2 gap-1 rounded-md border border-[#DCE4DF] bg-[#F6F8F6] p-1">
+                <button type="button" onClick={() => setGrantMode('plan')} aria-pressed={grantMode === 'plan'} className={`inline-flex h-9 items-center justify-center gap-1.5 rounded border text-[11px] font-semibold ${grantMode === 'plan' ? 'border-[#86EFAC] bg-white text-[#047857]' : 'border-transparent text-zinc-500'}`}><PackageCheck className="h-3.5 w-3.5" />套餐发放</button>
+                <button type="button" onClick={() => setGrantMode('custom')} aria-pressed={grantMode === 'custom'} className={`inline-flex h-9 items-center justify-center gap-1.5 rounded border text-[11px] font-semibold ${grantMode === 'custom' ? 'border-[#86EFAC] bg-white text-[#047857]' : 'border-transparent text-zinc-500'}`}><Gauge className="h-3.5 w-3.5" />自定义额度</button>
+              </div>
+              {grantMode === 'plan' ? (
+                <label><span className="mb-1.5 block text-[11px] font-semibold text-zinc-500">订阅套餐</span><AppSelect required value={grantPlanId} onValueChange={setGrantPlanId} options={[{ value: '', label: '请选择套餐' }, ...activePlans.map((plan) => ({ value: plan.id, label: `${plan.name} · ${plan.durationDays} 天 · ${plan.quotaImages} 张` }))]} /></label>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">权益名称</span><input required maxLength={80} value={customGrantName} onChange={(event) => setCustomGrantName(event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
+                  <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">有效天数</span><input required min={1} max={3650} type="number" value={customGrantDays} onChange={(event) => setCustomGrantDays(Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
+                  <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">图片额度</span><input required min={1} max={100000000} type="number" value={customGrantQuota} onChange={(event) => setCustomGrantQuota(Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
+                </div>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setGrantUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving || (grantMode === 'plan' && !grantPlanId)} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}确认发放</button></div>
           </form>
         </div>
       )}

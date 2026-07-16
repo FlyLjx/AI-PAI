@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -54,6 +55,15 @@ func (r *Router) providerByID(w http.ResponseWriter, req *http.Request) {
 		r.testProvider(w, req, strings.TrimSuffix(id, "/test"))
 		return
 	}
+	if strings.HasSuffix(id, "/models") {
+		providerID := strings.TrimSuffix(id, "/models")
+		if providerID == "" || strings.Contains(providerID, "/") {
+			writeError(w, newAppError(http.StatusNotFound, "接口不存在"))
+			return
+		}
+		r.providerModelsByID(w, req, providerID)
+		return
+	}
 	if id == "" || strings.Contains(id, "/") {
 		writeError(w, newAppError(http.StatusNotFound, "接口不存在"))
 		return
@@ -66,6 +76,59 @@ func (r *Router) providerByID(w http.ResponseWriter, req *http.Request) {
 	default:
 		writeMethodNotAllowed(w)
 	}
+}
+
+func (r *Router) providerModelsByID(w http.ResponseWriter, req *http.Request, id string) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
+	defer cancel()
+	provider, err := providers.NewRepository(r.db).FindByID(ctx, strings.TrimSpace(id))
+	if errors.Is(err, sql.ErrNoRows) || provider == nil {
+		writeError(w, newAppError(http.StatusNotFound, "接口配置不存在"))
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	remoteModels, err := r.fetchProviderModelDetails(ctx, provider.BaseURL, provider.APIKey)
+	if err != nil {
+		writeError(w, providerProbeError(err))
+		return
+	}
+
+	modelsByName := make(map[string]remoteModel, len(remoteModels))
+	for _, item := range remoteModels {
+		name := strings.TrimSpace(item.Name)
+		if name == "" || !modelNameMatchesCapability(name, provider.Capability) {
+			continue
+		}
+		item.Name = name
+		existing, exists := modelsByName[name]
+		if !exists || (!hasRemotePrice(existing.remoteModelPrice) && hasRemotePrice(item.remoteModelPrice)) {
+			modelsByName[name] = item
+		}
+	}
+
+	names := make([]string, 0, len(modelsByName))
+	for name := range modelsByName {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	items := make([]remoteModel, 0, len(names))
+	for _, name := range names {
+		items = append(items, modelsByName[name])
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": items})
 }
 
 func (r *Router) createProvider(w http.ResponseWriter, req *http.Request) {

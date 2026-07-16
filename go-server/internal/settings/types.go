@@ -19,7 +19,7 @@ var Defaults = Settings{
 	"supportUrl":                "",
 	"supportQrCodeUrl":          "",
 	"rechargeEnabled":           true,
-	"rechargeRate":              float64(1),
+	"rechargeRate":              float64(10),
 	"rechargeMinAmount":         float64(1),
 	"rechargePresets":           "10,30,50,100",
 	"inviteEnabled":             true,

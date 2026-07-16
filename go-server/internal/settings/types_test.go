@@ -28,4 +28,7 @@ func TestRechargeSettingsRemainAvailable(t *testing.T) {
 			t.Fatalf("Public settings missing %s", key)
 		}
 	}
+	if Defaults["rechargeRate"] != float64(10) {
+		t.Fatalf("default recharge rate = %v, want 10", Defaults["rechargeRate"])
+	}
 }

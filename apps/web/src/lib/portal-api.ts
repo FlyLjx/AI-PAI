@@ -56,6 +56,9 @@ export type EmailChangeRequest = {
   message?: string;
 };
 
+export type APIKeyBillingMode = 'balance' | 'subscription' | 'auto';
+export type SelectableAPIKeyBillingMode = Exclude<APIKeyBillingMode, 'auto'>;
+
 export type APIKey = {
   id: string;
   userId: string;
@@ -66,12 +69,33 @@ export type APIKey = {
   key?: string;
   status: string;
   concurrencyLimit: number;
+  billingMode?: APIKeyBillingMode | null;
   lastUsedAt?: string | null;
   createdAt: string;
   requestCount: number;
   successCount: number;
   failedCount: number;
   imageCount: number;
+};
+
+export type CompatibleModel = {
+  id: string;
+  object: string;
+  enabled_size_tiers?: Array<'1k' | '2k' | '4k'>;
+};
+
+export type ImageGenerationInput = {
+  model: string;
+  prompt: string;
+  n: number;
+  size_tier: '1k' | '2k' | '4k';
+  aspect_ratio: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3';
+  output_format: 'jpeg' | 'png' | 'webp';
+};
+
+export type ImageGenerationResult = {
+  created: number;
+  data: Array<{ url: string }>;
 };
 
 export type UsageLog = {
@@ -82,6 +106,7 @@ export type UsageLog = {
   keyPrefix?: string;
   endpoint: string;
   model: string;
+  prompt: string;
   size: string;
   quality: string;
   quantity: number;
@@ -106,6 +131,72 @@ export type UsageTrendPoint = {
   failed: number;
 };
 
+export type StabilitySeriesPoint = {
+  time: string;
+  label?: string;
+  success: number;
+  failed: number;
+};
+
+export type StabilityErrorReason = {
+  label: string;
+  value: number;
+};
+
+export type StabilityRecentWindow = {
+  total: number;
+  limit: number;
+  availability_total: number;
+  success: number;
+  failed: number;
+  canceled: number;
+  rejected: number;
+  running: number;
+  other: number;
+  success_rate: number;
+  failure_rate: number;
+  average_duration_secs: number;
+  average_success_duration_secs: number;
+  average_failure_duration_secs: number;
+};
+
+export type StabilityRuntimeWindow = {
+  window_minutes: number;
+  bucket_minutes: number;
+  total: number;
+  success_rate: number;
+  error_rate: number;
+  start_time: string;
+  end_time: string;
+  series: StabilitySeriesPoint[];
+  error_reasons: StabilityErrorReason[];
+  totals: {
+    success: number;
+    failed: number;
+    canceled: number;
+    rejected: number;
+    running: number;
+    other: number;
+  };
+};
+
+export type StabilitySnapshot = {
+  reachable: boolean;
+  status: string;
+  upstream_status_code: number;
+  stability_percent: number;
+  generated_at: string;
+  fetched_at: string;
+  source: string;
+  total: number;
+  success: number;
+  failed: number;
+  error?: string;
+  recent_60?: StabilityRecentWindow;
+  runtime?: StabilityRuntimeWindow;
+  series?: StabilitySeriesPoint[];
+};
+
 export type Plan = {
   id: string;
   name: string;
@@ -117,6 +208,21 @@ export type Plan = {
   badge?: string;
   sortOrder: number;
   status: string;
+};
+
+export type RechargeOrder = {
+  id: string;
+  outTradeNo: string;
+  tradeNo?: string | null;
+  orderType: string;
+  subscriptionPlanId?: string | null;
+  amount: number;
+  status: string;
+  payUrl?: string | null;
+  qrCode?: string | null;
+  paidAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
 };
 
 type Envelope<T> = {
@@ -233,19 +339,45 @@ export function userToken(): string {
   return getSession()?.token || '';
 }
 
+async function openAIRequest<T>(path: string, apiKey: string, options: RequestInit = {}): Promise<T> {
+  const headers = new Headers(options.headers);
+  headers.set('Authorization', `Bearer ${apiKey}`);
+  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+
+  const response = await fetch(path, { ...options, headers, cache: 'no-store' });
+  const payload = await response.json().catch(() => null) as (T & {
+    message?: string;
+    error?: { message?: string };
+  }) | null;
+  if (!response.ok) {
+    throw new APIError(payload?.error?.message || payload?.message || `请求失败 (${response.status})`, response.status);
+  }
+  if (!payload) throw new APIError('服务端返回了无效响应', 502);
+  return payload;
+}
+
 export const portalApi = {
   publicSettings: () => api<Record<string, unknown>>('/api/settings/public'),
   listKeys: (user: PortalUser) => api<APIKey[]>(`/api/api-access/keys${query({ userId: user.id })}`, {}, user.token),
-  createKey: (user: PortalUser, name: string) => api<APIKey>('/api/api-access/keys', { method: 'POST', body: JSON.stringify({ userId: user.id, name }) }, user.token),
+  createKey: (user: PortalUser, name: string, billingMode: SelectableAPIKeyBillingMode) => api<APIKey>('/api/api-access/keys', { method: 'POST', body: JSON.stringify({ userId: user.id, name, billingMode }) }, user.token),
+  revealKey: (user: PortalUser, id: string) => api<{ key: string }>(`/api/api-access/keys/${encodeURIComponent(id)}/reveal`, { method: 'POST' }, user.token),
   updateKey: (user: PortalUser, id: string, status: string) => api<APIKey>(`/api/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ userId: user.id, status }) }, user.token),
   deleteKey: (user: PortalUser, id: string) => api(`/api/api-access/keys/${encodeURIComponent(id)}${query({ userId: user.id })}`, { method: 'DELETE' }, user.token),
   usage: (user: PortalUser, page = 1, pageSize = 20, keyword = '', status = '') => api<UsageLog[]>(`/api/api-access/logs${query({ userId: user.id, page, pageSize, keyword, status })}`, {}, user.token),
   usageTrend: (user: PortalUser, startDate: string, endDate: string) => api<UsageTrendPoint[]>(`/api/api-access/logs/trend${query({ userId: user.id, startDate, endDate })}`, {}, user.token),
+  stability: () => api<StabilitySnapshot>('/api/upstream/stability'),
   plans: () => api<Plan[]>('/api/subscriptions/public/plans'),
   subscription: (user: PortalUser) => api<Subscription | null>(`/api/subscriptions/public/current${query({ userId: user.id })}`, {}, user.token),
   recharge: (user: PortalUser, input: { amount?: number; subscriptionPlanId?: string }) => api<Record<string, unknown>>('/api/recharge', { method: 'POST', body: JSON.stringify({ userId: user.id, ...input }) }, user.token),
+  rechargeHistory: (user: PortalUser, page = 1, pageSize = 10) => api<RechargeOrder[]>(`/api/recharge/history${query({ userId: user.id, page, pageSize })}`, {}, user.token),
   rechargeOrder: (user: PortalUser, id: string) => api<Record<string, unknown>>(`/api/recharge/${encodeURIComponent(id)}${query({ userId: user.id })}`, {}, user.token),
   syncRecharge: (user: PortalUser, id: string) => api<Record<string, unknown>>(`/api/recharge/${encodeURIComponent(id)}/sync`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }, user.token),
   requestEmailChange: (user: PortalUser, password: string, email: string) => api<EmailChangeRequest>(`/api/users/${encodeURIComponent(user.id)}/email`, { method: 'POST', body: JSON.stringify({ userId: user.id, password, email }) }, user.token),
+  resendEmailVerification: (user: PortalUser) => api<RegistrationVerification>(`/api/users/${encodeURIComponent(user.id)}/resend-verification`, { method: 'POST' }, user.token),
   changePassword: (user: PortalUser, oldPassword: string, password: string) => api(`/api/users/${encodeURIComponent(user.id)}/password`, { method: 'PATCH', body: JSON.stringify({ userId: user.id, oldPassword, password }) }, user.token),
+  compatibleModels: (apiKey: string) => openAIRequest<{ object: string; data: CompatibleModel[] }>('/v1/models', apiKey),
+  generateImages: (apiKey: string, input: ImageGenerationInput) => openAIRequest<ImageGenerationResult>('/v1/images/generations', apiKey, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  }),
 };

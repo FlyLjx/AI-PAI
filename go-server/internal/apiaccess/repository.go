@@ -25,9 +25,9 @@ type accessStore interface {
 
 func (r *Repository) CreateKey(ctx context.Context, key AccessKey) (*AccessKey, error) {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO api_access_keys (id, user_id, name, key_prefix, key_hash, key_plain, status, concurrency_limit)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, key.ID, key.UserID, key.Name, key.KeyPrefix, key.KeyHash, key.KeyPlain, key.Status, normalizedConcurrencyLimit(key.ConcurrencyLimit))
+		INSERT INTO api_access_keys (id, user_id, name, key_prefix, key_hash, key_plain, status, concurrency_limit, billing_mode)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, key.ID, key.UserID, key.Name, key.KeyPrefix, key.KeyHash, key.KeyPlain, key.Status, normalizedConcurrencyLimit(key.ConcurrencyLimit), key.BillingMode)
 	if err != nil {
 		return nil, err
 	}
@@ -46,6 +46,7 @@ func (r *Repository) FindActiveByPrefix(ctx context.Context, prefix string) ([]A
 			api_access_keys.key_plain,
 			api_access_keys.status,
 			api_access_keys.concurrency_limit,
+			api_access_keys.billing_mode,
 			api_access_keys.last_used_at,
 			api_access_keys.deleted_at,
 			api_access_keys.created_at,
@@ -74,11 +75,30 @@ func (r *Repository) FindKeyByID(ctx context.Context, id string) (*AccessKey, er
 		WHERE api_access_keys.id = ?
 		GROUP BY api_access_keys.id, api_access_keys.user_id, users.email, api_access_keys.name,
 			api_access_keys.key_prefix, api_access_keys.key_hash, api_access_keys.key_plain, api_access_keys.status,
-			api_access_keys.concurrency_limit, api_access_keys.last_used_at, api_access_keys.deleted_at,
+			api_access_keys.concurrency_limit, api_access_keys.billing_mode, api_access_keys.last_used_at, api_access_keys.deleted_at,
 			api_access_keys.created_at, api_access_keys.updated_at
 		LIMIT 1
 	`, id)
 	return scanAccessKey(row)
+}
+
+func (r *Repository) FindKeyPlainForUser(ctx context.Context, id string, userID string) (*string, error) {
+	var keyPlain sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT key_plain
+		FROM api_access_keys
+		WHERE id = ?
+			AND user_id = ?
+			AND deleted_at IS NULL
+		LIMIT 1
+	`, strings.TrimSpace(id), strings.TrimSpace(userID)).Scan(&keyPlain)
+	if err != nil {
+		return nil, err
+	}
+	if !keyPlain.Valid || strings.TrimSpace(keyPlain.String) == "" {
+		return nil, nil
+	}
+	return &keyPlain.String, nil
 }
 
 func (r *Repository) ListKeys(ctx context.Context, userID string) ([]AccessKey, error) {
@@ -91,7 +111,7 @@ func (r *Repository) ListKeys(ctx context.Context, userID string) ([]AccessKey, 
 	rows, err := r.db.QueryContext(ctx, keyListSelect()+where+`
 		GROUP BY api_access_keys.id, api_access_keys.user_id, users.email, api_access_keys.name,
 			api_access_keys.key_prefix, api_access_keys.key_hash, api_access_keys.key_plain, api_access_keys.status,
-			api_access_keys.concurrency_limit, api_access_keys.last_used_at, api_access_keys.deleted_at,
+			api_access_keys.concurrency_limit, api_access_keys.billing_mode, api_access_keys.last_used_at, api_access_keys.deleted_at,
 			api_access_keys.created_at, api_access_keys.updated_at
 		ORDER BY api_access_keys.created_at DESC, api_access_keys.id DESC
 	`, args...)
@@ -114,6 +134,7 @@ func keyListSelect() string {
 			api_access_keys.key_plain,
 			api_access_keys.status,
 			api_access_keys.concurrency_limit,
+			api_access_keys.billing_mode,
 			api_access_keys.last_used_at,
 			api_access_keys.deleted_at,
 			api_access_keys.created_at,
@@ -317,12 +338,13 @@ func (r *Repository) syncTerminalTaskLogBatch(ctx context.Context, limit int) (i
 				imageCount = 1
 			}
 			message = ""
-		} else if message == "" {
-			if item.status == "canceled" {
+		} else if item.status == "canceled" {
+			status = "canceled"
+			if message == "" {
 				message = "任务已取消"
-			} else {
-				message = "图片生成失败"
 			}
+		} else if message == "" {
+			message = "图片生成失败"
 		}
 		if err := r.FinishLog(ctx, item.id, status, imageCount, message); err != nil {
 			return 0, err
@@ -513,7 +535,7 @@ func scanAccessKeys(rows *sql.Rows) ([]AccessKey, error) {
 
 func scanAccessKey(row accessKeyScanner) (*AccessKey, error) {
 	var item AccessKey
-	var userEmail, keyPlain, lastError sql.NullString
+	var userEmail, keyPlain, billingMode, lastError sql.NullString
 	var lastUsedAt, deletedAt sql.NullTime
 	if err := row.Scan(
 		&item.ID,
@@ -525,6 +547,7 @@ func scanAccessKey(row accessKeyScanner) (*AccessKey, error) {
 		&keyPlain,
 		&item.Status,
 		&item.ConcurrencyLimit,
+		&billingMode,
 		&lastUsedAt,
 		&deletedAt,
 		&item.CreatedAt,
@@ -542,6 +565,11 @@ func scanAccessKey(row accessKeyScanner) (*AccessKey, error) {
 	}
 	if keyPlain.Valid && strings.TrimSpace(keyPlain.String) != "" {
 		item.KeyPlain = &keyPlain.String
+	}
+	if billingMode.Valid {
+		item.BillingMode = normalizedStoredBillingMode(strings.TrimSpace(billingMode.String))
+	} else {
+		item.BillingMode = BillingModeAuto
 	}
 	if lastUsedAt.Valid {
 		value := appclock.DatabaseTime(lastUsedAt.Time)

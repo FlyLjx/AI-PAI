@@ -22,7 +22,6 @@ func TestRemovedTaskActionsAreNotDispatched(t *testing.T) {
 		method string
 		path   string
 	}{
-		{http.MethodPost, "/api/tasks/task-1/cancel"},
 		{http.MethodPatch, "/api/tasks/task-1/favorite"},
 		{http.MethodPost, "/api/tasks/task-1/public-request"},
 		{http.MethodPatch, "/api/tasks/task-1/display"},
@@ -36,6 +35,16 @@ func TestRemovedTaskActionsAreNotDispatched(t *testing.T) {
 				t.Fatalf("status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
 			}
 		})
+	}
+}
+
+func TestTaskCancelRouteRequiresAdmin(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "http://example.test/api/tasks/task-1/cancel", nil)
+	response := httptest.NewRecorder()
+
+	(&Router{}).taskByID(response, req)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusUnauthorized)
 	}
 }
 

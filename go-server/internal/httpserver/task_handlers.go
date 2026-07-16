@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"aipi-go/internal/apiaccess"
 	"aipi-go/internal/tasks"
 
 	_ "image/gif"
@@ -21,6 +22,10 @@ import (
 
 func (r *Router) taskByID(w http.ResponseWriter, req *http.Request) {
 	path := strings.Trim(strings.TrimPrefix(req.URL.Path, "/api/tasks/"), "/")
+	if strings.HasSuffix(path, "/cancel") {
+		r.cancelTask(w, req, strings.TrimSuffix(path, "/cancel"))
+		return
+	}
 	if strings.Contains(path, "/images/") {
 		r.taskImage(w, req, path)
 		return
@@ -448,7 +453,7 @@ func (r *Router) cancelTask(w http.ResponseWriter, req *http.Request, id string)
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	task, err := tasks.NewRepository(r.db).Cancel(ctx, id)
-	if errors.Is(err, sql.ErrNoRows) || task == nil {
+	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, newAppError(http.StatusNotFound, "任务不存在"))
 		return
 	}
@@ -456,6 +461,18 @@ func (r *Router) cancelTask(w http.ResponseWriter, req *http.Request, id string)
 		writeError(w, err)
 		return
 	}
+	if task == nil {
+		writeError(w, newAppError(http.StatusNotFound, "任务不存在"))
+		return
+	}
+	if task.Status != tasks.StatusCanceled {
+		writeError(w, newAppError(http.StatusConflict, "任务已经结束，不能取消"))
+		return
+	}
+	if r.queue != nil {
+		r.queue.Cancel(task.ID)
+	}
+	_ = apiaccess.NewRepository(r.db).FinishLogsForTask(ctx, task.ID, "canceled", 0, "任务已取消")
 	if r.taskHub != nil {
 		r.taskHub.PublishTask(*task)
 	}

@@ -212,17 +212,17 @@ export default function DashboardPage() {
       <section className="grid gap-3 md:grid-cols-3" aria-label="快捷入口">
         <Link href="/api-keys" className="section-panel flex items-center gap-3 p-4 no-underline hover:border-[#86efac]">
           <span className="billing-icon"><KeyRound size={16} /></span>
-          <span className="min-w-0 flex-1"><strong className="block text-xs">管理 API Key</strong><small className="text-[10px] text-zinc-500">创建、启停与轮换凭证</small></span>
+          <span className="min-w-0 flex-1"><strong className="block text-xs">管理 API Key</strong><small className="text-[11px] text-zinc-500">创建、启停与轮换凭证</small></span>
           <ArrowRight size={14} className="text-zinc-400" />
         </Link>
         <Link href="/docs" className="section-panel flex items-center gap-3 p-4 no-underline hover:border-[#86efac]">
           <span className="billing-icon bg-blue-50 text-blue-600"><ShieldCheck size={16} /></span>
-          <span className="min-w-0 flex-1"><strong className="block text-xs">查看 API 文档</strong><small className="text-[10px] text-zinc-500">OpenAI 兼容接口与示例</small></span>
+          <span className="min-w-0 flex-1"><strong className="block text-xs">查看 API 文档</strong><small className="text-[11px] text-zinc-500">OpenAI 兼容接口与示例</small></span>
           <ArrowRight size={14} className="text-zinc-400" />
         </Link>
         <Link href="/billing" className="section-panel flex items-center gap-3 p-4 no-underline hover:border-[#86efac]">
           <span className="billing-icon is-subscription"><ImageIcon size={16} /></span>
-          <span className="min-w-0 flex-1"><strong className="block text-xs">补充调用额度</strong><small className="text-[10px] text-zinc-500">余额充值或订阅套餐</small></span>
+          <span className="min-w-0 flex-1"><strong className="block text-xs">补充调用额度</strong><small className="text-[11px] text-zinc-500">余额充值或订阅套餐</small></span>
           <ArrowRight size={14} className="text-zinc-400" />
         </Link>
       </section>

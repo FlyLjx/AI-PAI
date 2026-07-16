@@ -195,7 +195,7 @@ print(response.json()['data'])`,
           <ShieldCheck size={16} className="mt-0.5 shrink-0" />
           <span className="min-w-0">所有请求使用 <code className="mono break-all">Authorization: Bearer YOUR_API_KEY</code>。当前账户有 {activeKeyCount} 个可用 Key。</span>
         </div>
-        <div className="section-panel flex min-w-0 items-center gap-2 px-3 py-2 text-[10px]">
+        <div className="section-panel flex min-w-0 items-center gap-2 px-3 py-2 text-[11px]">
           <span className="shrink-0 text-zinc-500">Base URL</span>
           <code className="mono min-w-0 flex-1 truncate">{baseUrl}</code>
           <button className="btn icon" type="button" onClick={() => void copy(baseUrl, 'base')} title="复制 Base URL" aria-label="复制 Base URL">
@@ -222,7 +222,7 @@ print(response.json()['data'])`,
                   aria-current={endpoint === item ? 'page' : undefined}
                 >
                   <Icon size={15} />
-                  <span className="min-w-0"><strong className="block text-[11px]">{itemMeta.label}</strong><code className="mt-0.5 block truncate text-[9px] opacity-70">{itemMeta.method} {itemMeta.path}</code></span>
+                  <span className="min-w-0"><strong className="block text-[12px]">{itemMeta.label}</strong><code className="mt-0.5 block truncate text-[10px] opacity-70">{itemMeta.method} {itemMeta.path}</code></span>
                 </button>
               );
             })}
@@ -238,7 +238,7 @@ print(response.json()['data'])`,
               </div>
               <div className="flex items-center gap-2">
                 <span className={`status-pill ${meta.method === 'GET' ? 'active' : 'processing'}`}>{meta.method}</span>
-                <code className="mono hidden text-[10px] sm:block">{meta.path}</code>
+                <code className="mono hidden text-[11px] sm:block">{meta.path}</code>
               </div>
             </div>
             <div className="section-body">
@@ -270,7 +270,7 @@ print(response.json()['data'])`,
                   <button
                     key={item}
                     type="button"
-                    className={`min-h-7 rounded px-2 text-[10px] font-bold ${language === item ? 'bg-white text-[#087443] shadow-sm' : 'text-zinc-500'}`}
+                    className={`min-h-7 rounded px-2 text-[11px] font-bold ${language === item ? 'bg-white text-[#087443] shadow-sm' : 'text-zinc-500'}`}
                     onClick={() => setLanguage(item)}
                     aria-pressed={language === item}
                   >
@@ -289,7 +289,7 @@ print(response.json()['data'])`,
               >
                 {copied === 'sample' ? <Check size={14} /> : <Copy size={14} />}
               </button>
-              <pre className="max-h-[430px] overflow-auto p-4 pr-14 text-[11px] leading-5 text-[#d8f5e4]"><code>{samples[endpoint][language]}</code></pre>
+              <pre className="max-h-[430px] overflow-auto p-4 pr-14 text-[12px] leading-5 text-[#d8f5e4]"><code>{samples[endpoint][language]}</code></pre>
             </div>
           </article>
 
@@ -297,8 +297,8 @@ print(response.json()['data'])`,
             <div className="section-head"><strong>响应与错误</strong><AlertCircle size={15} className="text-zinc-400" /></div>
             <div className="section-body grid gap-4 xl:grid-cols-2">
               <div>
-                <strong className="text-[11px]">成功响应</strong>
-                <pre className="mt-2 overflow-auto rounded-md bg-[#f6f8f6] p-3 text-[10px] leading-5 text-zinc-700"><code>{endpoint === 'models' ? `{
+                <strong className="text-[12px]">成功响应</strong>
+                <pre className="mt-2 overflow-auto rounded-md bg-[#f6f8f6] p-3 text-[11px] leading-5 text-zinc-700"><code>{endpoint === 'models' ? `{
   "object": "list",
   "data": [{ "id": "MODEL_ID", "object": "model" }]
 }` : `{
@@ -307,8 +307,8 @@ print(response.json()['data'])`,
 }`}</code></pre>
               </div>
               <div>
-                <strong className="text-[11px]">错误响应</strong>
-                <pre className="mt-2 overflow-auto rounded-md bg-red-50 p-3 text-[10px] leading-5 text-red-800"><code>{`{
+                <strong className="text-[12px]">错误响应</strong>
+                <pre className="mt-2 overflow-auto rounded-md bg-red-50 p-3 text-[11px] leading-5 text-red-800"><code>{`{
   "error": {
     "message": "错误说明",
     "type": "invalid_request_error",

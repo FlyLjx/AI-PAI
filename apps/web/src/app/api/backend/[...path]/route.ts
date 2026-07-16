@@ -10,14 +10,18 @@ const CUSTOMER_ROUTES: Rule[] = [
   { pattern: /^\/api\/users\/[^/]+\/profile$/, methods: ['GET'] },
   { pattern: /^\/api\/users\/[^/]+\/password$/, methods: ['PATCH'] },
   { pattern: /^\/api\/users\/[^/]+\/email$/, methods: ['POST'] },
+  { pattern: /^\/api\/users\/[^/]+\/resend-verification$/, methods: ['POST'] },
   { pattern: /^\/api\/api-access\/keys$/, methods: ['GET', 'POST'] },
   { pattern: /^\/api\/api-access\/keys\/[^/]+$/, methods: ['PATCH', 'DELETE'] },
+  { pattern: /^\/api\/api-access\/keys\/[^/]+\/reveal$/, methods: ['POST'] },
   { pattern: /^\/api\/api-access\/logs$/, methods: ['GET'] },
   { pattern: /^\/api\/api-access\/logs\/trend$/, methods: ['GET'] },
+  { pattern: /^\/api\/upstream\/stability$/, methods: ['GET'] },
   { pattern: /^\/api\/subscriptions\/public\/(plans|current)$/, methods: ['GET'] },
   { pattern: /^\/api\/recharge\/qr-code$/, methods: ['GET'] },
+  { pattern: /^\/api\/recharge\/history$/, methods: ['GET'] },
   { pattern: /^\/api\/recharge$/, methods: ['POST'] },
-  { pattern: /^\/api\/recharge\/(?!orders(?:\/|$)|qr-code(?:\/|$)|alipay(?:\/|$))[^/]+$/, methods: ['GET'] },
+  { pattern: /^\/api\/recharge\/(?!orders(?:\/|$)|qr-code(?:\/|$)|history(?:\/|$)|alipay(?:\/|$))[^/]+$/, methods: ['GET'] },
   { pattern: /^\/api\/recharge\/(?!orders(?:\/|$)|qr-code(?:\/|$)|alipay(?:\/|$))[^/]+\/sync$/, methods: ['POST'] },
 ];
 
@@ -31,7 +35,7 @@ function exposesAuthActionURLs(): boolean {
 }
 
 function isAuthActionPath(path: string): boolean {
-  return ['/api/users/register', '/api/users/password/forgot'].includes(path) || /^\/api\/users\/[^/]+\/email$/.test(path);
+  return ['/api/users/register', '/api/users/password/forgot'].includes(path) || /^\/api\/users\/[^/]+\/(?:email|resend-verification)$/.test(path);
 }
 
 async function sanitizeAuthResponse(response: Response, path: string): Promise<Response> {

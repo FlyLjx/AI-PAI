@@ -213,7 +213,7 @@ func category(name string) string {
 	switch {
 	case strings.Contains(lower, "generation"):
 		return "generation"
-	case strings.Contains(lower, "error"):
+	case strings.Contains(lower, "error"), strings.Contains(lower, ".err."), strings.Contains(lower, "stderr"), strings.Contains(lower, "fatal"), strings.Contains(lower, "panic"):
 		return "error"
 	case strings.Contains(lower, "api"):
 		return "api"

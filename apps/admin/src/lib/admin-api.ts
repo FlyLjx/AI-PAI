@@ -9,6 +9,7 @@ export type Subscription = {
   status?: string;
   tier?: string;
   isPaid?: boolean;
+  source?: 'plan' | 'admin_custom';
   planId?: string;
   planName?: string;
   quotaImages?: number;
@@ -32,6 +33,8 @@ export type PortalUser = {
 
 export type AdminIdentity = Pick<PortalUser, 'id' | 'email'> & { role: 'admin' };
 
+export type APIKeyBillingMode = 'balance' | 'subscription' | 'auto';
+
 export type APIKey = {
   id: string;
   userId: string;
@@ -40,6 +43,7 @@ export type APIKey = {
   keyPrefix: string;
   status: string;
   concurrencyLimit: number;
+  billingMode?: APIKeyBillingMode | null;
   lastUsedAt?: string | null;
   createdAt: string;
   requestCount: number;
@@ -51,6 +55,7 @@ export type APIKey = {
 export type UsageLog = {
   id: string;
   userId: string;
+  taskId?: string;
   userEmail?: string;
   keyName?: string;
   keyPrefix?: string;
@@ -92,6 +97,13 @@ export type SystemLogDetail = {
   content: string;
   offset: number;
   truncated: boolean;
+};
+
+export type ProviderModel = {
+  name: string;
+  cost1k: number;
+  cost2k: number;
+  cost4k: number;
 };
 
 type Envelope<T> = { data: T; pagination?: { total: number; page: number; pageSize: number } };
@@ -140,12 +152,14 @@ export const portalApi = {
   createUser: (input: Record<string, unknown>) => api<PortalUser>('/api/users', { method: 'POST', body: JSON.stringify(input) }),
   updateUser: (id: string, input: Record<string, unknown>) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteUser: (id: string) => api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  verifyUserEmail: (id: string) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/verify-email`, { method: 'POST' }),
   grantSubscription: (id: string, input: Record<string, unknown>) => api(`/api/users/${encodeURIComponent(id)}/subscription`, { method: 'POST', body: JSON.stringify(input) }),
   providers: () => api<Record<string, unknown>[]>('/api/api-providers'),
   createProvider: (input: Record<string, unknown>) => api('/api/api-providers', { method: 'POST', body: JSON.stringify(input) }),
   updateProvider: (id: string, input: Record<string, unknown>) => api(`/api/api-providers/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteProvider: (id: string) => api(`/api/api-providers/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   testProvider: (id: string) => api(`/api/api-providers/${encodeURIComponent(id)}/test`, { method: 'POST' }),
+  providerModels: (id: string) => api<ProviderModel[]>(`/api/api-providers/${encodeURIComponent(id)}/models`),
   models: () => api<Record<string, unknown>[]>('/api/models'),
   createModel: (input: Record<string, unknown>) => api('/api/models', { method: 'POST', body: JSON.stringify(input) }),
   updateModel: (id: string, input: Record<string, unknown>) => api(`/api/models/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
@@ -159,6 +173,7 @@ export const portalApi = {
   updateAdminKey: (id: string, input: { status?: string; concurrencyLimit?: number }) => api<APIKey>(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   adminUsage: (page = 1) => api<UsageLog[]>(`/api/admin/api-access/logs${query({ page, pageSize: 30 })}`),
+  cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),
   settings: () => api<Record<string, unknown>>('/api/settings'),
   updateSettings: (input: Record<string, unknown>) => api('/api/settings', { method: 'PATCH', body: JSON.stringify(input) }),
   logs: () => api<SystemLogFile[]>('/api/system-logs'),

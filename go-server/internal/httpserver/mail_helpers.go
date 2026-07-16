@@ -69,6 +69,17 @@ func displayBrandName(value string) string {
 	return normalized
 }
 
+func emailBrandName(value string) string {
+	brand := displayBrandName(value)
+	if strings.EqualFold(brand, "AI-PAI") ||
+		strings.Contains(brand, "AI生图站") ||
+		strings.Contains(brand, "在线生图站") ||
+		strings.Contains(brand, "AI 生图站") {
+		return "AI-PAI API 中转站"
+	}
+	return brand
+}
+
 func sendSMTPMail(settings smtpSettings, to string, subject string, text string, actions ...mailAction) error {
 	if err := settings.validate(); err != nil {
 		return err
@@ -85,7 +96,7 @@ func sendSMTPMail(settings smtpSettings, to string, subject string, text string,
 	if fromName == "" {
 		fromName = settings.SiteName
 	}
-	fromName = displayBrandName(fromName)
+	fromName = emailBrandName(fromName)
 	addr := net.JoinHostPort(settings.Host, strconv.Itoa(settings.Port))
 	auth := smtp.PlainAuth("", settings.User, settings.Password, settings.Host)
 	action := mailAction{}
@@ -198,7 +209,7 @@ func buildMailMessage(fromName string, fromAddress string, to string, subject st
 
 func buildMailHTML(fromName string, subject string, text string, action mailAction) string {
 	brand := strings.TrimSpace(fromName)
-	brand = displayBrandName(brand)
+	brand = emailBrandName(brand)
 	actionHTML := ""
 	copyLinkHTML := ""
 	actionURL := strings.TrimSpace(action.URL)
@@ -223,7 +234,7 @@ func buildMailHTML(fromName string, subject string, text string, action mailActi
           <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:22px;overflow:hidden;border:1px solid #dfeee5;box-shadow:0 18px 48px rgba(21,91,54,.10);">
             <tr>
               <td style="padding:26px 28px 8px;background:linear-gradient(135deg,#f8fff9,#e7f7ed);">
-                <div style="display:inline-block;padding:7px 12px;border-radius:999px;background:#dff5e8;color:#126238;font-size:12px;font-weight:800;letter-spacing:.04em;">` + html.EscapeString(brand) + ` 通知</div>
+				<div style="display:inline-block;padding:7px 12px;border-radius:999px;background:#dff5e8;color:#126238;font-size:12px;font-weight:800;">` + html.EscapeString(brand) + ` · 账户通知</div>
                 <h1 style="margin:18px 0 0;color:#14231b;font-size:26px;line-height:1.28;font-weight:900;">` + html.EscapeString(subject) + `</h1>
               </td>
             </tr>
@@ -232,7 +243,7 @@ func buildMailHTML(fromName string, subject string, text string, action mailActi
                 <div style="font-size:15px;line-height:1.9;white-space:pre-wrap;color:#26352d;">` + html.EscapeString(text) + `</div>
                 ` + actionHTML + `
                 ` + copyLinkHTML + `
-                <div style="margin-top:30px;padding-top:16px;border-top:1px solid #e2eee7;color:#7a8980;font-size:12px;line-height:1.7;">这是一封来自 ` + html.EscapeString(brand) + ` 的服务通知邮件，请勿直接回复。</div>
+				<div style="margin-top:30px;padding-top:16px;border-top:1px solid #e2eee7;color:#7a8980;font-size:12px;line-height:1.7;">这是一封来自 ` + html.EscapeString(brand) + ` 的账户与服务通知邮件，请勿直接回复。</div>
               </td>
             </tr>
           </table>

@@ -137,6 +137,15 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		}
 	}
 	if lastErr != nil {
+		if errors.Is(lastErr, context.Canceled) {
+			if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil && finalTask.Status == tasks.StatusCanceled {
+				s.syncAPIAccessLogForTask(finalTask)
+				if s.hub != nil {
+					s.hub.PublishTask(*finalTask)
+				}
+				return nil
+			}
+		}
 		if errors.Is(lastErr, ErrTaskNotProcessing) {
 			if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil {
 				s.syncAPIAccessLogForTask(finalTask)
@@ -226,15 +235,16 @@ func (s *Service) syncAPIAccessLogForTask(task *tasks.Task) {
 		if imageCount < 1 {
 			imageCount = 1
 		}
-	case tasks.StatusFailed, tasks.StatusCanceled:
+	case tasks.StatusFailed:
 		status = "failed"
 		if task.ErrorMessage != nil && strings.TrimSpace(*task.ErrorMessage) != "" {
 			message = strings.TrimSpace(*task.ErrorMessage)
-		} else if task.Status == tasks.StatusCanceled {
-			message = "任务已取消"
 		} else {
 			message = "图片生成失败"
 		}
+	case tasks.StatusCanceled:
+		status = "canceled"
+		message = "任务已取消"
 	default:
 		return
 	}

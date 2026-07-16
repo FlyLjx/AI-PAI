@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
@@ -16,8 +17,11 @@ import (
 )
 
 var (
-	ErrMissingKey = errors.New("缺少 API Key")
-	ErrInvalidKey = errors.New("API Key 无效或已禁用")
+	ErrMissingKey          = errors.New("缺少 API Key")
+	ErrInvalidKey          = errors.New("API Key 无效或已禁用")
+	ErrAccessKeyNotFound   = errors.New("API Key 不存在或无权查看")
+	ErrKeyPlainUnavailable = errors.New("当前 API Key 没有可查看的明文")
+	ErrInvalidBillingMode  = errors.New("计费模式必须是 subscription 或 balance")
 )
 
 type Authenticated struct {
@@ -86,7 +90,11 @@ func (s Service) ListAllKeys(ctx context.Context) ([]PublicAccessKey, error) {
 	return publicKeys(keys), nil
 }
 
-func (s Service) CreateUserKey(ctx context.Context, userID string, name string) (*PublicAccessKey, error) {
+func (s Service) CreateUserKey(ctx context.Context, userID string, name string, billingMode string) (*PublicAccessKey, error) {
+	billingMode, err := normalizeNewBillingMode(billingMode)
+	if err != nil {
+		return nil, err
+	}
 	user, err := s.users.FindByID(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -112,6 +120,7 @@ func (s Service) CreateUserKey(ctx context.Context, userID string, name string) 
 		KeyPlain:         &plain,
 		Status:           "active",
 		ConcurrencyLimit: 10,
+		BillingMode:      billingMode,
 	})
 	if err != nil {
 		return nil, err
@@ -121,8 +130,36 @@ func (s Service) CreateUserKey(ctx context.Context, userID string, name string) 
 	return &public, nil
 }
 
+func normalizeNewBillingMode(value string) (string, error) {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" {
+		return BillingModeBalance, nil
+	}
+	if value != BillingModeSubscription && value != BillingModeBalance {
+		return "", ErrInvalidBillingMode
+	}
+	return value, nil
+}
+
 func (s Service) UpdateKeyStatus(ctx context.Context, id string, userID string, status string) (*PublicAccessKey, error) {
 	return s.UpdateKeySettings(ctx, id, userID, status, nil)
+}
+
+func (s Service) RevealUserKey(ctx context.Context, id string, userID string) (string, error) {
+	if strings.TrimSpace(id) == "" || strings.TrimSpace(userID) == "" {
+		return "", ErrAccessKeyNotFound
+	}
+	keyPlain, err := s.keys.FindKeyPlainForUser(ctx, id, userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrAccessKeyNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if keyPlain == nil || strings.TrimSpace(*keyPlain) == "" {
+		return "", ErrKeyPlainUnavailable
+	}
+	return *keyPlain, nil
 }
 
 func (s Service) UpdateKeySettings(ctx context.Context, id string, userID string, status string, concurrencyLimit *int) (*PublicAccessKey, error) {
@@ -130,8 +167,8 @@ func (s Service) UpdateKeySettings(ctx context.Context, id string, userID string
 		return nil, errors.New("状态不正确")
 	}
 	if concurrencyLimit != nil {
-		if *concurrencyLimit < 1 || *concurrencyLimit > 50 {
-			return nil, errors.New("并发上限必须在 1 到 50 之间")
+		if *concurrencyLimit < 1 {
+			return nil, errors.New("并发上限必须大于 0")
 		}
 	}
 	updated, err := s.keys.UpdateKeySettings(ctx, id, userID, status, concurrencyLimit)

@@ -54,7 +54,7 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
 
       <div className="p-4 flex flex-col justify-between flex-1">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-[10px] font-bold text-[#17201B]/50 uppercase tracking-wider">
+          <span className="text-[11px] font-bold text-[#17201B]/50 uppercase tracking-wider">
             {title}
           </span>
           {Icon && (
@@ -71,7 +71,7 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
         </div>
 
         {(subtext || trend) && (
-          <div className="mt-3 pt-2.5 border-t border-[#F6F8F6] flex items-center gap-1.5 text-[10px]">
+          <div className="mt-3 pt-2.5 border-t border-[#F6F8F6] flex items-center gap-1.5 text-[11px]">
             {trend && (
               <span className={`font-bold font-mono px-1.5 py-0.5 rounded ${
                 trend.type === 'positive' ? 'bg-[#12B76A]/8 text-[#12B76A]' :

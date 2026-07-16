@@ -39,6 +39,7 @@ type SubscriptionEntitlement struct {
 	Status             string                    `json:"status"`
 	Tier               string                    `json:"tier"`
 	IsPaid             bool                      `json:"isPaid"`
+	Source             string                    `json:"source,omitempty"`
 	StartedAt          string                    `json:"startedAt,omitempty"`
 	ExpiresAt          string                    `json:"expiresAt,omitempty"`
 	PeriodStartedAt    string                    `json:"periodStartedAt"`
@@ -56,6 +57,12 @@ type SubscriptionEntitlement struct {
 	QuotaUnlimited     bool                      `json:"quotaUnlimited"`
 	QuotaWindows       []SubscriptionQuotaWindow `json:"quotaWindows,omitempty"`
 	Plan               *SubscriptionPlan         `json:"plan,omitempty"`
+}
+
+type CustomSubscriptionGrant struct {
+	Name         string `json:"name"`
+	DurationDays int    `json:"durationDays"`
+	QuotaImages  int    `json:"quotaImages"`
 }
 
 type Invite struct {

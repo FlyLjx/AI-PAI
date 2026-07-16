@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -31,6 +32,10 @@ func (r *Router) settings(w http.ResponseWriter, req *http.Request) {
 		defer cancel()
 		data, err := settings.NewRepository(r.db).Update(ctx, input)
 		if err != nil {
+			if errors.Is(err, settings.ErrInvalidRechargeRate) {
+				writeError(w, newAppError(http.StatusBadRequest, err.Error()))
+				return
+			}
 			writeError(w, err)
 			return
 		}
@@ -123,8 +128,9 @@ func (r *Router) sendTestEmail(w http.ResponseWriter, req *http.Request, values 
 		return
 	}
 	smtpConfig := smtpSettingsFromMap(values)
-	body := "这是一封来自 AI-PAI 后端的测试邮件。\n\n如果你收到这封邮件，说明 SMTP 配置可用。"
-	if err := sendSMTPMail(smtpConfig, email, "AI-PAI 邮件服务测试", body); err != nil {
+	siteName := emailBrandName(anyString(values["siteName"]))
+	body := "这是一封来自 " + siteName + " 的测试邮件。\n\n如果你收到这封邮件，说明 SMTP 配置可用，账户验证与服务通知可以正常发送。"
+	if err := sendSMTPMail(smtpConfig, email, siteName+" 邮件服务测试", body); err != nil {
 		writeError(w, err)
 		return
 	}

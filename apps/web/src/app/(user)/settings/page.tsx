@@ -268,15 +268,15 @@ export default function SettingsPage() {
               <div className="grid gap-4">
                 <div className="flex items-center gap-3">
                   <span className="account-avatar h-10 w-10 text-sm">{user.email.slice(0, 1).toUpperCase()}</span>
-                  <div className="min-w-0"><strong className="block truncate text-xs">{user.email}</strong><small className="text-[10px] text-zinc-500">{user.role === 'admin' ? '系统管理员' : 'API 客户'}</small></div>
+                  <div className="min-w-0"><strong className="block truncate text-xs">{user.email}</strong><small className="text-[11px] text-zinc-500">{user.role === 'admin' ? '系统管理员' : 'API 客户'}</small></div>
                 </div>
-                <dl className="grid gap-3 border-y border-[#edf0ee] py-4 text-[10px]">
+                <dl className="grid gap-3 border-y border-[#edf0ee] py-4 text-[11px]">
                   <div className="flex items-center justify-between gap-3"><dt className="text-zinc-500">账户 ID</dt><dd className="mono max-w-[190px] truncate" title={user.id}>{user.id}</dd></div>
                   <div className="flex items-center justify-between gap-3"><dt className="text-zinc-500">账户状态</dt><dd><span className={`status-pill ${user.status === 'active' ? 'active' : 'disabled'}`}>{user.status === 'active' ? '正常' : user.status}</span></dd></div>
                   <div className="flex items-center justify-between gap-3"><dt className="text-zinc-500">邮箱验证</dt><dd><span className={`status-pill ${user.emailVerifiedAt ? 'active' : 'processing'}`}>{user.emailVerifiedAt ? '已验证' : '未验证'}</span></dd></div>
                   <div className="flex items-center justify-between gap-3"><dt className="text-zinc-500">注册时间</dt><dd className="mono">{user.createdAt ? formatDate(user.createdAt, false) : '-'}</dd></div>
                 </dl>
-                <div className="grid gap-2 text-[10px] text-zinc-500">
+                <div className="grid gap-2 text-[11px] text-zinc-500">
                   <span className="flex items-center gap-2"><MailCheck size={13} className="text-blue-600" />{user.emailVerifiedAt ? '邮箱已验证，可创建 API Key' : '邮箱未验证，暂不能创建 API Key'}</span>
                   <span className="flex items-center gap-2"><BadgeCheck size={13} className="text-[#087443]" />API 权限与账户状态同步</span>
                 </div>

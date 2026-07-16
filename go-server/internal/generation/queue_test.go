@@ -1,6 +1,7 @@
 package generation
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -28,6 +29,26 @@ func TestQueueAcquireScopeSerializesSameScope(t *testing.T) {
 		releaseSecond()
 	case <-time.After(time.Second):
 		t.Fatal("second job did not acquire the API key scope after release")
+	}
+}
+
+func TestQueueCancelStopsActiveTask(t *testing.T) {
+	queue := &Queue{}
+	ctx, cancel := context.WithCancel(context.Background())
+	queue.registerActiveTask("task-1", cancel)
+
+	if !queue.Cancel("task-1") {
+		t.Fatal("active task was not canceled")
+	}
+	select {
+	case <-ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("active task context was not canceled")
+	}
+
+	queue.unregisterActiveTask("task-1")
+	if queue.Cancel("task-1") {
+		t.Fatal("inactive task should not report an active cancellation")
 	}
 }
 

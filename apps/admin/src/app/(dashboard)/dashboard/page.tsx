@@ -168,9 +168,9 @@ export default function AdminDashboardPage() {
               <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#DCE4DF] px-4 py-3">
                 <div>
                   <h2 className="text-sm font-semibold text-[#17201B]">今日运行</h2>
-                  <p className="mt-0.5 text-[11px] text-zinc-500">从本地时区 00:00 开始统计</p>
+                  <p className="mt-0.5 text-[12px] text-zinc-500">从本地时区 00:00 开始统计</p>
                 </div>
-                <span className={`rounded border px-2 py-1 text-[10px] font-semibold ${pendingCount ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
+                <span className={`rounded border px-2 py-1 text-[11px] font-semibold ${pendingCount ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
                   {pendingCount ? `${pendingCount} 项处理中` : '队列平稳'}
                 </span>
               </div>
@@ -182,7 +182,7 @@ export default function AdminDashboardPage() {
                   ['新增客户', data.today?.users],
                 ].map(([label, value]) => (
                   <div key={String(label)} className="p-4">
-                    <span className="text-[10px] font-semibold text-zinc-500">{label}</span>
+                    <span className="text-[11px] font-semibold text-zinc-500">{label}</span>
                     <strong className="mt-2 block text-xl text-[#17201B]">{Number(value || 0).toLocaleString('zh-CN')}</strong>
                   </div>
                 ))}
@@ -192,9 +192,9 @@ export default function AdminDashboardPage() {
                   <div key={item.label} className="flex items-center gap-3 rounded-md border border-[#E5E9E6] bg-white px-3 py-2.5">
                     <span className={`h-2 w-2 rounded-full ${item.tone === 'red' ? 'bg-red-500' : item.tone === 'amber' ? 'bg-amber-500' : 'bg-blue-500'}`} />
                     <span className="min-w-0 flex-1">
-                      <span className="block text-[10px] text-zinc-500">{item.label}</span>
+                      <span className="block text-[11px] text-zinc-500">{item.label}</span>
                       <strong className="block text-base text-[#17201B]">{item.value}</strong>
-                      <small className="block truncate text-[10px] text-zinc-400">{item.note}</small>
+                      <small className="block truncate text-[11px] text-zinc-400">{item.note}</small>
                     </span>
                   </div>
                 ))}
@@ -204,7 +204,7 @@ export default function AdminDashboardPage() {
             <section className="rounded-md border border-[#DCE4DF] bg-white">
               <div className="border-b border-[#DCE4DF] px-4 py-3">
                 <h2 className="text-sm font-semibold text-[#17201B]">资源状态</h2>
-                <p className="mt-0.5 text-[11px] text-zinc-500">接口与模型可用性</p>
+                <p className="mt-0.5 text-[12px] text-zinc-500">接口与模型可用性</p>
               </div>
               <div className="divide-y divide-[#EDF0EE] px-4">
                 {[
@@ -214,11 +214,11 @@ export default function AdminDashboardPage() {
                 ].map(([label, value, note]) => (
                   <div key={String(label)} className="flex items-center justify-between gap-4 py-3 text-xs">
                     <span className="text-zinc-600">{label}</span>
-                    <span className="text-right"><strong className="block text-[#17201B]">{Number(value || 0)}</strong><small className="text-[10px] text-zinc-400">{note}</small></span>
+                    <span className="text-right"><strong className="block text-[#17201B]">{Number(value || 0)}</strong><small className="text-[11px] text-zinc-400">{note}</small></span>
                   </div>
                 ))}
               </div>
-              <div className="flex items-center gap-2 border-t border-[#DCE4DF] bg-[#FAFBFA] px-4 py-3 text-[10px] text-zinc-500">
+              <div className="flex items-center gap-2 border-t border-[#DCE4DF] bg-[#FAFBFA] px-4 py-3 text-[11px] text-zinc-500">
                 <Clock3 className="h-3.5 w-3.5" />
                 最近请求：{data.system?.lastTaskAt ? formatDate(data.system.lastTaskAt) : '暂无记录'}
               </div>
@@ -230,10 +230,10 @@ export default function AdminDashboardPage() {
               <div className="border-b border-[#DCE4DF] px-4 py-3"><h2 className="text-sm font-semibold">最近充值与订阅</h2></div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[560px] text-left text-xs">
-                  <thead className="bg-[#F6F8F6] text-[10px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">类型</th><th className="px-4 py-2">金额</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
+                  <thead className="bg-[#F6F8F6] text-[11px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">类型</th><th className="px-4 py-2">金额</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
                   <tbody className="divide-y divide-[#EDF0EE]">
                     {recentOrders.map((row) => { const status = statusView(row.status); return (
-                      <tr key={row.id}><td className="max-w-[180px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="px-4 py-2.5">{row.orderType === 'subscription' ? '订阅' : '余额'}</td><td className="px-4 py-2.5 font-mono">{formatCNY(Number(row.amount || 0))}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[10px] ${status.className}`}>{status.label}</span></td><td className="px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
+                      <tr key={row.id}><td className="max-w-[180px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="px-4 py-2.5">{row.orderType === 'subscription' ? '订阅' : '余额'}</td><td className="px-4 py-2.5 font-mono">{formatCNY(Number(row.amount || 0))}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[11px] ${status.className}`}>{status.label}</span></td><td className="px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
                     ); })}
                     {!recentOrders.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400">暂无充值记录</td></tr>}
                   </tbody>
@@ -245,10 +245,10 @@ export default function AdminDashboardPage() {
               <div className="border-b border-[#DCE4DF] px-4 py-3"><h2 className="text-sm font-semibold">最近 API 请求</h2></div>
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[560px] text-left text-xs">
-                  <thead className="bg-[#F6F8F6] text-[10px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">模型</th><th className="px-4 py-2">数量</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
+                  <thead className="bg-[#F6F8F6] text-[11px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">模型</th><th className="px-4 py-2">数量</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
                   <tbody className="divide-y divide-[#EDF0EE]">
                     {recentTasks.map((row) => { const status = statusView(row.status); return (
-                      <tr key={row.id}><td className="max-w-[160px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="max-w-[160px] truncate px-4 py-2.5">{row.modelDisplayName || row.modelName || row.modelId || '-'}</td><td className="px-4 py-2.5 font-mono">{Number(row.quantity || 0)}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[10px] ${status.className}`}>{status.label}</span></td><td className="px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
+                      <tr key={row.id}><td className="max-w-[160px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="max-w-[160px] truncate px-4 py-2.5">{row.modelDisplayName || row.modelName || row.modelId || '-'}</td><td className="px-4 py-2.5 font-mono">{Number(row.quantity || 0)}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[11px] ${status.className}`}>{status.label}</span></td><td className="px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
                     ); })}
                     {!recentTasks.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400">暂无 API 请求</td></tr>}
                   </tbody>
@@ -257,7 +257,7 @@ export default function AdminDashboardPage() {
             </section>
           </div>
 
-          <p className="text-right text-[10px] text-zinc-400">最后同步：{lastUpdated ? formatDate(lastUpdated) : '-'}</p>
+          <p className="text-right text-[11px] text-zinc-400">最后同步：{lastUpdated ? formatDate(lastUpdated) : '-'}</p>
         </>
       )}
     </div>

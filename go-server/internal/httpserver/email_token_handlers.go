@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 )
 
 const emailChangePurpose = "change_email"
+const emailVerificationResendCooldown = time.Minute
 
 func (r *Router) verifyEmail(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
@@ -45,6 +47,76 @@ func (r *Router) verifyEmail(w http.ResponseWriter, req *http.Request) {
 	}
 	r.publishCurrentUser(context.Background(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(req.Context(), user)})
+}
+
+func (r *Router) resendEmailVerification(w http.ResponseWriter, req *http.Request, id string) {
+	if req.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	id = strings.Trim(id, "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	}
+	if _, err := r.requireFrontUser(req, id); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	user, err := users.NewRepository(r.db).FindByID(ctx, id)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if user == nil {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	}
+	if user.EmailVerifiedAt != nil {
+		writeError(w, newAppError(http.StatusConflict, "邮箱已经完成验证"))
+		return
+	}
+
+	var lastCreatedAt time.Time
+	err = r.db.QueryRowContext(ctx, `
+		SELECT created_at
+		FROM user_email_tokens
+		WHERE user_id = ? AND purpose = ?
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, id, "verify_email").Scan(&lastCreatedAt)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeError(w, err)
+		return
+	}
+	if err == nil {
+		remaining := time.Until(lastCreatedAt.Add(emailVerificationResendCooldown))
+		if remaining > 0 {
+			seconds := int(remaining/time.Second) + 1
+			w.Header().Set("Retry-After", strconv.Itoa(seconds))
+			writeError(w, newAppError(http.StatusTooManyRequests, "验证邮件发送过于频繁，请稍后再试"))
+			return
+		}
+	}
+
+	settingValues, err := settings.NewRepository(r.db).Get(ctx)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	data, err := r.sendEmailVerification(ctx, req, user, settingValues, false)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
 func (r *Router) changeUserEmail(w http.ResponseWriter, req *http.Request, id string) {
@@ -111,7 +183,7 @@ func (r *Router) changeUserEmail(w http.ResponseWriter, req *http.Request, id st
 	if settingValues, settingsErr := settings.NewRepository(r.db).Get(ctx); settingsErr == nil {
 		smtpConfig := smtpSettingsFromMap(settingValues)
 		if smtpConfig.validate() == nil {
-			siteName := displayBrandName(strings.TrimSpace(anyString(settingValues["siteName"])))
+			siteName := emailBrandName(anyString(settingValues["siteName"]))
 			body := "你正在将 " + siteName + " 账户的登录邮箱修改为此邮箱。请在 2 小时内打开以下链接完成验证：\n\n" + verificationURL + "\n\n如果不是你本人操作，请忽略这封邮件，原邮箱不会改变。"
 			if sendErr := sendSMTPMail(smtpConfig, newEmail, "确认修改 "+siteName+" 登录邮箱", body, mailAction{Text: "确认修改邮箱", URL: verificationURL}); sendErr != nil {
 				message = "验证链接已生成，但邮件发送失败：" + sendErr.Error()
@@ -199,8 +271,9 @@ func (r *Router) forgotPassword(w http.ResponseWriter, req *http.Request) {
 	if settingValues, err := settings.NewRepository(r.db).Get(ctx); err == nil {
 		smtpConfig := smtpSettingsFromMap(settingValues)
 		if smtpConfig.validate() == nil {
-			body := "你正在重置 AI-PAI 账户密码，请在 2 小时内打开以下链接完成操作：\n\n" + resetURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
-			if err := sendSMTPMail(smtpConfig, user.Email, "重置 AI-PAI 账户密码", body); err != nil {
+			siteName := emailBrandName(anyString(settingValues["siteName"]))
+			body := "你正在重置 " + siteName + " 账户密码，请在 2 小时内打开以下链接完成操作：\n\n" + resetURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
+			if err := sendSMTPMail(smtpConfig, user.Email, "重置 "+siteName+" 账户密码", body, mailAction{Text: "立即重置密码", URL: resetURL}); err != nil {
 				message = "密码重置链接已生成，但邮件发送失败：" + err.Error()
 			} else {
 				message = "密码重置邮件已发送，请查收。"
@@ -245,29 +318,39 @@ func (r *Router) resetPassword(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) sendRegistrationVerification(ctx context.Context, req *http.Request, user *users.User, settingValues map[string]any) (map[string]any, error) {
+	return r.sendEmailVerification(ctx, req, user, settingValues, true)
+}
+
+func (r *Router) sendEmailVerification(ctx context.Context, req *http.Request, user *users.User, settingValues map[string]any, registration bool) (map[string]any, error) {
 	token, err := r.createUserEmailToken(ctx, user.ID, "verify_email", 24*time.Hour)
 	if err != nil {
 		return nil, err
 	}
 	verifyURL := absoluteURL(req, "/?verifyEmailToken="+token)
-	message := "注册成功，请前往邮箱完成验证后再登录。"
+	message := "验证链接已生成；配置邮件服务后可自动发送。"
+	if registration {
+		message = "注册成功，" + message
+	}
 	sent := false
 	if settingValues == nil {
 		settingValues = map[string]any{}
 	}
 	smtpConfig := smtpSettingsFromMap(settingValues)
 	if smtpConfig.validate() == nil {
-		siteName := strings.TrimSpace(anyString(settingValues["siteName"]))
-		siteName = displayBrandName(siteName)
-		body := "你正在注册 " + siteName + " 账号，请在 24 小时内打开以下链接完成邮箱验证：\n\n" + verifyURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
-		if err := sendSMTPMail(smtpConfig, user.Email, "验证 "+siteName+" 账号邮箱", body, mailAction{Text: "立即验证邮箱", URL: verifyURL}); err != nil {
-			message = "注册成功，但验证邮件发送失败：" + err.Error()
+		siteName := emailBrandName(anyString(settingValues["siteName"]))
+		body := "你正在验证 " + siteName + " 账户邮箱，请在 24 小时内打开以下链接完成验证：\n\n" + verifyURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
+		if err := sendSMTPMail(smtpConfig, user.Email, "验证 "+siteName+" 账户邮箱", body, mailAction{Text: "立即验证邮箱", URL: verifyURL}); err != nil {
+			message = "验证邮件发送失败：" + err.Error()
+			if registration {
+				message = "注册成功，但" + message
+			}
 		} else {
-			message = "注册成功，验证邮件已发送，请查收后完成验证。"
+			message = "验证邮件已重新发送，请查收后完成验证。"
+			if registration {
+				message = "注册成功，验证邮件已发送，请查收后完成验证。"
+			}
 			sent = true
 		}
-	} else {
-		message = "注册成功，验证链接已生成；配置邮件服务后可自动发送。"
 	}
 	return map[string]any{
 		"verificationRequired": true,

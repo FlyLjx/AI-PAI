@@ -66,7 +66,7 @@ export default function RegisterPage() {
           {!verification.sent && verification.verificationUrl && (
             <div className="notice mt-5 min-w-0">
               <strong className="block text-xs">本地验证链接</strong>
-              <p className="mt-1 break-all text-[10px] leading-5 text-[#4c6256]">{verification.verificationUrl}</p>
+              <p className="mt-1 break-all text-[11px] leading-5 text-[#4c6256]">{verification.verificationUrl}</p>
               <a className="btn primary mt-3 w-full" href={verification.verificationUrl}>
                 打开验证链接 <ExternalLink size={14} />
               </a>

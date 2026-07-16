@@ -2,10 +2,14 @@ package settings
 
 import (
 	"context"
+	"errors"
+	"math"
 	"strconv"
 
 	"aipi-go/internal/database"
 )
+
+var ErrInvalidRechargeRate = errors.New("充值比例必须大于 0")
 
 type Repository struct {
 	db *database.DB
@@ -49,6 +53,13 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 		if _, ok := Defaults[key]; !ok {
 			continue
 		}
+		if key == "rechargeRate" {
+			rate, ok := numericSettingValue(value)
+			if !ok || rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+				return nil, ErrInvalidRechargeRate
+			}
+			value = rate
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO system_settings (setting_key, setting_value)
 			VALUES (?, ?)
@@ -63,13 +74,31 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 	return r.Get(ctx)
 }
 
+func numericSettingValue(value any) (float64, bool) {
+	switch item := value.(type) {
+	case float64:
+		return item, true
+	case float32:
+		return float64(item), true
+	case int:
+		return float64(item), true
+	case int64:
+		return float64(item), true
+	default:
+		return 0, false
+	}
+}
+
 func parseValue(key string, value string) any {
 	if _, ok := Defaults[key].(bool); ok {
 		return value == "true" || value == "1"
 	}
 	if _, ok := Defaults[key].(float64); ok {
 		number, err := strconv.ParseFloat(value, 64)
-		if err != nil {
+		if err != nil || math.IsNaN(number) || math.IsInf(number, 0) {
+			return Defaults[key]
+		}
+		if key == "rechargeRate" && number <= 0 {
 			return Defaults[key]
 		}
 		return number

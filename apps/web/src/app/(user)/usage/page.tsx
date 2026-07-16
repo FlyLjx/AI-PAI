@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
+import { AppSelect, type AppSelectOption } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
 import { APIError, getSession, portalApi, type UsageLog, type UsageSummary } from '@/lib/portal-api';
@@ -38,6 +39,20 @@ function statusMeta(status: string): { label: string; className: string; icon: L
       return { label: '排队中', className: 'queued', icon: Clock3 };
   }
 }
+
+const STATUS_OPTIONS: readonly AppSelectOption[] = [
+  { value: '', label: '全部状态' },
+  { value: 'success', label: '成功' },
+  { value: 'failed', label: '失败' },
+  { value: 'processing', label: '处理中' },
+  { value: 'queued', label: '排队中' },
+];
+
+const PAGE_SIZE_OPTIONS: readonly AppSelectOption[] = [
+  { value: '10', label: '10 条' },
+  { value: '20', label: '20 条' },
+  { value: '50', label: '50 条' },
+];
 
 export default function UsagePage() {
   const [logs, setLogs] = useState<UsageLog[]>([]);
@@ -107,6 +122,7 @@ export default function UsagePage() {
     { key: 'endpoint', label: '接口' },
     { key: 'key', label: 'API Key' },
     { key: 'model', label: '模型' },
+    { key: 'prompt', label: '提示词' },
     { key: 'spec', label: '规格' },
     { key: 'quantity', label: '请求 / 输出' },
     { key: 'createdAt', label: '请求时间' },
@@ -131,34 +147,23 @@ export default function UsagePage() {
         <div className="grid gap-3 md:grid-cols-[minmax(220px,1fr)_160px_120px_auto] md:items-end">
           <div className="field">
             <label htmlFor="usage-keyword">搜索</label>
-            <div className="relative">
-              <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+            <div className="input-leading-icon">
+              <Search size={14} aria-hidden="true" />
               <input
                 id="usage-keyword"
-                className="pl-9"
                 value={draftKeyword}
                 onChange={(event) => setDraftKeyword(event.target.value)}
-                placeholder="接口、模型或 Key 名称"
+                placeholder="接口、模型、提示词或 Key 名称"
               />
             </div>
           </div>
           <div className="field">
             <label htmlFor="usage-status">状态</label>
-            <select id="usage-status" value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}>
-              <option value="">全部状态</option>
-              <option value="success">成功</option>
-              <option value="failed">失败</option>
-              <option value="processing">处理中</option>
-              <option value="queued">排队中</option>
-            </select>
+            <AppSelect id="usage-status" value={status} options={STATUS_OPTIONS} onValueChange={(nextStatus) => { setStatus(nextStatus); setPage(1); }} />
           </div>
           <div className="field">
             <label htmlFor="usage-page-size">每页条数</label>
-            <select id="usage-page-size" value={pageSize} onChange={(event) => { setPageSize(Number(event.target.value)); setPage(1); }}>
-              <option value={10}>10 条</option>
-              <option value={20}>20 条</option>
-              <option value={50}>50 条</option>
-            </select>
+            <AppSelect id="usage-page-size" value={String(pageSize)} options={PAGE_SIZE_OPTIONS} onValueChange={(nextPageSize) => { setPageSize(Number(nextPageSize)); setPage(1); }} />
           </div>
           <div className="action-row md:justify-end">
             <button className="btn" type="button" onClick={resetFilters}><RotateCcw size={13} />重置</button>
@@ -186,10 +191,13 @@ export default function UsagePage() {
                 <td className="px-4 py-3"><span className={`status-pill gap-1 ${meta.className}`}><StatusIcon size={11} className={meta.className === 'processing' ? 'animate-spin' : ''} />{meta.label}</span></td>
                 <td className="px-4 py-3 mono truncate-cell" title={log.endpoint}>{log.endpoint || '-'}</td>
                 <td className="px-4 py-3">
-                  <strong className="block max-w-[150px] truncate text-[11px]">{log.keyName || '已删除 Key'}</strong>
-                  <small className="mono text-[9px] text-zinc-400">{log.keyPrefix || '-'}</small>
+                  <strong className="block max-w-[150px] truncate text-[12px]">{log.keyName || '已删除 Key'}</strong>
+                  <small className="mono text-[10px] text-zinc-400">{log.keyPrefix || '-'}</small>
                 </td>
                 <td className="px-4 py-3 truncate-cell" title={log.model}>{log.model || '-'}</td>
+                <td className="min-w-[220px] max-w-[300px] px-4 py-3" title={log.prompt || ''}>
+                  <p className="truncate text-[12px] text-zinc-600">{log.prompt || '-'}</p>
+                </td>
                 <td className="px-4 py-3 mono">{log.size || '-'}{log.quality ? ` · ${log.quality}` : ''}</td>
                 <td className="px-4 py-3 mono">{Number(log.quantity || 0)} / {Number(log.imageCount || 0)}</td>
                 <td className="px-4 py-3 mono text-zinc-500">{formatDate(log.createdAt)}</td>
@@ -204,18 +212,22 @@ export default function UsagePage() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <strong className="block truncate text-xs">{log.model || '未知模型'}</strong>
-                    <code className="mt-1 block truncate text-[9px] text-zinc-500">{log.endpoint || '-'}</code>
+                    <code className="mt-1 block truncate text-[10px] text-zinc-500">{log.endpoint || '-'}</code>
                   </div>
                   <span className={`status-pill gap-1 ${meta.className}`}><StatusIcon size={11} className={meta.className === 'processing' ? 'animate-spin' : ''} />{meta.label}</span>
                 </div>
-                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[#edf0ee] pt-3 text-[10px]">
+                <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2 border-t border-[#edf0ee] pt-3 text-[11px]">
+                  <div className="col-span-2">
+                    <dt className="text-zinc-400">提示词</dt>
+                    <dd className="mt-1 line-clamp-3 whitespace-pre-wrap break-words leading-5 text-[#3f4943]" title={log.prompt || ''}>{log.prompt || '-'}</dd>
+                  </div>
                   <div><dt className="text-zinc-400">API Key</dt><dd className="mt-0.5 truncate">{log.keyName || log.keyPrefix || '-'}</dd></div>
                   <div><dt className="text-zinc-400">规格</dt><dd className="mono mt-0.5">{log.size || '-'} · {log.quality || '-'}</dd></div>
                   <div><dt className="text-zinc-400">请求 / 输出</dt><dd className="mono mt-0.5">{Number(log.quantity || 0)} / {Number(log.imageCount || 0)}</dd></div>
                   <div><dt className="text-zinc-400">时间</dt><dd className="mono mt-0.5">{formatDate(log.createdAt)}</dd></div>
                 </dl>
                 {log.errorMessage && (
-                  <p className="mt-3 flex gap-1.5 rounded-md bg-red-50 p-2 text-[10px] text-red-700">
+                  <p className="mt-3 flex gap-1.5 rounded-md bg-red-50 p-2 text-[11px] text-red-700">
                     <XCircle size={13} className="shrink-0" />{log.errorMessage}
                   </p>
                 )}

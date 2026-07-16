@@ -22,6 +22,7 @@ type Queue struct {
 	mu        sync.Mutex
 	shutdown  chan struct{}
 	scopes    map[string]*scopeLimiter
+	active    map[string]context.CancelFunc
 }
 
 type Job struct {
@@ -112,11 +113,47 @@ func (q *Queue) process(job Job, workerID any) {
 	defer release()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	q.registerActiveTask(job.TaskID, cancel)
+	defer q.unregisterActiveTask(job.TaskID)
 	err := q.service.Process(ctx, job.TaskID)
 	cancel()
 	if err != nil {
 		q.logger.Error("generation worker failed", "worker", workerID, "taskId", job.TaskID, "error", err)
 	}
+}
+
+func (q *Queue) Cancel(taskID string) bool {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return false
+	}
+	q.mu.Lock()
+	cancel := q.active[taskID]
+	q.mu.Unlock()
+	if cancel == nil {
+		return false
+	}
+	cancel()
+	return true
+}
+
+func (q *Queue) registerActiveTask(taskID string, cancel context.CancelFunc) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" || cancel == nil {
+		return
+	}
+	q.mu.Lock()
+	if q.active == nil {
+		q.active = map[string]context.CancelFunc{}
+	}
+	q.active[taskID] = cancel
+	q.mu.Unlock()
+}
+
+func (q *Queue) unregisterActiveTask(taskID string) {
+	q.mu.Lock()
+	delete(q.active, strings.TrimSpace(taskID))
+	q.mu.Unlock()
 }
 
 func (q *Queue) acquireScope(scope string, limit int) func() {

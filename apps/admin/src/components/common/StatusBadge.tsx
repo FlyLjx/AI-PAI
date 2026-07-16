@@ -1,6 +1,6 @@
 import React from 'react';
 
-type StatusType = 'queued' | 'processing' | 'succeeded' | 'failed' | 'active' | 'disabled' | 'banned' | 'recharge' | 'refund' | 'manual_adjust' | 'pay-as-you-go' | 'subscription';
+type StatusType = 'queued' | 'processing' | 'succeeded' | 'failed' | 'canceled' | 'active' | 'disabled' | 'banned' | 'recharge' | 'refund' | 'manual_adjust' | 'pay-as-you-go' | 'subscription';
 
 interface StatusBadgeProps {
   status: StatusType;
@@ -26,6 +26,14 @@ export function StatusBadge({ status, customLabel }: StatusBadgeProps) {
           border: 'border-amber-200',
           dot: 'bg-[#D97706]',
           label: '处理中'
+        };
+      case 'canceled':
+        return {
+          bg: 'bg-zinc-100',
+          text: 'text-zinc-600',
+          border: 'border-zinc-300',
+          dot: 'bg-zinc-500',
+          label: '已取消'
         };
       case 'succeeded':
       case 'active':
@@ -102,7 +110,7 @@ export function StatusBadge({ status, customLabel }: StatusBadgeProps) {
   const style = getStyles();
 
   return (
-    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[11px] font-medium leading-4 ${style.bg} ${style.text} ${style.border}`}>
+    <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded border text-[12px] font-medium leading-4 ${style.bg} ${style.text} ${style.border}`}>
       <span className={`w-1.5 h-1.5 rounded-full ${style.dot}`}></span>
       <span>{customLabel || style.label}</span>
     </span>
