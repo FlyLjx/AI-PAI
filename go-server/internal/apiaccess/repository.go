@@ -510,11 +510,13 @@ func usageLogSelect() string {
 			api_access_logs.response_format,
 			api_access_logs.status,
 			api_access_logs.error_message,
+			COALESCE(generation_tasks.duration_seconds, 0),
 			api_access_logs.created_at,
 			api_access_logs.finished_at
 		FROM api_access_logs
 		LEFT JOIN users ON users.id = api_access_logs.user_id
 		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+		LEFT JOIN generation_tasks ON generation_tasks.id = api_access_logs.task_id
 	`
 }
 
@@ -666,6 +668,7 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 		&item.ResponseFormat,
 		&item.Status,
 		&errorMessage,
+		&item.DurationSeconds,
 		&item.CreatedAt,
 		&finishedAt,
 	); err != nil {

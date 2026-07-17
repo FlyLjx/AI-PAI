@@ -78,25 +78,26 @@ type AccessKey struct {
 }
 
 type UsageLog struct {
-	ID             string
-	UserID         string
-	UserEmail      *string
-	APIKeyID       string
-	KeyName        *string
-	KeyPrefix      *string
-	TaskID         *string
-	Endpoint       string
-	Model          string
-	Prompt         string
-	Size           string
-	Quality        string
-	Quantity       int
-	ImageCount     int
-	ResponseFormat string
-	Status         string
-	ErrorMessage   *string
-	CreatedAt      time.Time
-	FinishedAt     *time.Time
+	ID              string
+	UserID          string
+	UserEmail       *string
+	APIKeyID        string
+	KeyName         *string
+	KeyPrefix       *string
+	TaskID          *string
+	Endpoint        string
+	Model           string
+	Prompt          string
+	Size            string
+	Quality         string
+	Quantity        int
+	ImageCount      int
+	ResponseFormat  string
+	Status          string
+	ErrorMessage    *string
+	DurationSeconds float64
+	CreatedAt       time.Time
+	FinishedAt      *time.Time
 }
 
 type PublicAccessKey struct {
@@ -125,25 +126,26 @@ type PublicAccessKey struct {
 }
 
 type PublicUsageLog struct {
-	ID             string  `json:"id"`
-	UserID         string  `json:"userId"`
-	UserEmail      *string `json:"userEmail,omitempty"`
-	APIKeyID       string  `json:"apiKeyId"`
-	KeyName        *string `json:"keyName,omitempty"`
-	KeyPrefix      *string `json:"keyPrefix,omitempty"`
-	TaskID         *string `json:"taskId,omitempty"`
-	Endpoint       string  `json:"endpoint"`
-	Model          string  `json:"model"`
-	Prompt         string  `json:"prompt"`
-	Size           string  `json:"size"`
-	Quality        string  `json:"quality"`
-	Quantity       int     `json:"quantity"`
-	ImageCount     int     `json:"imageCount"`
-	ResponseFormat string  `json:"responseFormat"`
-	Status         string  `json:"status"`
-	ErrorMessage   *string `json:"errorMessage,omitempty"`
-	CreatedAt      string  `json:"createdAt"`
-	FinishedAt     *string `json:"finishedAt"`
+	ID              string  `json:"id"`
+	UserID          string  `json:"userId"`
+	UserEmail       *string `json:"userEmail,omitempty"`
+	APIKeyID        string  `json:"apiKeyId"`
+	KeyName         *string `json:"keyName,omitempty"`
+	KeyPrefix       *string `json:"keyPrefix,omitempty"`
+	TaskID          *string `json:"taskId,omitempty"`
+	Endpoint        string  `json:"endpoint"`
+	Model           string  `json:"model"`
+	Prompt          string  `json:"prompt"`
+	Size            string  `json:"size"`
+	Quality         string  `json:"quality"`
+	Quantity        int     `json:"quantity"`
+	ImageCount      int     `json:"imageCount"`
+	ResponseFormat  string  `json:"responseFormat"`
+	Status          string  `json:"status"`
+	ErrorMessage    *string `json:"errorMessage,omitempty"`
+	DurationSeconds float64 `json:"durationSeconds"`
+	CreatedAt       string  `json:"createdAt"`
+	FinishedAt      *string `json:"finishedAt"`
 }
 
 type ListLogsInput struct {
@@ -233,25 +235,26 @@ func DynamicConcurrencyLimitWithConfig(baseConcurrency int, requestCount int, co
 
 func ToPublicLog(log UsageLog) PublicUsageLog {
 	return PublicUsageLog{
-		ID:             log.ID,
-		UserID:         log.UserID,
-		UserEmail:      log.UserEmail,
-		APIKeyID:       log.APIKeyID,
-		KeyName:        log.KeyName,
-		KeyPrefix:      log.KeyPrefix,
-		TaskID:         log.TaskID,
-		Endpoint:       log.Endpoint,
-		Model:          log.Model,
-		Prompt:         log.Prompt,
-		Size:           log.Size,
-		Quality:        log.Quality,
-		Quantity:       log.Quantity,
-		ImageCount:     log.ImageCount,
-		ResponseFormat: log.ResponseFormat,
-		Status:         log.Status,
-		ErrorMessage:   log.ErrorMessage,
-		CreatedAt:      log.CreatedAt.Format(time.RFC3339),
-		FinishedAt:     formatTime(log.FinishedAt),
+		ID:              log.ID,
+		UserID:          log.UserID,
+		UserEmail:       log.UserEmail,
+		APIKeyID:        log.APIKeyID,
+		KeyName:         log.KeyName,
+		KeyPrefix:       log.KeyPrefix,
+		TaskID:          log.TaskID,
+		Endpoint:        log.Endpoint,
+		Model:           log.Model,
+		Prompt:          log.Prompt,
+		Size:            log.Size,
+		Quality:         log.Quality,
+		Quantity:        log.Quantity,
+		ImageCount:      log.ImageCount,
+		ResponseFormat:  log.ResponseFormat,
+		Status:          log.Status,
+		ErrorMessage:    log.ErrorMessage,
+		DurationSeconds: log.DurationSeconds,
+		CreatedAt:       log.CreatedAt.Format(time.RFC3339),
+		FinishedAt:      formatTime(log.FinishedAt),
 	}
 }
 

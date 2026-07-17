@@ -12,13 +12,20 @@ import {
   KeyRound,
   ListTree,
   ShieldCheck,
+  WalletCards,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/PageHeader';
 import { APIError, getSession, portalApi } from '@/lib/portal-api';
 
 type Language = 'curl' | 'javascript' | 'python';
-type Endpoint = 'models' | 'generations' | 'edits';
+type Endpoint = 'models' | 'balance' | 'generations' | 'edits';
+type APIParameter = {
+  name: string;
+  type: string;
+  required: string;
+  description: string;
+};
 
 const endpointMeta: Record<Endpoint, {
   label: string;
@@ -34,6 +41,13 @@ const endpointMeta: Record<Endpoint, {
     description: '返回当前已启用、可通过 API 调用的模型。',
     icon: ListTree,
   },
+  balance: {
+    label: '余额查询',
+    method: 'GET',
+    path: '/v1/balance',
+    description: '返回当前 API Key 所属账户的实时余额与该 Key 的计费模式。',
+    icon: WalletCards,
+  },
   generations: {
     label: '图片生成',
     method: 'POST',
@@ -48,6 +62,95 @@ const endpointMeta: Record<Endpoint, {
     description: '上传参考图并根据提示词进行编辑，使用 multipart/form-data。',
     icon: FileImage,
   },
+};
+
+const requestParameters: Record<Endpoint, APIParameter[]> = {
+  models: [],
+  balance: [],
+  generations: [
+    { name: 'model', type: 'string', required: '是', description: '模型列表返回的 data[].id' },
+    { name: 'prompt', type: 'string', required: '是', description: '图片生成提示词' },
+    { name: 'n', type: 'integer', required: '否', description: '输出数量，范围 1-10，默认 1' },
+    { name: 'size', type: 'string', required: '否', description: '像素尺寸，例如 1024x1024；填写后优先使用' },
+    { name: 'size_tier', type: 'string', required: '否', description: '清晰度：1k、2k、4k，默认 1k' },
+    { name: 'quality', type: 'string', required: '否', description: 'size_tier 的兼容别名' },
+    { name: 'resolution', type: 'string', required: '否', description: 'size_tier 的兼容别名' },
+    { name: 'aspect_ratio', type: 'string', required: '否', description: '比例：1:1、16:9、9:16、4:3、3:4、3:2、2:3' },
+    { name: 'ratio', type: 'string', required: '否', description: 'aspect_ratio 的兼容别名' },
+    { name: 'output_format', type: 'string', required: '否', description: 'jpeg、png、webp，默认 jpeg' },
+    { name: 'background', type: 'string', required: '否', description: 'transparent 表示透明背景，并自动使用 PNG' },
+    { name: 'referenceImages', type: 'string[]', required: '否', description: '参考图 URL 或 data URI 数组' },
+    { name: 'response_format', type: 'string', required: '否', description: '当前使用 url，返回站内图片地址' },
+  ],
+  edits: [
+    { name: 'model', type: 'string', required: '是', description: '模型列表返回的 data[].id' },
+    { name: 'prompt', type: 'string', required: '是', description: '图片编辑提示词' },
+    { name: 'image / images', type: 'file / file[]', required: '二选一', description: 'multipart 参考图，单张最大 20MB' },
+    { name: 'image_url', type: 'string / string[]', required: '二选一', description: 'JSON 请求中的参考图 URL 或 data URI' },
+    { name: 'mask', type: 'file / string', required: '否', description: '可选遮罩图，支持 multipart 文件或 data URI' },
+    { name: 'n', type: 'integer', required: '否', description: '输出数量，范围 1-10，默认 1' },
+    { name: 'size', type: 'string', required: '否', description: '像素尺寸，例如 1024x1024；填写后优先使用' },
+    { name: 'size_tier', type: 'string', required: '否', description: '清晰度：1k、2k、4k，默认 1k' },
+    { name: 'quality / resolution', type: 'string', required: '否', description: 'size_tier 的兼容别名' },
+    { name: 'aspect_ratio / ratio', type: 'string', required: '否', description: '输出比例，例如 1:1、16:9、9:16' },
+    { name: 'output_format', type: 'string', required: '否', description: 'jpeg、png、webp，默认 jpeg' },
+    { name: 'background', type: 'string', required: '否', description: 'transparent 表示透明背景，并自动使用 PNG' },
+    { name: 'response_format', type: 'string', required: '否', description: '当前使用 url，返回站内图片地址' },
+  ],
+};
+
+const responseParameters: Record<Endpoint, APIParameter[]> = {
+  models: [
+    { name: 'object', type: 'string', required: '-', description: '固定为 list' },
+    { name: 'data[].id', type: 'string', required: '-', description: '调用图片接口时使用的模型 ID' },
+    { name: 'data[].created', type: 'integer', required: '-', description: '模型创建时间，Unix 秒级时间戳' },
+    { name: 'data[].owned_by', type: 'string', required: '-', description: '模型提供方' },
+    { name: 'data[].enabled_size_tiers', type: 'string[]', required: '-', description: '模型已开放的 1k、2k、4k 清晰度' },
+    { name: 'meta.total_count', type: 'integer', required: '-', description: '启用记录总数' },
+    { name: 'meta.unique_count', type: 'integer', required: '-', description: '去重后的可调用模型数' },
+  ],
+  balance: [
+    { name: 'object', type: 'string', required: '-', description: '固定为 balance' },
+    { name: 'balance', type: 'number', required: '-', description: 'API Key 所属账户的实时余额' },
+    { name: 'unit', type: 'string', required: '-', description: '余额单位，固定为 credits' },
+    { name: 'billing_mode', type: 'string', required: '-', description: '当前 Key 的计费模式：balance 或 subscription' },
+    { name: 'updated_at', type: 'string', required: '-', description: '账户余额最近更新时间，RFC3339 格式' },
+  ],
+  generations: [
+    { name: 'created', type: 'integer', required: '-', description: '响应创建时间，Unix 秒级时间戳' },
+    { name: 'data[].url', type: 'string', required: '-', description: '生成图片的站内下载地址' },
+  ],
+  edits: [
+    { name: 'created', type: 'integer', required: '-', description: '响应创建时间，Unix 秒级时间戳' },
+    { name: 'data[].url', type: 'string', required: '-', description: '编辑结果的站内下载地址' },
+  ],
+};
+
+const successResponses: Record<Endpoint, string> = {
+  models: `{
+  "object": "list",
+  "data": [{
+    "id": "MODEL_ID",
+    "object": "model",
+    "enabled_size_tiers": ["1k", "2k"]
+  }],
+  "meta": { "total_count": 1, "unique_count": 1 }
+}`,
+  balance: `{
+  "object": "balance",
+  "balance": 128.75,
+  "unit": "credits",
+  "billing_mode": "balance",
+  "updated_at": "2026-07-18T12:00:00+08:00"
+}`,
+  generations: `{
+  "created": 1710000000,
+  "data": [{ "url": "https://.../image.png" }]
+}`,
+  edits: `{
+  "created": 1710000000,
+  "data": [{ "url": "https://.../edited-image.png" }]
+}`,
 };
 
 function errorMessage(error: unknown): string {
@@ -94,6 +197,26 @@ response = requests.get(
 )
 response.raise_for_status()
 print(response.json()['data'])`,
+    },
+    balance: {
+      curl: `curl '${baseUrl}/balance' -H 'Authorization: Bearer YOUR_API_KEY'`,
+      javascript: `const response = await fetch('${baseUrl}/balance', {
+  headers: { Authorization: 'Bearer YOUR_API_KEY' },
+});
+
+const result = await response.json();
+if (!response.ok) throw new Error(result.error?.message);
+console.log(result.balance, result.billing_mode);`,
+      python: `import requests
+
+response = requests.get(
+    '${baseUrl}/balance',
+    headers={'Authorization': 'Bearer YOUR_API_KEY'},
+    timeout=30,
+)
+response.raise_for_status()
+result = response.json()
+print(result['balance'], result['billing_mode'])`,
     },
     generations: {
       curl: `curl -X POST '${baseUrl}/images/generations' -H 'Authorization: Bearer YOUR_API_KEY' -H 'Content-Type: application/json' -d '{"model":"MODEL_ID","prompt":"产品摄影，白色背景，柔和棚拍光线","n":1,"size":"1024x1024","response_format":"url"}'`,
@@ -186,7 +309,7 @@ print(response.json()['data'])`,
 
   return (
     <div className="page-stack">
-      <PageHeader title="API 文档" description="OpenAI 兼容的模型查询、图片生成与图片编辑接口">
+      <PageHeader title="API 文档" description="API Key 鉴权、余额查询、模型查询、图片生成与图片编辑接口">
         <Link href="/api-keys" className="btn"><KeyRound size={14} />管理 Key</Link>
       </PageHeader>
 
@@ -243,22 +366,47 @@ print(response.json()['data'])`,
             </div>
             <div className="section-body">
               <p className="text-xs leading-5 text-zinc-600">{meta.description}</p>
-              {endpoint !== 'models' && (
+              <div className="mt-4">
+                <strong className="text-[12px]">请求参数</strong>
+                {requestParameters[endpoint].length > 0 ? (
+                  <div className="mt-2 data-table-wrap rounded-md border border-[#edf0ee]">
+                    <table className="data-table">
+                      <thead><tr><th>参数</th><th>类型</th><th>必填</th><th>说明</th></tr></thead>
+                      <tbody>
+                        {requestParameters[endpoint].map((parameter) => (
+                          <tr key={parameter.name}>
+                            <td className="mono whitespace-nowrap">{parameter.name}</td>
+                            <td className="mono whitespace-nowrap">{parameter.type}</td>
+                            <td>{parameter.required}</td>
+                            <td>{parameter.description}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="mt-2 rounded-md border border-[#edf0ee] bg-[#fafbf9] px-3 py-2.5 text-[11px] text-zinc-500">
+                    无额外请求参数，仅需携带 Authorization 请求头。
+                  </div>
+                )}
+              </div>
+              <div className="mt-4">
+                <strong className="text-[12px]">返回参数</strong>
                 <div className="mt-4 data-table-wrap rounded-md border border-[#edf0ee]">
                   <table className="data-table">
-                    <thead><tr><th>参数</th><th>类型</th><th>必填</th><th>说明</th></tr></thead>
+                    <thead><tr><th>字段</th><th>类型</th><th>说明</th></tr></thead>
                     <tbody>
-                      <tr><td className="mono">model</td><td className="mono">string</td><td>是</td><td>使用模型列表返回的 id</td></tr>
-                      <tr><td className="mono">prompt</td><td className="mono">string</td><td>是</td><td>图片生成或编辑提示词</td></tr>
-                      {endpoint === 'edits' && <tr><td className="mono">image</td><td className="mono">file</td><td>是</td><td>单张参考图片，最大 20MB</td></tr>}
-                      <tr><td className="mono">n</td><td className="mono">integer</td><td>否</td><td>输出数量，范围 1-10，默认 1</td></tr>
-                      <tr><td className="mono">size</td><td className="mono">string</td><td>否</td><td>例如 1024x1024</td></tr>
-                      <tr><td className="mono">quality</td><td className="mono">string</td><td>否</td><td>1k、2k 或 4k</td></tr>
-                      <tr><td className="mono">output_format</td><td className="mono">string</td><td>否</td><td>jpeg、png 或 webp</td></tr>
+                      {responseParameters[endpoint].map((parameter) => (
+                        <tr key={parameter.name}>
+                          <td className="mono whitespace-nowrap">{parameter.name}</td>
+                          <td className="mono whitespace-nowrap">{parameter.type}</td>
+                          <td>{parameter.description}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </div>
-              )}
+              </div>
             </div>
           </article>
 
@@ -298,13 +446,7 @@ print(response.json()['data'])`,
             <div className="section-body grid gap-4 xl:grid-cols-2">
               <div>
                 <strong className="text-[12px]">成功响应</strong>
-                <pre className="mt-2 overflow-auto rounded-md bg-[#f6f8f6] p-3 text-[11px] leading-5 text-zinc-700"><code>{endpoint === 'models' ? `{
-  "object": "list",
-  "data": [{ "id": "MODEL_ID", "object": "model" }]
-}` : `{
-  "created": 1710000000,
-  "data": [{ "url": "https://.../image.png" }]
-}`}</code></pre>
+                <pre className="mt-2 overflow-auto rounded-md bg-[#f6f8f6] p-3 text-[11px] leading-5 text-zinc-700"><code>{successResponses[endpoint]}</code></pre>
               </div>
               <div>
                 <strong className="text-[12px]">错误响应</strong>

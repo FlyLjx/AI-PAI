@@ -89,6 +89,25 @@ func (r *Router) compatModels(w http.ResponseWriter, req *http.Request) {
 	})
 }
 
+func (r *Router) compatBalance(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	auth, err := r.authenticateAPIKey(req)
+	if err != nil {
+		writeCompatAuthError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"object":       "balance",
+		"balance":      auth.User.Credits,
+		"unit":         "credits",
+		"billing_mode": auth.APIKey.BillingMode,
+		"updated_at":   auth.User.UpdatedAt.Format(time.RFC3339),
+	})
+}
+
 func (r *Router) compatImageGenerations(w http.ResponseWriter, req *http.Request) {
 	r.compatImageRequest(w, req, false)
 }

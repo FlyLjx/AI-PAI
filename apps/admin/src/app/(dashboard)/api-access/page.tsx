@@ -60,6 +60,24 @@ function logStatus(status: string) {
   return { label: '排队中', badge: 'queued' as const };
 }
 
+function generationDurationMeta(log: UsageLog) {
+  if (!['success', 'succeeded', 'failed'].includes(log.status.toLowerCase())) {
+    return { label: '--', className: 'border-zinc-200 bg-zinc-50 text-zinc-500' };
+  }
+  const seconds = Number(log.durationSeconds);
+  if (!Number.isFinite(seconds) || seconds < 0) {
+    return { label: '--', className: 'border-zinc-200 bg-zinc-50 text-zinc-500' };
+  }
+  if (seconds <= 65) return { label: `${seconds.toFixed(2)}s`, className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
+  if (seconds < 120) return { label: `${seconds.toFixed(2)}s`, className: 'border-amber-200 bg-amber-50 text-amber-800' };
+  return { label: `${seconds.toFixed(2)}s`, className: 'border-red-200 bg-red-50 text-red-700' };
+}
+
+function GenerationDurationBadge({ log }: { log: UsageLog }) {
+  const meta = generationDurationMeta(log);
+  return <span className={`inline-flex h-6 min-w-[58px] items-center justify-center whitespace-nowrap rounded border px-2 font-mono text-[10px] font-semibold ${meta.className}`}>{meta.label}</span>;
+}
+
 function billingModeMeta(mode?: APIKeyBillingMode | null) {
   if (mode === 'subscription') return { label: '订阅额度', className: 'border-amber-200 bg-amber-50 text-amber-800' };
   if (mode === 'balance') return { label: '账户余额', className: 'border-blue-200 bg-blue-50 text-blue-700' };
@@ -291,6 +309,7 @@ export default function AdminAPIAccessPage() {
             { key: 'endpoint', label: '接口' },
             { key: 'model', label: '模型' },
             { key: 'params', label: '参数' },
+            { key: 'duration', label: '生图时间' },
             { key: 'status', label: '状态' },
             { key: 'error', label: '错误信息' },
             { key: 'actions', label: '操作', className: 'text-right' },
@@ -311,6 +330,7 @@ export default function AdminAPIAccessPage() {
               <td className="max-w-[150px] truncate px-4 py-3 font-mono text-[11px]">{log.endpoint}</td>
               <td className="max-w-[160px] truncate px-4 py-3">{log.model || '-'}</td>
               <td className="px-4 py-3 text-[11px] text-zinc-500">{log.size || '-'} · {log.quality || '-'} · {log.imageCount || log.quantity || 0} 张</td>
+              <td className="px-4 py-3"><GenerationDurationBadge log={log} /></td>
               <td className="px-4 py-3"><StatusBadge status={status.badge} customLabel={status.label} /></td>
               <td className="max-w-[220px] truncate px-4 py-3 text-[11px] text-red-600" title={log.errorMessage || log.prompt || ''}>{log.errorMessage || '-'}</td>
               <td className="px-4 py-3 text-right">{canCancelTask(log) && <button type="button" onClick={() => setCancelCandidate(log)} disabled={cancelingTaskId === log.taskId} className="inline-flex h-7 items-center gap-1 rounded border border-red-200 bg-red-50 px-2 text-[11px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-40"><CircleStop className="h-3.5 w-3.5" />取消</button>}</td>
@@ -321,6 +341,7 @@ export default function AdminAPIAccessPage() {
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{log.model || log.endpoint}</strong><small className="block truncate text-[10px] text-zinc-400">{log.userEmail || log.userId} · {log.keyName || log.keyPrefix || '-'}</small></div><StatusBadge status={status.badge} customLabel={status.label} /></div>
               <p className="mt-3 truncate rounded bg-[#F6F8F6] px-2 py-1.5 font-mono text-[11px]">{log.endpoint}</p>
               <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-400"><span>{log.size || '-'} · {log.imageCount || log.quantity || 0} 张</span><span>{formatDate(log.createdAt)}</span></div>
+              <div className="mt-2 flex items-center justify-between border-t border-[#EEF1EF] pt-2 text-[10px] text-zinc-400"><span>生图时间</span><GenerationDurationBadge log={log} /></div>
               {log.errorMessage && <p className="mt-2 line-clamp-2 text-[11px] text-red-600">{log.errorMessage}</p>}
               {canCancelTask(log) && <div className="mt-2 flex justify-end"><button type="button" onClick={() => setCancelCandidate(log)} disabled={cancelingTaskId === log.taskId} className="inline-flex h-7 items-center gap-1 rounded border border-red-200 bg-red-50 px-2 text-[11px] font-semibold text-red-700 disabled:opacity-40"><CircleStop className="h-3.5 w-3.5" />取消任务</button></div>}
             </article>

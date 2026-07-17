@@ -113,6 +113,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/settings", r.settings)
 	r.mux.HandleFunc("/api/account-pool/accounts", r.accountPoolAccounts)
 	r.mux.HandleFunc("/v1/models", r.compatModels)
+	r.mux.HandleFunc("/v1/balance", r.compatBalance)
 	r.mux.HandleFunc("/v1/images/generations", r.compatImageGenerations)
 	r.mux.HandleFunc("/v1/images/edits", r.compatImageEdits)
 

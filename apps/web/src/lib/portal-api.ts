@@ -128,6 +128,7 @@ export type UsageLog = {
   imageCount: number;
   status: string;
   errorMessage?: string;
+  durationSeconds: number;
   createdAt: string;
   finishedAt?: string;
 };
