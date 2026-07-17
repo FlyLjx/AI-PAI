@@ -9,25 +9,26 @@ const (
 )
 
 type AccessKey struct {
-	ID               string
-	UserID           string
-	UserEmail        *string
-	Name             string
-	KeyPrefix        string
-	KeyHash          string
-	KeyPlain         *string
-	Status           string
-	ConcurrencyLimit int
-	BillingMode      string
-	LastUsedAt       *time.Time
-	DeletedAt        *time.Time
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
-	RequestCount     int
-	SuccessCount     int
-	FailedCount      int
-	ImageCount       int
-	LastError        *string
+	ID                 string
+	UserID             string
+	UserEmail          *string
+	Name               string
+	KeyPrefix          string
+	KeyHash            string
+	KeyPlain           *string
+	Status             string
+	ConcurrencyLimit   int
+	BillingMode        string
+	LastUsedAt         *time.Time
+	DeletedAt          *time.Time
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	RequestCount       int
+	SuccessCount       int
+	FailedCount        int
+	ImageCount         int
+	LastError          *string
+	HourlyRequestCount int
 }
 
 type UsageLog struct {
@@ -53,24 +54,27 @@ type UsageLog struct {
 }
 
 type PublicAccessKey struct {
-	ID               string  `json:"id"`
-	UserID           string  `json:"userId"`
-	UserEmail        *string `json:"userEmail,omitempty"`
-	Name             string  `json:"name"`
-	KeyPrefix        string  `json:"keyPrefix"`
-	Key              *string `json:"key,omitempty"`
-	Status           string  `json:"status"`
-	ConcurrencyLimit int     `json:"concurrencyLimit"`
-	BillingMode      string  `json:"billingMode"`
-	LastUsedAt       *string `json:"lastUsedAt"`
-	DeletedAt        *string `json:"deletedAt,omitempty"`
-	CreatedAt        string  `json:"createdAt"`
-	UpdatedAt        string  `json:"updatedAt"`
-	RequestCount     int     `json:"requestCount"`
-	SuccessCount     int     `json:"successCount"`
-	FailedCount      int     `json:"failedCount"`
-	ImageCount       int     `json:"imageCount"`
-	LastError        *string `json:"lastError,omitempty"`
+	ID                      string  `json:"id"`
+	UserID                  string  `json:"userId"`
+	UserEmail               *string `json:"userEmail,omitempty"`
+	Name                    string  `json:"name"`
+	KeyPrefix               string  `json:"keyPrefix"`
+	Key                     *string `json:"key,omitempty"`
+	Status                  string  `json:"status"`
+	ConcurrencyLimit        int     `json:"concurrencyLimit"`
+	BaseConcurrencyLimit    int     `json:"baseConcurrencyLimit"`
+	HourlyRequestCount      int     `json:"hourlyRequestCount"`
+	DynamicConcurrencyBonus int     `json:"dynamicConcurrencyBonus"`
+	BillingMode             string  `json:"billingMode"`
+	LastUsedAt              *string `json:"lastUsedAt"`
+	DeletedAt               *string `json:"deletedAt,omitempty"`
+	CreatedAt               string  `json:"createdAt"`
+	UpdatedAt               string  `json:"updatedAt"`
+	RequestCount            int     `json:"requestCount"`
+	SuccessCount            int     `json:"successCount"`
+	FailedCount             int     `json:"failedCount"`
+	ImageCount              int     `json:"imageCount"`
+	LastError               *string `json:"lastError,omitempty"`
 }
 
 type PublicUsageLog struct {
@@ -128,25 +132,41 @@ type AdminStats struct {
 }
 
 func ToPublicKey(key AccessKey) PublicAccessKey {
+	baseConcurrency := normalizedConcurrencyLimit(key.ConcurrencyLimit)
+	dynamicBonus := DynamicConcurrencyBonus(key.HourlyRequestCount)
 	return PublicAccessKey{
-		ID:               key.ID,
-		UserID:           key.UserID,
-		UserEmail:        key.UserEmail,
-		Name:             key.Name,
-		KeyPrefix:        key.KeyPrefix,
-		Status:           key.Status,
-		ConcurrencyLimit: normalizedConcurrencyLimit(key.ConcurrencyLimit),
-		BillingMode:      normalizedStoredBillingMode(key.BillingMode),
-		LastUsedAt:       formatTime(key.LastUsedAt),
-		DeletedAt:        formatTime(key.DeletedAt),
-		CreatedAt:        key.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:        key.UpdatedAt.Format(time.RFC3339),
-		RequestCount:     key.RequestCount,
-		SuccessCount:     key.SuccessCount,
-		FailedCount:      key.FailedCount,
-		ImageCount:       key.ImageCount,
-		LastError:        key.LastError,
+		ID:                      key.ID,
+		UserID:                  key.UserID,
+		UserEmail:               key.UserEmail,
+		Name:                    key.Name,
+		KeyPrefix:               key.KeyPrefix,
+		Status:                  key.Status,
+		ConcurrencyLimit:        baseConcurrency + dynamicBonus,
+		BaseConcurrencyLimit:    baseConcurrency,
+		HourlyRequestCount:      key.HourlyRequestCount,
+		DynamicConcurrencyBonus: dynamicBonus,
+		BillingMode:             normalizedStoredBillingMode(key.BillingMode),
+		LastUsedAt:              formatTime(key.LastUsedAt),
+		DeletedAt:               formatTime(key.DeletedAt),
+		CreatedAt:               key.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:               key.UpdatedAt.Format(time.RFC3339),
+		RequestCount:            key.RequestCount,
+		SuccessCount:            key.SuccessCount,
+		FailedCount:             key.FailedCount,
+		ImageCount:              key.ImageCount,
+		LastError:               key.LastError,
 	}
+}
+
+func DynamicConcurrencyBonus(hourlyRequestCount int) int {
+	if hourlyRequestCount < 50 {
+		return 0
+	}
+	return (hourlyRequestCount / 50) * 5
+}
+
+func DynamicConcurrencyLimit(baseConcurrency int, hourlyRequestCount int) int {
+	return normalizedConcurrencyLimit(baseConcurrency) + DynamicConcurrencyBonus(hourlyRequestCount)
 }
 
 func ToPublicLog(log UsageLog) PublicUsageLog {

@@ -28,6 +28,7 @@ type Repository struct {
 var (
 	ErrNoLotteryPrize            = errors.New("no active lottery prize")
 	ErrInvalidRechargeOrder      = errors.New("充值订单的余额数量不正确")
+	ErrRechargeOrderClosed       = errors.New("充值或订阅订单已关闭")
 	ErrInvalidCustomSubscription = errors.New("自定义订阅参数不正确")
 )
 
@@ -1917,6 +1918,9 @@ func (r *Repository) CompleteOrder(ctx context.Context, outTradeNo string, trade
 			return nil, false, err
 		}
 		return &order, false, nil
+	}
+	if order.Status != "pending" {
+		return &order, false, ErrRechargeOrderClosed
 	}
 	isSubscription := order.OrderType == "subscription" && order.SubscriptionPlanID != nil && strings.TrimSpace(*order.SubscriptionPlanID) != ""
 	order.Credits = normalizeOperationCreditAmount(order.Credits)

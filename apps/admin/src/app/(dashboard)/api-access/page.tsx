@@ -79,7 +79,7 @@ export default function AdminAPIAccessPage() {
       const response = await portalApi.adminKeys();
       setKeys(response.data.items || []);
       setStats(response.data.stats || {});
-      setConcurrencyDraft(Object.fromEntries((response.data.items || []).map((key) => [key.id, Number(key.concurrencyLimit || 10)])));
+      setConcurrencyDraft(Object.fromEntries((response.data.items || []).map((key) => [key.id, Number(key.baseConcurrencyLimit || key.concurrencyLimit || 10)])));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'API Key 加载失败');
     } finally {
@@ -147,7 +147,7 @@ export default function AdminAPIAccessPage() {
     setActionId(key.id);
     try {
       await portalApi.updateAdminKey(key.id, { concurrencyLimit: value });
-      toast.success('并发上限已保存');
+      toast.success('基础并发已保存');
       await loadKeys();
     } catch (requestError) {
       toast.error(requestError instanceof Error ? requestError.message : '并发上限保存失败');
@@ -194,7 +194,7 @@ export default function AdminAPIAccessPage() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="API 调用" description="管理客户 API Key、并发上限和 OpenAI 图片接口调用记录。">
+      <PageHeader title="API 调用" description="管理客户 API Key、动态并发和 OpenAI 图片接口调用记录。">
         <button type="button" onClick={() => void refreshAll()} disabled={keysLoading || logsLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${keysLoading || logsLoading ? 'animate-spin' : ''}`} />刷新</button>
       </PageHeader>
 
@@ -224,7 +224,7 @@ export default function AdminAPIAccessPage() {
             { key: 'key', label: 'Key 名称 / 前缀' },
             { key: 'status', label: '状态' },
             { key: 'billingMode', label: '计费方式' },
-            { key: 'concurrency', label: '并发上限' },
+            { key: 'concurrency', label: '基础 / 当前并发' },
             { key: 'requests', label: '请求统计' },
             { key: 'images', label: '图片数' },
             { key: 'used', label: '最近使用' },
@@ -242,7 +242,7 @@ export default function AdminAPIAccessPage() {
               <td className="px-4 py-3"><strong className="block max-w-[150px] truncate text-[12px] font-medium">{key.name}</strong><code className="text-[10px] text-zinc-400">{key.keyPrefix}••••••</code></td>
               <td className="px-4 py-3"><StatusBadge status={key.status === 'active' ? 'active' : 'disabled'} /></td>
               <td className="px-4 py-3"><BillingModeBadge mode={key.billingMode} /></td>
-              <td className="px-4 py-3"><div className="flex items-center gap-1"><input aria-label={`${key.name} 并发上限`} min={1} step={1} type="number" value={concurrencyDraft[key.id] ?? key.concurrencyLimit} onChange={(event) => setConcurrencyDraft((current) => ({ ...current, [key.id]: Number(event.target.value) }))} className="h-7 w-20 rounded border border-[#DCE4DF] px-2 font-mono text-[11px]" /><button type="button" onClick={() => void saveConcurrency(key)} disabled={actionId === key.id} title="保存并发" className="grid h-7 w-7 place-items-center rounded border border-[#86EFAC] bg-[#F0FDF4] text-[#047857] disabled:opacity-40"><Check className="h-3.5 w-3.5" /></button></div></td>
+              <td className="px-4 py-3"><div className="flex items-center gap-1"><input aria-label={`${key.name} 基础并发`} min={1} step={1} type="number" value={concurrencyDraft[key.id] ?? key.baseConcurrencyLimit ?? key.concurrencyLimit} onChange={(event) => setConcurrencyDraft((current) => ({ ...current, [key.id]: Number(event.target.value) }))} className="h-7 w-16 rounded border border-[#DCE4DF] px-2 font-mono text-[11px]" /><button type="button" onClick={() => void saveConcurrency(key)} disabled={actionId === key.id} title="保存基础并发" className="grid h-7 w-7 place-items-center rounded border border-[#86EFAC] bg-[#F0FDF4] text-[#047857] disabled:opacity-40"><Check className="h-3.5 w-3.5" /></button></div><small className="mt-1 block whitespace-nowrap text-[10px] text-zinc-400">当前 <strong className="font-mono text-[#047857]">{key.concurrencyLimit}</strong> · 1 小时 {Number(key.hourlyRequestCount || 0)} 次{Number(key.dynamicConcurrencyBonus || 0) > 0 ? ` · +${key.dynamicConcurrencyBonus}` : ''}</small></td>
               <td className="px-4 py-3 font-mono text-[11px]"><span className="text-emerald-700">{key.successCount}</span> / <span className="text-red-600">{key.failedCount}</span><small className="mt-0.5 block text-[10px] text-zinc-400">共 {key.requestCount}</small></td>
               <td className="px-4 py-3 font-mono">{Number(key.imageCount || 0).toLocaleString('zh-CN')}</td>
               <td className="whitespace-nowrap px-4 py-3 text-zinc-500">{key.lastUsedAt ? formatDate(key.lastUsedAt) : '未使用'}</td>
@@ -253,7 +253,7 @@ export default function AdminAPIAccessPage() {
             <article key={key.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{key.name}</strong><small className="font-mono text-[10px] text-zinc-400">{key.keyPrefix}••••••</small></div><div className="flex shrink-0 flex-col items-end gap-1.5"><StatusBadge status={key.status === 'active' ? 'active' : 'disabled'} /><BillingModeBadge mode={key.billingMode} /></div></div>
               <p className="mt-2 truncate text-[11px] text-zinc-500">{key.userEmail || key.userId}</p>
-              <div className="mt-3 grid grid-cols-3 divide-x divide-[#EDF0EE] border-y border-[#EDF0EE] py-2 text-center"><span><small className="block text-[10px] text-zinc-400">请求</small><strong className="text-[12px]">{key.requestCount}</strong></span><span><small className="block text-[10px] text-zinc-400">图片</small><strong className="text-[12px]">{key.imageCount}</strong></span><span><small className="block text-[10px] text-zinc-400">并发</small><strong className="text-[12px]">{key.concurrencyLimit}</strong></span></div>
+              <div className="mt-3 grid grid-cols-3 divide-x divide-[#EDF0EE] border-y border-[#EDF0EE] py-2 text-center"><span><small className="block text-[10px] text-zinc-400">请求</small><strong className="text-[12px]">{key.requestCount}</strong></span><span><small className="block text-[10px] text-zinc-400">图片</small><strong className="text-[12px]">{key.imageCount}</strong></span><span><small className="block text-[10px] text-zinc-400">当前并发</small><strong className="text-[12px] text-[#047857]">{key.concurrencyLimit}</strong><small className="block text-[9px] text-zinc-400">基础 {key.baseConcurrencyLimit || 10} · 1h {Number(key.hourlyRequestCount || 0)} 次</small></span></div>
               <div className="mt-2 flex justify-end">{keyActions(key)}</div>
             </article>
           )}

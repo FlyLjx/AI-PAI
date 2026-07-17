@@ -205,6 +205,59 @@ func (r *Repository) MarkUsed(ctx context.Context, id string) error {
 	return err
 }
 
+func (r *Repository) HourlyRequestCount(ctx context.Context, apiKeyID string, since time.Time) (int, error) {
+	var count int
+	err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM api_access_logs
+		WHERE api_key_id = ? AND created_at >= ?
+	`, strings.TrimSpace(apiKeyID), since).Scan(&count)
+	return count, err
+}
+
+func (r *Repository) HourlyRequestCounts(ctx context.Context, apiKeyIDs []string, since time.Time) (map[string]int, error) {
+	ids := make([]string, 0, len(apiKeyIDs))
+	seen := map[string]bool{}
+	for _, id := range apiKeyIDs {
+		id = strings.TrimSpace(id)
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	result := map[string]int{}
+	if len(ids) == 0 {
+		return result, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	args = append(args, since)
+	for index, id := range ids {
+		placeholders[index] = "?"
+		args = append(args, id)
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT api_key_id, COUNT(*)
+		FROM api_access_logs
+		WHERE created_at >= ? AND api_key_id IN (`+strings.Join(placeholders, ",")+`)
+		GROUP BY api_key_id
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var count int
+		if err := rows.Scan(&id, &count); err != nil {
+			return nil, err
+		}
+		result[id] = count
+	}
+	return result, rows.Err()
+}
+
 func (r *Repository) CreateLog(ctx context.Context, log UsageLog) (*UsageLog, error) {
 	return r.createLog(ctx, r.db, log)
 }

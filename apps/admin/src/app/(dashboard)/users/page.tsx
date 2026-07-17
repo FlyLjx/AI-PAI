@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ArrowRight,
+  ChevronLeft,
+  ChevronRight,
   CircleDollarSign,
   CreditCard,
   Crown,
@@ -14,6 +16,7 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  ReceiptText,
   ShieldCheck,
   Trash2,
   UserRoundCog,
@@ -27,7 +30,7 @@ import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { type Plan, type PortalUser, portalApi } from '@/lib/admin-api';
+import { type CreditLog, type Plan, type PortalUser, portalApi } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
 
 type UserDraft = {
@@ -38,9 +41,26 @@ type UserDraft = {
 };
 
 type GrantMode = 'plan' | 'custom';
+type CreditLogFilter = 'all' | 'deduct' | 'recharge' | 'manual_adjust';
 
 const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active' };
 const pageSize = 12;
+const creditLogPageSize = 10;
+
+function creditLogChange(log: CreditLog) {
+  const amount = Number(log.amount || 0);
+  return log.type === 'deduct' ? -Math.abs(amount) : amount;
+}
+
+function creditLogView(log: CreditLog) {
+  const change = creditLogChange(log);
+  if (log.type === 'deduct') return { label: 'API 消费', tone: 'border-red-200 bg-red-50 text-red-700', amountTone: 'text-red-600', change };
+  if (log.type === 'recharge') return { label: '余额充值', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700', amountTone: 'text-emerald-700', change };
+  if (log.type === 'manual_adjust') return change < 0
+    ? { label: '后台扣减', tone: 'border-amber-200 bg-amber-50 text-amber-700', amountTone: 'text-amber-700', change }
+    : { label: '后台增加', tone: 'border-blue-200 bg-blue-50 text-blue-700', amountTone: 'text-blue-700', change };
+  return { label: log.type || '其他变动', tone: 'border-zinc-200 bg-zinc-50 text-zinc-600', amountTone: change < 0 ? 'text-red-600' : 'text-emerald-700', change };
+}
 
 function subscriptionActive(user: PortalUser) {
   return user.subscription?.status === 'active';
@@ -88,6 +108,14 @@ export default function AdminUsersPage() {
   const [balanceUser, setBalanceUser] = useState<PortalUser | null>(null);
   const [balanceValue, setBalanceValue] = useState('');
   const [balanceRemark, setBalanceRemark] = useState('');
+  const [creditLogUser, setCreditLogUser] = useState<PortalUser | null>(null);
+  const [creditLogs, setCreditLogs] = useState<CreditLog[]>([]);
+  const [creditLogFilter, setCreditLogFilter] = useState<CreditLogFilter>('all');
+  const [creditLogPage, setCreditLogPage] = useState(1);
+  const [creditLogTotal, setCreditLogTotal] = useState(0);
+  const [creditLogLoading, setCreditLogLoading] = useState(false);
+  const [creditLogError, setCreditLogError] = useState('');
+  const [creditLogRefresh, setCreditLogRefresh] = useState(0);
   const [grantPlanId, setGrantPlanId] = useState('');
   const [grantMode, setGrantMode] = useState<GrantMode>('plan');
   const [customGrantName, setCustomGrantName] = useState('自定义订阅');
@@ -118,6 +146,32 @@ export default function AdminUsersPage() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    if (!creditLogUser) return;
+    let active = true;
+    const timer = window.setTimeout(() => {
+      setCreditLogLoading(true);
+      setCreditLogError('');
+      void portalApi.userCreditLogs(creditLogUser.id, creditLogPage, creditLogPageSize, creditLogFilter)
+        .then((response) => {
+          if (!active) return;
+          setCreditLogs(response.data);
+          setCreditLogTotal(Number(response.pagination?.total || 0));
+        })
+        .catch((requestError) => {
+          if (!active) return;
+          setCreditLogs([]);
+          setCreditLogTotal(0);
+          setCreditLogError(requestError instanceof Error ? requestError.message : '积分明细加载失败');
+        })
+        .finally(() => { if (active) setCreditLogLoading(false); });
+    }, 0);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [creditLogFilter, creditLogPage, creditLogRefresh, creditLogUser]);
 
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -233,6 +287,15 @@ export default function AdminUsersPage() {
     setBalanceRemark('');
   };
 
+  const openCreditLogs = (user: PortalUser) => {
+    setCreditLogs([]);
+    setCreditLogTotal(0);
+    setCreditLogError('');
+    setCreditLogFilter('all');
+    setCreditLogPage(1);
+    setCreditLogUser(user);
+  };
+
   const updateBalance = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!balanceUser) return;
@@ -300,6 +363,7 @@ export default function AdminUsersPage() {
 
   const rowActions = (user: PortalUser) => (
     <div className="flex items-center justify-end gap-1">
+      <button type="button" onClick={() => openCreditLogs(user)} title="查看积分明细" className="inline-flex h-7 items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 text-[10px] font-semibold text-blue-700 hover:border-blue-300 hover:bg-blue-100"><ReceiptText className="h-3 w-3" />积分明细</button>
       {!user.emailVerifiedAt && (
         <button type="button" onClick={() => void verifyEmail(user)} disabled={Boolean(verifyingId)} title="直接验证邮箱" aria-label={`直接验证 ${user.email} 的邮箱`} className="rounded p-1.5 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40">
           {verifyingId === user.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MailCheck className="h-3.5 w-3.5" />}
@@ -484,6 +548,49 @@ export default function AdminUsersPage() {
             </div>
             <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setBalanceUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving || !balanceValue.trim() || !balanceRemark.trim() || !Number.isFinite(nextBalance) || nextBalance < 0 || nextBalance > 99999999.9999 || Math.abs(balanceDelta) < 0.00005} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}确认修改</button></div>
           </form>
+        </div>
+      )}
+
+      {creditLogUser && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+          <section className="flex max-h-[calc(100vh-2rem)] w-full max-w-3xl flex-col overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl" role="dialog" aria-modal="true" aria-labelledby="credit-log-title">
+            <div className="flex items-center justify-between gap-3 border-b border-[#DCE4DF] px-5 py-3.5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-blue-50 text-blue-700"><ReceiptText className="h-4 w-4" /></span>
+                <div className="min-w-0"><h2 id="credit-log-title" className="text-sm font-semibold">积分消费明细</h2><p className="mt-0.5 truncate text-[11px] text-zinc-500">{creditLogUser.email}</p></div>
+              </div>
+              <button type="button" onClick={() => setCreditLogUser(null)} title="关闭" className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button>
+            </div>
+
+            <div className="flex flex-wrap items-end gap-4 border-b border-[#EDF0EE] bg-[#FAFBFA] px-5 py-3">
+              <div className="min-w-28"><small className="block text-[10px] font-semibold text-zinc-400">当前余额</small><strong className="mt-1 block font-mono text-base text-[#047857]">{formatCNY(Number(creditLogUser.credits || 0))}</strong></div>
+              <div className="min-w-24"><small className="block text-[10px] font-semibold text-zinc-400">流水记录</small><strong className="mt-1 block font-mono text-base text-[#17201B]">{creditLogTotal.toLocaleString('zh-CN')} 条</strong></div>
+              <div className="ml-auto w-full sm:w-40"><span className="mb-1 block text-[10px] font-semibold text-zinc-400">变动类型</span><AppSelect compact value={creditLogFilter} onValueChange={(value) => { setCreditLogFilter(value as CreditLogFilter); setCreditLogPage(1); }} ariaLabel="积分明细类型" options={[{ value: 'all', label: '全部明细' }, { value: 'deduct', label: 'API 消费' }, { value: 'recharge', label: '余额充值' }, { value: 'manual_adjust', label: '后台调整' }]} /></div>
+            </div>
+
+            <div className="min-h-72 flex-1 overflow-auto">
+              {creditLogLoading ? (
+                <div className="grid min-h-72 place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[#12B76A]" /></div>
+              ) : creditLogError ? (
+                <div className="grid min-h-72 place-items-center px-5 text-center"><div><p className="text-xs text-red-600">{creditLogError}</p><button type="button" onClick={() => setCreditLogRefresh((value) => value + 1)} className="mt-3 text-xs font-semibold text-[#047857] underline">重新加载</button></div></div>
+              ) : creditLogs.length === 0 ? (
+                <div className="grid min-h-72 place-items-center px-5 text-center"><div><ReceiptText className="mx-auto h-8 w-8 text-zinc-300" /><p className="mt-3 text-xs font-semibold text-zinc-600">暂无积分变动记录</p><p className="mt-1 text-[11px] text-zinc-400">充值、API 消费或后台调整后会显示在这里。</p></div></div>
+              ) : (
+                <>
+                  <table className="hidden w-full border-collapse text-left text-[11px] sm:table">
+                    <thead className="sticky top-0 z-10 bg-white text-zinc-400"><tr className="border-b border-[#EDF0EE]"><th className="px-5 py-2.5 font-semibold">类型</th><th className="px-4 py-2.5 text-right font-semibold">变动</th><th className="px-4 py-2.5 text-right font-semibold">变动后余额</th><th className="px-4 py-2.5 font-semibold">说明</th><th className="px-5 py-2.5 font-semibold">时间</th></tr></thead>
+                    <tbody>{creditLogs.map((log) => { const view = creditLogView(log); return <tr key={log.id} className="border-b border-[#F0F2F0] last:border-0 hover:bg-[#FAFBFA]"><td className="px-5 py-3"><span className={`inline-flex rounded border px-1.5 py-0.5 font-semibold ${view.tone}`}>{view.label}</span></td><td className={`px-4 py-3 text-right font-mono font-semibold ${view.amountTone}`}>{view.change > 0 ? '+' : '-'}{formatCNY(Math.abs(view.change))}</td><td className="px-4 py-3 text-right font-mono font-semibold text-zinc-700">{formatCNY(Number(log.balanceAfter || 0))}</td><td className="max-w-[210px] px-4 py-3 text-zinc-600"><span className="block truncate" title={log.remark || '-'}>{log.remark || '-'}</span></td><td className="whitespace-nowrap px-5 py-3 text-zinc-400">{formatDate(log.createdAt)}</td></tr>; })}</tbody>
+                  </table>
+                  <div className="divide-y divide-[#EDF0EE] sm:hidden">{creditLogs.map((log) => { const view = creditLogView(log); return <div key={log.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${view.tone}`}>{view.label}</span><strong className={`font-mono text-xs ${view.amountTone}`}>{view.change > 0 ? '+' : '-'}{formatCNY(Math.abs(view.change))}</strong></div><p className="mt-2 truncate text-[11px] text-zinc-600">{log.remark || '-'}</p><div className="mt-2 flex items-center justify-between text-[10px] text-zinc-400"><span>余额 {formatCNY(Number(log.balanceAfter || 0))}</span><span>{formatDate(log.createdAt)}</span></div></div>; })}</div>
+                </>
+              )}
+            </div>
+
+            <div className="flex items-center justify-between gap-3 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3">
+              <span className="text-[10px] text-zinc-400">第 {creditLogPage} / {Math.max(1, Math.ceil(creditLogTotal / creditLogPageSize))} 页</span>
+              <div className="flex items-center gap-2"><button type="button" onClick={() => setCreditLogPage((value) => Math.max(1, value - 1))} disabled={creditLogPage <= 1 || creditLogLoading} title="上一页" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white text-zinc-600 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button><button type="button" onClick={() => setCreditLogPage((value) => value + 1)} disabled={creditLogPage >= Math.ceil(creditLogTotal / creditLogPageSize) || creditLogLoading} title="下一页" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white text-zinc-600 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button><button type="button" onClick={() => setCreditLogUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">关闭</button></div>
+            </div>
+          </section>
         </div>
       )}
 

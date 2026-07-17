@@ -576,6 +576,14 @@ func (r *Router) alipayNotify(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	order, changed, err := operations.NewRepository(r.db).CompleteOrder(ctx, outTradeNo, tradeNo)
+	if errors.Is(err, operations.ErrRechargeOrderClosed) {
+		if r.logger != nil {
+			r.logger.Warn("ignored payment callback for closed order", "outTradeNo", outTradeNo, "tradeNo", tradeNo)
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("success"))
+		return
+	}
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, newAppError(http.StatusNotFound, "订阅订单不存在"))
 		return
@@ -710,6 +718,15 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 		return
 	}
 	paidOrder, changed, err := repo.CompleteOrder(ctx, order.OutTradeNo, queried.TradeNo)
+	if errors.Is(err, operations.ErrRechargeOrderClosed) {
+		closedOrder, findErr := repo.FindOrder(ctx, order.ID)
+		if findErr != nil {
+			writeError(w, findErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": closedOrder})
+		return
+	}
 	if err != nil {
 		writeError(w, err)
 		return

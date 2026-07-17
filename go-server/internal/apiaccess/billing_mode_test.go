@@ -64,6 +64,40 @@ func TestToPublicKeyNormalizesStoredBillingMode(t *testing.T) {
 	}
 }
 
+func TestDynamicConcurrencyLimit(t *testing.T) {
+	tests := []struct {
+		name   string
+		base   int
+		hourly int
+		want   int
+		bonus  int
+	}{
+		{name: "default base", base: 0, hourly: 0, want: 10, bonus: 0},
+		{name: "below first threshold", base: 10, hourly: 49, want: 10, bonus: 0},
+		{name: "first threshold", base: 10, hourly: 50, want: 15, bonus: 5},
+		{name: "between thresholds", base: 10, hourly: 99, want: 15, bonus: 5},
+		{name: "second threshold", base: 10, hourly: 100, want: 20, bonus: 10},
+		{name: "custom base remains additive", base: 20, hourly: 150, want: 35, bonus: 15},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := DynamicConcurrencyLimit(test.base, test.hourly); got != test.want {
+				t.Fatalf("limit = %d, want %d", got, test.want)
+			}
+			if got := DynamicConcurrencyBonus(test.hourly); got != test.bonus {
+				t.Fatalf("bonus = %d, want %d", got, test.bonus)
+			}
+		})
+	}
+}
+
+func TestToPublicKeyExposesDynamicConcurrency(t *testing.T) {
+	public := ToPublicKey(AccessKey{ConcurrencyLimit: 10, HourlyRequestCount: 100})
+	if public.BaseConcurrencyLimit != 10 || public.DynamicConcurrencyBonus != 10 || public.ConcurrencyLimit != 20 || public.HourlyRequestCount != 100 {
+		t.Fatalf("unexpected dynamic concurrency fields: %#v", public)
+	}
+}
+
 func TestScanAccessKeysNormalizesHistoricalBillingMode(t *testing.T) {
 	rawDB, mock, err := sqlmock.New()
 	if err != nil {

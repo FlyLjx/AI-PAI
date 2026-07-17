@@ -15,6 +15,7 @@ import (
 	"aipi-go/internal/database"
 	"aipi-go/internal/httpserver"
 	"aipi-go/internal/logging"
+	"aipi-go/internal/operations"
 )
 
 func main() {
@@ -33,6 +34,10 @@ func main() {
 		logger.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}
+	workerContext, stopWorkers := context.WithCancel(context.Background())
+	defer stopWorkers()
+	httpserver.StartServiceNotificationWorker(workerContext, db, logger)
+	operations.StartOrderExpiryWorker(workerContext, db, logger)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
@@ -59,6 +64,7 @@ func main() {
 	defer cancel()
 
 	logger.Info("shutting down server")
+	stopWorkers()
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 		os.Exit(1)

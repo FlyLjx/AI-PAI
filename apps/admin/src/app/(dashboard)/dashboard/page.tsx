@@ -7,8 +7,10 @@ import {
   ChartNoAxesCombined,
   CircleDollarSign,
   Clock3,
+  HeartPulse,
   Loader2,
   RefreshCw,
+  Server,
   TriangleAlert,
   Users,
 } from 'lucide-react';
@@ -24,7 +26,7 @@ import {
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
-import { portalApi } from '@/lib/admin-api';
+import { portalApi, type StabilitySnapshot } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
 
 type RechargeRow = {
@@ -110,17 +112,33 @@ function shortDate(value: string): string {
   return `${month}/${day}`;
 }
 
+function percentage(value: number | undefined): string {
+  return `${Number(value || 0).toFixed(1)}%`;
+}
+
+function durationLabel(value: number | undefined): string {
+  const seconds = Math.max(0, Number(value || 0));
+  if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
+  if (seconds < 60) return `${seconds.toFixed(1)}秒`;
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}分${Math.round(seconds % 60)}秒`;
+}
+
 function statusView(status = '') {
   if (status === 'paid' || status === 'success') return { label: '成功', className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
   if (status === 'pending' || status === 'queued' || status === 'processing') return { label: '处理中', className: 'border-amber-200 bg-amber-50 text-amber-700' };
+  if (status === 'closed') return { label: '已关闭', className: 'border-zinc-200 bg-zinc-50 text-zinc-500' };
   if (status === 'failed' || status === 'canceled') return { label: '失败', className: 'border-red-200 bg-red-50 text-red-700' };
   return { label: status || '未知', className: 'border-zinc-200 bg-zinc-50 text-zinc-600' };
 }
 
 export default function AdminDashboardPage() {
   const [data, setData] = useState<DashboardData>({});
+  const [stability, setStability] = useState<StabilitySnapshot | null>(null);
   const [loading, setLoading] = useState(true);
+  const [stabilityLoading, setStabilityLoading] = useState(true);
   const [error, setError] = useState('');
+  const [stabilityError, setStabilityError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
   const [trendDays, setTrendDays] = useState<7 | 15 | 30>(7);
 
@@ -140,16 +158,33 @@ export default function AdminDashboardPage() {
     }
   }, []);
 
+  const loadStability = useCallback(async () => {
+    setStabilityLoading(true);
+    setStabilityError('');
+    try {
+      const response = await portalApi.stability();
+      setStability(response.data);
+    } catch (requestError) {
+      setStabilityError(requestError instanceof Error ? requestError.message : '上游接口状态加载失败');
+    } finally {
+      setStabilityLoading(false);
+    }
+  }, []);
+
+  const refreshAll = useCallback(async (quiet = false) => {
+    await Promise.allSettled([load(quiet), loadStability()]);
+  }, [load, loadStability]);
+
   useEffect(() => {
-    const firstLoad = window.setTimeout(() => void load(), 0);
+    const firstLoad = window.setTimeout(() => void refreshAll(), 0);
     const timer = window.setInterval(() => {
-      if (!document.hidden) void load(true);
+      if (!document.hidden) void refreshAll(true);
     }, 30_000);
     return () => {
       window.clearTimeout(firstLoad);
       window.clearInterval(timer);
     };
-  }, [load]);
+  }, [refreshAll]);
 
   const stats = data.taskStats || {};
   const successful = Number(stats.success || 0);
@@ -175,6 +210,22 @@ export default function AdminDashboardPage() {
     { key: 'canceled', label: '已取消', value: taskTrendSummary.canceled, color: TASK_TREND_COLORS.canceled },
   ] as const;
 
+  const upstreamCode = Number(stability?.upstream_status_code || 0);
+  const upstreamReachable = Boolean(stability?.reachable && upstreamCode >= 200 && upstreamCode < 300);
+  const upstreamRuntime = stability?.runtime;
+  const upstreamRecent = stability?.recent_60;
+  const upstreamPending = stabilityLoading && !stability;
+  const upstreamDegraded = upstreamReachable && Number(upstreamRuntime?.error_rate || 0) > 0;
+  const upstreamLabel = upstreamReachable ? upstreamDegraded ? '运行波动' : '运行正常' : '连接异常';
+  const upstreamTone = upstreamReachable
+    ? upstreamDegraded
+      ? 'border-amber-200 bg-amber-50 text-amber-700'
+      : 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : 'border-red-200 bg-red-50 text-red-700';
+  const upstreamIconTone = upstreamReachable
+    ? upstreamDegraded ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
+    : upstreamPending ? 'bg-zinc-100 text-zinc-500' : 'bg-red-50 text-red-700';
+
   const attention = useMemo(() => [
     { label: '待支付充值单', value: Number(data.pending?.pendingOrders || 0), note: '等待支付结果同步', tone: 'amber' },
     { label: '运行中 API 请求', value: Number(data.pending?.runningTasks || 0), note: '排队与上游处理中', tone: 'blue' },
@@ -186,11 +237,11 @@ export default function AdminDashboardPage() {
       <PageHeader title="经营概览" description="API 中转业务、订阅收入和上游运行状态。">
         <button
           type="button"
-          onClick={() => void load()}
-          disabled={loading}
+          onClick={() => void refreshAll()}
+          disabled={loading || stabilityLoading}
           className="inline-flex h-8 items-center gap-2 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-[#17201B] hover:border-[#12B76A] disabled:opacity-50"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          <RefreshCw className={`h-3.5 w-3.5 ${loading || stabilityLoading ? 'animate-spin' : ''}`} />
           刷新
         </button>
       </PageHeader>
@@ -249,6 +300,52 @@ export default function AdminDashboardPage() {
             <StatBlock title="请求成功率" value={`${successRate}%`} subtext={`累计返回 ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张图片`} color={successRate >= 95 ? 'green' : 'amber'} icon={Cable} />
             <StatBlock title="API 客户" value={Number(data.users?.total || 0).toLocaleString('zh-CN')} subtext={`启用 ${Number(data.users?.active || 0)}，今日新增 ${Number(data.today?.users || 0)}`} color="neutral" icon={Users} />
           </div>
+
+          <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="upstream-status-title">
+            <div className={`h-1 w-full ${upstreamReachable ? upstreamDegraded ? 'bg-amber-500' : 'bg-[#3F9274]' : upstreamPending ? 'bg-zinc-300' : 'bg-[#D06F69]'}`} />
+            <header className="flex flex-col gap-3 border-b border-[#EDF0EE] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex min-w-0 items-center gap-3">
+                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-md ${upstreamIconTone}`}>
+                  {upstreamReachable ? <HeartPulse className="h-4.5 w-4.5" /> : <Server className="h-4.5 w-4.5" />}
+                </span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 id="upstream-status-title" className="text-sm font-semibold text-[#17201B]">上游接口运行状况</h2>
+                    {!stabilityLoading || stability ? <span className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${upstreamTone}`}>{upstreamLabel}</span> : null}
+                  </div>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">
+                    {stabilityLoading && !stability ? '正在连接上游状态服务...' : stabilityError || stability?.error || `最近 ${Number(upstreamRuntime?.window_minutes || 60)} 分钟运行统计`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 text-[11px] text-zinc-400">
+                {stabilityLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-label="检测中" />}
+                <span>检测时间：{stability?.fetched_at ? formatDate(stability.fetched_at) : '-'}</span>
+              </div>
+            </header>
+            <div className="grid grid-cols-2 divide-x divide-y divide-[#EDF0EE] sm:grid-cols-3 sm:divide-y-0 xl:grid-cols-6">
+              {[
+                ['接口状态', stabilityLoading && !stability ? '--' : upstreamReachable ? '在线' : '异常', upstreamCode ? `HTTP ${upstreamCode}` : '暂无状态码'],
+                ['近一小时成功率', stabilityLoading && !stability ? '--' : percentage(upstreamRuntime?.success_rate), `${Number(upstreamRuntime?.total || 0).toLocaleString('zh-CN')} 次请求`],
+                ['成功请求', Number(upstreamRuntime?.totals?.success || 0).toLocaleString('zh-CN'), '最近 60 分钟'],
+                ['失败请求', Number(upstreamRuntime?.totals?.failed || 0).toLocaleString('zh-CN'), `错误率 ${percentage(upstreamRuntime?.error_rate)}`],
+                ['平均耗时', stabilityLoading && !stability ? '--' : durationLabel(upstreamRecent?.average_duration_secs), `成功 ${durationLabel(upstreamRecent?.average_success_duration_secs)}`],
+                ['最近任务', Number(upstreamRecent?.total || 0).toLocaleString('zh-CN'), `${Number(upstreamRecent?.success || 0)} 成功 / ${Number(upstreamRecent?.failed || 0)} 失败`],
+              ].map(([label, value, note]) => (
+                <div key={label} className="min-w-0 px-4 py-3.5">
+                  <span className="block text-[11px] font-semibold text-zinc-500">{label}</span>
+                  <strong className="mt-1.5 block truncate text-base text-[#17201B]">{value}</strong>
+                  <small className="mt-0.5 block truncate text-[10px] text-zinc-400">{note}</small>
+                </div>
+              ))}
+            </div>
+            {stabilityError && (
+              <div className="flex items-center gap-2 border-t border-red-100 bg-red-50 px-4 py-2.5 text-[11px] text-red-700" role="alert">
+                <TriangleAlert className="h-3.5 w-3.5 shrink-0" />
+                状态检测失败：{stabilityError}
+              </div>
+            )}
+          </section>
 
           <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,.6fr)]">
             <section className="rounded-md border border-[#DCE4DF] bg-white">

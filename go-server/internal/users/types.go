@@ -25,6 +25,16 @@ type User struct {
 	UpdatedAt       time.Time
 }
 
+type CreditLog struct {
+	ID           string    `json:"id"`
+	UserID       string    `json:"userId"`
+	Type         string    `json:"type"`
+	Amount       float64   `json:"amount"`
+	BalanceAfter float64   `json:"balanceAfter"`
+	Remark       string    `json:"remark"`
+	CreatedAt    time.Time `json:"createdAt"`
+}
+
 type PublicUser struct {
 	ID              string  `json:"id"`
 	Email           string  `json:"email"`

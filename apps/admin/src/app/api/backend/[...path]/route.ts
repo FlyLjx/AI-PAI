@@ -6,9 +6,11 @@ type Rule = { pattern: RegExp; methods: string[] };
 
 const ADMIN_ROUTES: Rule[] = [
   { pattern: /^\/api\/dashboard$/, methods: ['GET'] },
+  { pattern: /^\/api\/upstream\/stability$/, methods: ['GET'] },
   { pattern: /^\/api\/users$/, methods: ['GET', 'POST'] },
   { pattern: /^\/api\/users\/[^/]+$/, methods: ['PATCH', 'DELETE'] },
   { pattern: /^\/api\/users\/[^/]+\/balance$/, methods: ['PATCH'] },
+  { pattern: /^\/api\/users\/[^/]+\/credit-logs$/, methods: ['GET'] },
   { pattern: /^\/api\/users\/[^/]+\/subscription$/, methods: ['POST'] },
   { pattern: /^\/api\/api-providers$/, methods: ['GET', 'POST'] },
   { pattern: /^\/api\/api-providers\/[^/]+$/, methods: ['PATCH', 'DELETE'] },

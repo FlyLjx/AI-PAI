@@ -53,6 +53,53 @@ func (r *Repository) FindAll(ctx context.Context) ([]User, error) {
 	return items, rows.Err()
 }
 
+func (r *Repository) ListCreditLogs(ctx context.Context, userID string, logType string, page int, pageSize int) ([]CreditLog, int, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	where := ` WHERE user_id = ?`
+	args := []any{userID}
+	if logType != "" {
+		where += ` AND type = ?`
+		args = append(args, logType)
+	}
+
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_logs`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, user_id, type, amount, balance_after, COALESCE(remark, ''), created_at
+		FROM credit_logs
+	`+where+`
+		ORDER BY created_at DESC, id DESC
+		LIMIT ? OFFSET ?
+	`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := []CreditLog{}
+	for rows.Next() {
+		var item CreditLog
+		if err := rows.Scan(&item.ID, &item.UserID, &item.Type, &item.Amount, &item.BalanceAfter, &item.Remark, &item.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		items = append(items, item)
+	}
+	return items, total, rows.Err()
+}
+
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, error) {
 	row := r.db.QueryRowContext(ctx, `
 		SELECT `+userSelectColumns+`

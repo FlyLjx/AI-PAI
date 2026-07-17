@@ -31,6 +31,16 @@ export type PortalUser = {
   subscription?: Subscription | null;
 };
 
+export type CreditLog = {
+  id: string;
+  userId: string;
+  type: 'deduct' | 'recharge' | 'manual_adjust' | string;
+  amount: number;
+  balanceAfter: number;
+  remark?: string;
+  createdAt: string;
+};
+
 export type AdminIdentity = Pick<PortalUser, 'id' | 'email'> & { role: 'admin' };
 
 export type APIKeyBillingMode = 'balance' | 'subscription' | 'auto';
@@ -43,6 +53,9 @@ export type APIKey = {
   keyPrefix: string;
   status: string;
   concurrencyLimit: number;
+  baseConcurrencyLimit?: number;
+  hourlyRequestCount?: number;
+  dynamicConcurrencyBonus?: number;
   billingMode?: APIKeyBillingMode | null;
   lastUsedAt?: string | null;
   createdAt: string;
@@ -137,6 +150,72 @@ export type SystemUpdateInfo = {
   checkedAt: string;
 };
 
+export type StabilitySeriesPoint = {
+  time: string;
+  label?: string;
+  success: number;
+  failed: number;
+};
+
+export type StabilityErrorReason = {
+  label: string;
+  value: number;
+};
+
+export type StabilityRecentWindow = {
+  total: number;
+  limit: number;
+  availability_total: number;
+  success: number;
+  failed: number;
+  canceled: number;
+  rejected: number;
+  running: number;
+  other: number;
+  success_rate: number;
+  failure_rate: number;
+  average_duration_secs: number;
+  average_success_duration_secs: number;
+  average_failure_duration_secs: number;
+};
+
+export type StabilityRuntimeWindow = {
+  window_minutes: number;
+  bucket_minutes: number;
+  total: number;
+  success_rate: number;
+  error_rate: number;
+  start_time: string;
+  end_time: string;
+  series: StabilitySeriesPoint[];
+  error_reasons: StabilityErrorReason[];
+  totals: {
+    success: number;
+    failed: number;
+    canceled: number;
+    rejected: number;
+    running: number;
+    other: number;
+  };
+};
+
+export type StabilitySnapshot = {
+  reachable: boolean;
+  status: string;
+  upstream_status_code: number;
+  stability_percent: number;
+  generated_at: string;
+  fetched_at: string;
+  source: string;
+  total: number;
+  success: number;
+  failed: number;
+  error?: string;
+  recent_60?: StabilityRecentWindow;
+  runtime?: StabilityRuntimeWindow;
+  series?: StabilitySeriesPoint[];
+};
+
 type Envelope<T> = { data: T; pagination?: { total: number; page: number; pageSize: number } };
 
 export class APIError extends Error {
@@ -179,10 +258,12 @@ export const adminAuth = {
 
 export const portalApi = {
   dashboard: () => api<Record<string, unknown>>('/api/dashboard?limit=8'),
+  stability: () => api<StabilitySnapshot>('/api/upstream/stability'),
   users: () => api<PortalUser[]>('/api/users'),
   createUser: (input: Record<string, unknown>) => api<PortalUser>('/api/users', { method: 'POST', body: JSON.stringify(input) }),
   updateUser: (id: string, input: Record<string, unknown>) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   updateUserBalance: (id: string, input: { balance: number; remark: string }) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/balance`, { method: 'PATCH', body: JSON.stringify(input) }),
+  userCreditLogs: (id: string, page = 1, pageSize = 10, type = 'all') => api<CreditLog[]>(`/api/users/${encodeURIComponent(id)}/credit-logs${query({ page, pageSize, type: type === 'all' ? undefined : type })}`),
   deleteUser: (id: string) => api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   verifyUserEmail: (id: string) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/verify-email`, { method: 'POST' }),
   grantSubscription: (id: string, input: Record<string, unknown>) => api(`/api/users/${encodeURIComponent(id)}/subscription`, { method: 'POST', body: JSON.stringify(input) }),

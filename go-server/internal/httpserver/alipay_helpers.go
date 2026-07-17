@@ -65,11 +65,7 @@ func createAlipayPrecreateOrder(ctx context.Context, settings alipaySettings, ou
 		return alipayPayment{}, err
 	}
 	notifyURL := buildAlipayNotifyURL(settings, notifyOrigin)
-	bizContent, _ := json.Marshal(map[string]string{
-		"out_trade_no": outTradeNo,
-		"total_amount": fmt.Sprintf("%.2f", amount),
-		"subject":      defaultString(subject, displayBrandName(settings.SiteName)+"订阅"),
-	})
+	bizContent := alipayPrecreateBizContent(settings, outTradeNo, amount, subject)
 	payload, err := callAlipay(ctx, settings, "alipay.trade.precreate", notifyURL, string(bizContent))
 	if err != nil {
 		return alipayPayment{}, err
@@ -86,6 +82,16 @@ func createAlipayPrecreateOrder(ctx context.Context, settings alipaySettings, ou
 		return alipayPayment{}, newAppError(http.StatusBadGateway, "支付宝预创建订单未返回二维码")
 	}
 	return alipayPayment{QRCode: qrCode}, nil
+}
+
+func alipayPrecreateBizContent(settings alipaySettings, outTradeNo string, amount float64, subject string) string {
+	bizContent, _ := json.Marshal(map[string]string{
+		"out_trade_no":    outTradeNo,
+		"total_amount":    fmt.Sprintf("%.2f", amount),
+		"subject":         defaultString(subject, displayBrandName(settings.SiteName)+"订阅"),
+		"timeout_express": "30m",
+	})
+	return string(bizContent)
 }
 
 func queryAlipayOrder(ctx context.Context, settings alipaySettings, outTradeNo string) (alipayQueryResult, error) {

@@ -23,14 +23,15 @@ import (
 )
 
 type Router struct {
-	cfg     config.Config
-	db      *database.DB
-	logger  *slog.Logger
-	mux     *http.ServeMux
-	tokens  auth.TokenManager
-	queue   *generation.Queue
-	taskHub *tasks.Hub
-	userHub *users.Hub
+	cfg           config.Config
+	db            *database.DB
+	logger        *slog.Logger
+	mux           *http.ServeMux
+	tokens        auth.TokenManager
+	queue         *generation.Queue
+	taskHub       *tasks.Hub
+	userHub       *users.Hub
+	notifications *serviceNotificationManager
 
 	updateMu      sync.Mutex
 	updateCache   systemUpdateVersion
@@ -39,11 +40,12 @@ type Router struct {
 
 func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Handler {
 	router := &Router{
-		cfg:    cfg,
-		db:     db,
-		logger: logger,
-		mux:    http.NewServeMux(),
-		tokens: auth.NewTokenManager(cfg.Database),
+		cfg:           cfg,
+		db:            db,
+		logger:        logger,
+		mux:           http.NewServeMux(),
+		tokens:        auth.NewTokenManager(cfg.Database),
+		notifications: newServiceNotificationManager(db, logger),
 	}
 	router.taskHub = tasks.NewHub()
 	router.userHub = users.NewHub()

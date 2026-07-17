@@ -113,6 +113,10 @@ func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 		r.updateUserStatus(w, req, strings.TrimSuffix(path, "/status"))
 		return
 	}
+	if strings.HasSuffix(path, "/credit-logs") {
+		r.userCreditLogs(w, req, strings.TrimSuffix(path, "/credit-logs"))
+		return
+	}
 	if strings.HasSuffix(path, "/balance") {
 		r.updateUserBalance(w, req, strings.TrimSuffix(path, "/balance"))
 		return
@@ -363,6 +367,57 @@ func (r *Router) updateUserBalance(w http.ResponseWriter, req *http.Request, id 
 	}
 	r.publishCurrentUser(context.Background(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"data": users.ToPublicUser(updated)})
+}
+
+func (r *Router) userCreditLogs(w http.ResponseWriter, req *http.Request, id string) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	id = strings.Trim(id, "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	}
+
+	logType := strings.TrimSpace(req.URL.Query().Get("type"))
+	switch logType {
+	case "", "all":
+		logType = ""
+	case "deduct", "recharge", "manual_adjust":
+	default:
+		writeError(w, newAppError(http.StatusBadRequest, "积分明细类型不正确"))
+		return
+	}
+	page := queryInt(req, "page", 1)
+	pageSize := queryInt(req, "pageSize", 20)
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	repo := users.NewRepository(r.db)
+	if _, err := repo.FindByID(ctx, id); errors.Is(err, sql.ErrNoRows) {
+		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
+		return
+	} else if err != nil {
+		writeError(w, err)
+		return
+	}
+	items, total, err := repo.ListCreditLogs(ctx, id, logType, page, pageSize)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":       items,
+		"pagination": map[string]any{"total": total, "page": page, "pageSize": pageSize},
+	})
 }
 
 func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string) {

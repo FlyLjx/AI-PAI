@@ -234,7 +234,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		writeOpenAIError(w, status, message, errorType)
 		return
 	}
-	r.queue.EnqueueScoped(savedTask.ID, generation.APIKeyConcurrencyScope(auth.APIKey.ID), auth.APIKey.ConcurrencyLimit)
+	r.queue.EnqueueScoped(savedTask.ID, generation.APIKeyConcurrencyScope(auth.APIKey.ID), r.dynamicAPIKeyConcurrencyLimit(auth.APIKey))
 
 	resultCh := make(chan compatTaskResult, 1)
 	go func() {
@@ -275,6 +275,20 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		"created": time.Now().Unix(),
 		"data":    data,
 	})
+}
+
+func (r *Router) dynamicAPIKeyConcurrencyLimit(key apiaccess.AccessKey) int {
+	baseLimit := apiaccess.DynamicConcurrencyLimit(key.ConcurrencyLimit, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	hourlyRequestCount, err := apiaccess.NewRepository(r.db).HourlyRequestCount(ctx, key.ID, time.Now().Add(-time.Hour))
+	if err != nil {
+		if r.logger != nil {
+			r.logger.Warn("dynamic API key concurrency lookup failed", "apiKeyId", key.ID, "error", err)
+		}
+		return baseLimit
+	}
+	return apiaccess.DynamicConcurrencyLimit(key.ConcurrencyLimit, hourlyRequestCount)
 }
 
 func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string) compatTaskResult {

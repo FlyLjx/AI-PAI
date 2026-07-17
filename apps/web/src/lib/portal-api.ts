@@ -69,6 +69,9 @@ export type APIKey = {
   key?: string;
   status: string;
   concurrencyLimit: number;
+  baseConcurrencyLimit?: number;
+  hourlyRequestCount?: number;
+  dynamicConcurrencyBonus?: number;
   billingMode?: APIKeyBillingMode | null;
   lastUsedAt?: string | null;
   createdAt: string;

@@ -78,6 +78,9 @@ func (s Service) ListUserKeys(ctx context.Context, userID string) ([]PublicAcces
 	if err != nil {
 		return nil, err
 	}
+	if err := s.attachHourlyRequestCounts(ctx, keys); err != nil {
+		return nil, err
+	}
 	return publicKeys(keys), nil
 }
 
@@ -87,7 +90,25 @@ func (s Service) ListAllKeys(ctx context.Context) ([]PublicAccessKey, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := s.attachHourlyRequestCounts(ctx, keys); err != nil {
+		return nil, err
+	}
 	return publicKeys(keys), nil
+}
+
+func (s Service) attachHourlyRequestCounts(ctx context.Context, keys []AccessKey) error {
+	ids := make([]string, 0, len(keys))
+	for _, key := range keys {
+		ids = append(ids, key.ID)
+	}
+	counts, err := s.keys.HourlyRequestCounts(ctx, ids, time.Now().Add(-time.Hour))
+	if err != nil {
+		return err
+	}
+	for index := range keys {
+		keys[index].HourlyRequestCount = counts[keys[index].ID]
+	}
+	return nil
 }
 
 func (s Service) CreateUserKey(ctx context.Context, userID string, name string, billingMode string) (*PublicAccessKey, error) {

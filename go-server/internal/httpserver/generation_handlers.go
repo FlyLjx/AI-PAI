@@ -234,6 +234,7 @@ func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, us
 		return 0, err
 	}
 	if !hasAvailableGenerationBalance(credits, reserved, price) {
+		r.notifyBalanceInsufficient(userID)
 		return 0, newAppError(http.StatusPaymentRequired, generationBalanceInsufficientMessage(billingMode))
 	}
 	return price, nil
