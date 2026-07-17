@@ -134,12 +134,19 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         // The web container may be restarting during an update; the next check retries.
       }
     };
-    const firstCheck = window.setTimeout(() => void checkBuild(), 3_000);
+    const checkVisibleBuild = () => {
+      if (document.visibilityState === 'visible') void checkBuild();
+    };
+    const firstCheck = window.setTimeout(() => void checkBuild(), 1_000);
     const timer = window.setInterval(() => void checkBuild(), 30_000);
+    window.addEventListener('focus', checkVisibleBuild);
+    document.addEventListener('visibilitychange', checkVisibleBuild);
     return () => {
       active = false;
       window.clearTimeout(firstCheck);
       window.clearInterval(timer);
+      window.removeEventListener('focus', checkVisibleBuild);
+      document.removeEventListener('visibilitychange', checkVisibleBuild);
     };
   }, []);
 
