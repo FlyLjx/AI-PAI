@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"aipi-go/internal/apiaccess"
 	"aipi-go/internal/auth"
 	"aipi-go/internal/build"
 	"aipi-go/internal/config"
@@ -36,6 +37,10 @@ type Router struct {
 	updateMu      sync.Mutex
 	updateCache   systemUpdateVersion
 	updateCacheAt time.Time
+
+	dynamicConcurrencyMu      sync.RWMutex
+	dynamicConcurrencyCache   apiaccess.DynamicConcurrencyConfig
+	dynamicConcurrencyCacheAt time.Time
 }
 
 func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Handler {

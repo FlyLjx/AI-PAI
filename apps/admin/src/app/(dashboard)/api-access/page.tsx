@@ -9,7 +9,7 @@ import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { type APIKey, type APIKeyBillingMode, type UsageLog, portalApi } from '@/lib/admin-api';
+import { type APIKey, type APIKeyBillingMode, type DynamicConcurrencyConfig, type UsageLog, portalApi } from '@/lib/admin-api';
 import { formatDate } from '@/lib/common/utils';
 
 type DetailedUsageLog = UsageLog & {
@@ -32,6 +32,25 @@ const LOG_STATUS_OPTIONS = [
   { value: 'failed', label: '失败' },
   { value: 'canceled', label: '已取消' },
 ] as const;
+
+const defaultDynamicConcurrency: DynamicConcurrencyConfig = {
+  enabled: true,
+  windowValue: 1,
+  windowUnit: 'hour',
+  requestStep: 50,
+  increment: 5,
+};
+
+function dynamicWindowLabel(config: DynamicConcurrencyConfig) {
+  return `${config.windowValue} ${config.windowUnit === 'minute' ? '分钟' : '小时'}`;
+}
+
+function dynamicConcurrencySummary(key: APIKey, config: DynamicConcurrencyConfig) {
+  if (!config.enabled) return '动态扩容已关闭';
+  const requestCount = Number(key.windowRequestCount ?? key.hourlyRequestCount ?? 0);
+  const bonus = Number(key.dynamicConcurrencyBonus || 0);
+  return `${dynamicWindowLabel(config)} ${requestCount} 次${bonus > 0 ? ` · +${bonus}` : ''}`;
+}
 
 function logStatus(status: string) {
   if (status === 'success' || status === 'succeeded') return { label: '成功', badge: 'succeeded' as const };
@@ -56,6 +75,7 @@ export default function AdminAPIAccessPage() {
   const [tab, setTab] = useState<'keys' | 'logs'>('keys');
   const [keys, setKeys] = useState<APIKey[]>([]);
   const [stats, setStats] = useState<Record<string, number>>({});
+  const [dynamicConcurrency, setDynamicConcurrency] = useState<DynamicConcurrencyConfig>(defaultDynamicConcurrency);
   const [logs, setLogs] = useState<DetailedUsageLog[]>([]);
   const [keysLoading, setKeysLoading] = useState(true);
   const [logsLoading, setLogsLoading] = useState(true);
@@ -79,6 +99,7 @@ export default function AdminAPIAccessPage() {
       const response = await portalApi.adminKeys();
       setKeys(response.data.items || []);
       setStats(response.data.stats || {});
+      setDynamicConcurrency(response.data.dynamicConcurrency || defaultDynamicConcurrency);
       setConcurrencyDraft(Object.fromEntries((response.data.items || []).map((key) => [key.id, Number(key.baseConcurrencyLimit || key.concurrencyLimit || 10)])));
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : 'API Key 加载失败');
@@ -242,7 +263,7 @@ export default function AdminAPIAccessPage() {
               <td className="px-4 py-3"><strong className="block max-w-[150px] truncate text-[12px] font-medium">{key.name}</strong><code className="text-[10px] text-zinc-400">{key.keyPrefix}••••••</code></td>
               <td className="px-4 py-3"><StatusBadge status={key.status === 'active' ? 'active' : 'disabled'} /></td>
               <td className="px-4 py-3"><BillingModeBadge mode={key.billingMode} /></td>
-              <td className="px-4 py-3"><div className="flex items-center gap-1"><input aria-label={`${key.name} 基础并发`} min={1} step={1} type="number" value={concurrencyDraft[key.id] ?? key.baseConcurrencyLimit ?? key.concurrencyLimit} onChange={(event) => setConcurrencyDraft((current) => ({ ...current, [key.id]: Number(event.target.value) }))} className="h-7 w-16 rounded border border-[#DCE4DF] px-2 font-mono text-[11px]" /><button type="button" onClick={() => void saveConcurrency(key)} disabled={actionId === key.id} title="保存基础并发" className="grid h-7 w-7 place-items-center rounded border border-[#86EFAC] bg-[#F0FDF4] text-[#047857] disabled:opacity-40"><Check className="h-3.5 w-3.5" /></button></div><small className="mt-1 block whitespace-nowrap text-[10px] text-zinc-400">当前 <strong className="font-mono text-[#047857]">{key.concurrencyLimit}</strong> · 1 小时 {Number(key.hourlyRequestCount || 0)} 次{Number(key.dynamicConcurrencyBonus || 0) > 0 ? ` · +${key.dynamicConcurrencyBonus}` : ''}</small></td>
+              <td className="px-4 py-3"><div className="flex items-center gap-1"><input aria-label={`${key.name} 基础并发`} min={1} step={1} type="number" value={concurrencyDraft[key.id] ?? key.baseConcurrencyLimit ?? key.concurrencyLimit} onChange={(event) => setConcurrencyDraft((current) => ({ ...current, [key.id]: Number(event.target.value) }))} className="h-7 w-16 rounded border border-[#DCE4DF] px-2 font-mono text-[11px]" /><button type="button" onClick={() => void saveConcurrency(key)} disabled={actionId === key.id} title="保存基础并发" className="grid h-7 w-7 place-items-center rounded border border-[#86EFAC] bg-[#F0FDF4] text-[#047857] disabled:opacity-40"><Check className="h-3.5 w-3.5" /></button></div><small className="mt-1 block whitespace-nowrap text-[10px] text-zinc-400">当前 <strong className="font-mono text-[#047857]">{key.concurrencyLimit}</strong> · {dynamicConcurrencySummary(key, dynamicConcurrency)}</small></td>
               <td className="px-4 py-3 font-mono text-[11px]"><span className="text-emerald-700">{key.successCount}</span> / <span className="text-red-600">{key.failedCount}</span><small className="mt-0.5 block text-[10px] text-zinc-400">共 {key.requestCount}</small></td>
               <td className="px-4 py-3 font-mono">{Number(key.imageCount || 0).toLocaleString('zh-CN')}</td>
               <td className="whitespace-nowrap px-4 py-3 text-zinc-500">{key.lastUsedAt ? formatDate(key.lastUsedAt) : '未使用'}</td>
@@ -253,7 +274,7 @@ export default function AdminAPIAccessPage() {
             <article key={key.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{key.name}</strong><small className="font-mono text-[10px] text-zinc-400">{key.keyPrefix}••••••</small></div><div className="flex shrink-0 flex-col items-end gap-1.5"><StatusBadge status={key.status === 'active' ? 'active' : 'disabled'} /><BillingModeBadge mode={key.billingMode} /></div></div>
               <p className="mt-2 truncate text-[11px] text-zinc-500">{key.userEmail || key.userId}</p>
-              <div className="mt-3 grid grid-cols-3 divide-x divide-[#EDF0EE] border-y border-[#EDF0EE] py-2 text-center"><span><small className="block text-[10px] text-zinc-400">请求</small><strong className="text-[12px]">{key.requestCount}</strong></span><span><small className="block text-[10px] text-zinc-400">图片</small><strong className="text-[12px]">{key.imageCount}</strong></span><span><small className="block text-[10px] text-zinc-400">当前并发</small><strong className="text-[12px] text-[#047857]">{key.concurrencyLimit}</strong><small className="block text-[9px] text-zinc-400">基础 {key.baseConcurrencyLimit || 10} · 1h {Number(key.hourlyRequestCount || 0)} 次</small></span></div>
+              <div className="mt-3 grid grid-cols-3 divide-x divide-[#EDF0EE] border-y border-[#EDF0EE] py-2 text-center"><span><small className="block text-[10px] text-zinc-400">请求</small><strong className="text-[12px]">{key.requestCount}</strong></span><span><small className="block text-[10px] text-zinc-400">图片</small><strong className="text-[12px]">{key.imageCount}</strong></span><span><small className="block text-[10px] text-zinc-400">当前并发</small><strong className="text-[12px] text-[#047857]">{key.concurrencyLimit}</strong><small className="block text-[9px] text-zinc-400">基础 {key.baseConcurrencyLimit || 10} · {dynamicConcurrencySummary(key, dynamicConcurrency)}</small></span></div>
               <div className="mt-2 flex justify-end">{keyActions(key)}</div>
             </article>
           )}

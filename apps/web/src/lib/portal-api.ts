@@ -70,6 +70,7 @@ export type APIKey = {
   status: string;
   concurrencyLimit: number;
   baseConcurrencyLimit?: number;
+  windowRequestCount?: number;
   hourlyRequestCount?: number;
   dynamicConcurrencyBonus?: number;
   billingMode?: APIKeyBillingMode | null;

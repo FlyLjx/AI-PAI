@@ -30,12 +30,18 @@ type Authenticated struct {
 }
 
 type Service struct {
-	keys  *Repository
-	users *users.Repository
+	keys                     *Repository
+	users                    *users.Repository
+	dynamicConcurrencyConfig DynamicConcurrencyConfig
 }
 
 func NewService(keyRepo *Repository, userRepo *users.Repository) Service {
-	return Service{keys: keyRepo, users: userRepo}
+	return Service{keys: keyRepo, users: userRepo, dynamicConcurrencyConfig: DefaultDynamicConcurrencyConfig()}
+}
+
+func (s Service) WithDynamicConcurrencyConfig(config DynamicConcurrencyConfig) Service {
+	s.dynamicConcurrencyConfig = NormalizeDynamicConcurrencyConfig(config)
+	return s
 }
 
 func (s Service) Authenticate(ctx context.Context, raw string) (*Authenticated, error) {
@@ -78,10 +84,10 @@ func (s Service) ListUserKeys(ctx context.Context, userID string) ([]PublicAcces
 	if err != nil {
 		return nil, err
 	}
-	if err := s.attachHourlyRequestCounts(ctx, keys); err != nil {
+	if err := s.attachWindowRequestCounts(ctx, keys); err != nil {
 		return nil, err
 	}
-	return publicKeys(keys), nil
+	return publicKeys(keys, s.dynamicConcurrencyConfig), nil
 }
 
 func (s Service) ListAllKeys(ctx context.Context) ([]PublicAccessKey, error) {
@@ -90,23 +96,27 @@ func (s Service) ListAllKeys(ctx context.Context) ([]PublicAccessKey, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := s.attachHourlyRequestCounts(ctx, keys); err != nil {
+	if err := s.attachWindowRequestCounts(ctx, keys); err != nil {
 		return nil, err
 	}
-	return publicKeys(keys), nil
+	return publicKeys(keys, s.dynamicConcurrencyConfig), nil
 }
 
-func (s Service) attachHourlyRequestCounts(ctx context.Context, keys []AccessKey) error {
+func (s Service) attachWindowRequestCounts(ctx context.Context, keys []AccessKey) error {
+	config := NormalizeDynamicConcurrencyConfig(s.dynamicConcurrencyConfig)
+	if !config.Enabled {
+		return nil
+	}
 	ids := make([]string, 0, len(keys))
 	for _, key := range keys {
 		ids = append(ids, key.ID)
 	}
-	counts, err := s.keys.HourlyRequestCounts(ctx, ids, time.Now().Add(-time.Hour))
+	counts, err := s.keys.RequestCountsSince(ctx, ids, time.Now().Add(-config.Window()))
 	if err != nil {
 		return err
 	}
 	for index := range keys {
-		keys[index].HourlyRequestCount = counts[keys[index].ID]
+		keys[index].WindowRequestCount = counts[keys[index].ID]
 	}
 	return nil
 }
@@ -263,10 +273,10 @@ func fillUsageTrend(startDate time.Time, endDate time.Time, items []UsageTrendPo
 	return result
 }
 
-func publicKeys(keys []AccessKey) []PublicAccessKey {
+func publicKeys(keys []AccessKey, config DynamicConcurrencyConfig) []PublicAccessKey {
 	result := make([]PublicAccessKey, 0, len(keys))
 	for _, key := range keys {
-		result = append(result, ToPublicKey(key))
+		result = append(result, ToPublicKeyWithConfig(key, config))
 	}
 	return result
 }

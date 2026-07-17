@@ -10,7 +10,7 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 )
 
-func TestHourlyRequestCountsGroupsByAPIKey(t *testing.T) {
+func TestRequestCountsSinceGroupsByAPIKey(t *testing.T) {
 	rawDB, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +23,7 @@ func TestHourlyRequestCountsGroupsByAPIKey(t *testing.T) {
 			AddRow("key-1", 50).
 			AddRow("key-2", 101))
 
-	counts, err := NewRepository(database.Wrap(rawDB)).HourlyRequestCounts(context.Background(), []string{"key-1", "key-2", "key-1", ""}, since)
+	counts, err := NewRepository(database.Wrap(rawDB)).RequestCountsSince(context.Background(), []string{"key-1", "key-2", "key-1", ""}, since)
 	if err != nil {
 		t.Fatal(err)
 	}

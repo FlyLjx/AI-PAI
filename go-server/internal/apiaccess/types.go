@@ -6,7 +6,53 @@ const (
 	BillingModeAuto         = "auto"
 	BillingModeSubscription = "subscription"
 	BillingModeBalance      = "balance"
+
+	DynamicConcurrencyWindowMinute = "minute"
+	DynamicConcurrencyWindowHour   = "hour"
 )
+
+type DynamicConcurrencyConfig struct {
+	Enabled     bool   `json:"enabled"`
+	WindowValue int    `json:"windowValue"`
+	WindowUnit  string `json:"windowUnit"`
+	RequestStep int    `json:"requestStep"`
+	Increment   int    `json:"increment"`
+}
+
+func DefaultDynamicConcurrencyConfig() DynamicConcurrencyConfig {
+	return DynamicConcurrencyConfig{
+		Enabled:     true,
+		WindowValue: 1,
+		WindowUnit:  DynamicConcurrencyWindowHour,
+		RequestStep: 50,
+		Increment:   5,
+	}
+}
+
+func NormalizeDynamicConcurrencyConfig(config DynamicConcurrencyConfig) DynamicConcurrencyConfig {
+	defaults := DefaultDynamicConcurrencyConfig()
+	if config.WindowValue < 1 {
+		config.WindowValue = defaults.WindowValue
+	}
+	if config.WindowUnit != DynamicConcurrencyWindowMinute && config.WindowUnit != DynamicConcurrencyWindowHour {
+		config.WindowUnit = defaults.WindowUnit
+	}
+	if config.RequestStep < 1 {
+		config.RequestStep = defaults.RequestStep
+	}
+	if config.Increment < 1 {
+		config.Increment = defaults.Increment
+	}
+	return config
+}
+
+func (config DynamicConcurrencyConfig) Window() time.Duration {
+	config = NormalizeDynamicConcurrencyConfig(config)
+	if config.WindowUnit == DynamicConcurrencyWindowMinute {
+		return time.Duration(config.WindowValue) * time.Minute
+	}
+	return time.Duration(config.WindowValue) * time.Hour
+}
 
 type AccessKey struct {
 	ID                 string
@@ -28,7 +74,7 @@ type AccessKey struct {
 	FailedCount        int
 	ImageCount         int
 	LastError          *string
-	HourlyRequestCount int
+	WindowRequestCount int
 }
 
 type UsageLog struct {
@@ -63,6 +109,7 @@ type PublicAccessKey struct {
 	Status                  string  `json:"status"`
 	ConcurrencyLimit        int     `json:"concurrencyLimit"`
 	BaseConcurrencyLimit    int     `json:"baseConcurrencyLimit"`
+	WindowRequestCount      int     `json:"windowRequestCount"`
 	HourlyRequestCount      int     `json:"hourlyRequestCount"`
 	DynamicConcurrencyBonus int     `json:"dynamicConcurrencyBonus"`
 	BillingMode             string  `json:"billingMode"`
@@ -132,8 +179,13 @@ type AdminStats struct {
 }
 
 func ToPublicKey(key AccessKey) PublicAccessKey {
+	return ToPublicKeyWithConfig(key, DefaultDynamicConcurrencyConfig())
+}
+
+func ToPublicKeyWithConfig(key AccessKey, config DynamicConcurrencyConfig) PublicAccessKey {
+	config = NormalizeDynamicConcurrencyConfig(config)
 	baseConcurrency := normalizedConcurrencyLimit(key.ConcurrencyLimit)
-	dynamicBonus := DynamicConcurrencyBonus(key.HourlyRequestCount)
+	dynamicBonus := DynamicConcurrencyBonusWithConfig(key.WindowRequestCount, config)
 	return PublicAccessKey{
 		ID:                      key.ID,
 		UserID:                  key.UserID,
@@ -143,7 +195,8 @@ func ToPublicKey(key AccessKey) PublicAccessKey {
 		Status:                  key.Status,
 		ConcurrencyLimit:        baseConcurrency + dynamicBonus,
 		BaseConcurrencyLimit:    baseConcurrency,
-		HourlyRequestCount:      key.HourlyRequestCount,
+		WindowRequestCount:      key.WindowRequestCount,
+		HourlyRequestCount:      key.WindowRequestCount,
 		DynamicConcurrencyBonus: dynamicBonus,
 		BillingMode:             normalizedStoredBillingMode(key.BillingMode),
 		LastUsedAt:              formatTime(key.LastUsedAt),
@@ -159,14 +212,23 @@ func ToPublicKey(key AccessKey) PublicAccessKey {
 }
 
 func DynamicConcurrencyBonus(hourlyRequestCount int) int {
-	if hourlyRequestCount < 50 {
+	return DynamicConcurrencyBonusWithConfig(hourlyRequestCount, DefaultDynamicConcurrencyConfig())
+}
+
+func DynamicConcurrencyBonusWithConfig(requestCount int, config DynamicConcurrencyConfig) int {
+	config = NormalizeDynamicConcurrencyConfig(config)
+	if !config.Enabled || requestCount < config.RequestStep {
 		return 0
 	}
-	return (hourlyRequestCount / 50) * 5
+	return (requestCount / config.RequestStep) * config.Increment
 }
 
 func DynamicConcurrencyLimit(baseConcurrency int, hourlyRequestCount int) int {
-	return normalizedConcurrencyLimit(baseConcurrency) + DynamicConcurrencyBonus(hourlyRequestCount)
+	return DynamicConcurrencyLimitWithConfig(baseConcurrency, hourlyRequestCount, DefaultDynamicConcurrencyConfig())
+}
+
+func DynamicConcurrencyLimitWithConfig(baseConcurrency int, requestCount int, config DynamicConcurrencyConfig) int {
+	return normalizedConcurrencyLimit(baseConcurrency) + DynamicConcurrencyBonusWithConfig(requestCount, config)
 }
 
 func ToPublicLog(log UsageLog) PublicUsageLog {

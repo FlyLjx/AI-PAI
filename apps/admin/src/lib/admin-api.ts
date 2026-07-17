@@ -45,6 +45,14 @@ export type AdminIdentity = Pick<PortalUser, 'id' | 'email'> & { role: 'admin' }
 
 export type APIKeyBillingMode = 'balance' | 'subscription' | 'auto';
 
+export type DynamicConcurrencyConfig = {
+  enabled: boolean;
+  windowValue: number;
+  windowUnit: 'minute' | 'hour';
+  requestStep: number;
+  increment: number;
+};
+
 export type APIKey = {
   id: string;
   userId: string;
@@ -54,6 +62,7 @@ export type APIKey = {
   status: string;
   concurrencyLimit: number;
   baseConcurrencyLimit?: number;
+  windowRequestCount?: number;
   hourlyRequestCount?: number;
   dynamicConcurrencyBonus?: number;
   billingMode?: APIKeyBillingMode | null;
@@ -282,7 +291,7 @@ export const portalApi = {
   updatePlan: (id: string, input: Partial<Plan>) => api<Plan>(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deletePlan: (id: string) => api(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   recharges: (page = 1) => api<Record<string, unknown>[]>(`/api/recharge/orders${query({ page, pageSize: 30 })}`),
-  adminKeys: () => api<{ items: APIKey[]; stats: Record<string, number> }>('/api/admin/api-access/keys'),
+  adminKeys: () => api<{ items: APIKey[]; stats: Record<string, number>; dynamicConcurrency: DynamicConcurrencyConfig }>('/api/admin/api-access/keys'),
   updateAdminKey: (id: string, input: { status?: string; concurrencyLimit?: number }) => api<APIKey>(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   adminUsage: (page = 1) => api<UsageLog[]>(`/api/admin/api-access/logs${query({ page, pageSize: 30 })}`),

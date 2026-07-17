@@ -32,13 +32,14 @@ func (r *Router) settings(w http.ResponseWriter, req *http.Request) {
 		defer cancel()
 		data, err := settings.NewRepository(r.db).Update(ctx, input)
 		if err != nil {
-			if errors.Is(err, settings.ErrInvalidRechargeRate) {
+			if errors.Is(err, settings.ErrInvalidRechargeRate) || errors.Is(err, settings.ErrInvalidDynamicConcurrency) {
 				writeError(w, newAppError(http.StatusBadRequest, err.Error()))
 				return
 			}
 			writeError(w, err)
 			return
 		}
+		r.cacheDynamicConcurrencyConfig(dynamicConcurrencyConfigFromSettings(data))
 		writeJSON(w, http.StatusOK, map[string]any{"data": data})
 	default:
 		writeMethodNotAllowed(w)

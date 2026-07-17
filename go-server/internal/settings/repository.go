@@ -10,6 +10,7 @@ import (
 )
 
 var ErrInvalidRechargeRate = errors.New("充值比例必须大于 0")
+var ErrInvalidDynamicConcurrency = errors.New("动态并发配置不正确")
 
 type Repository struct {
 	db *database.DB
@@ -60,6 +61,24 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 			}
 			value = rate
 		}
+		if key == "dynamicConcurrencyEnabled" {
+			if _, ok := value.(bool); !ok {
+				return nil, ErrInvalidDynamicConcurrency
+			}
+		}
+		if key == "dynamicConcurrencyWindowUnit" {
+			unit, ok := value.(string)
+			if !ok || (unit != "minute" && unit != "hour") {
+				return nil, ErrInvalidDynamicConcurrency
+			}
+		}
+		if key == "dynamicConcurrencyWindowValue" || key == "dynamicConcurrencyRequestStep" || key == "dynamicConcurrencyIncrement" {
+			number, ok := numericSettingValue(value)
+			if !ok || number < 1 || number > 1000000 || math.Trunc(number) != number || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, ErrInvalidDynamicConcurrency
+			}
+			value = number
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO system_settings (setting_key, setting_value)
 			VALUES (?, ?)
@@ -101,7 +120,14 @@ func parseValue(key string, value string) any {
 		if key == "rechargeRate" && number <= 0 {
 			return Defaults[key]
 		}
+		if (key == "dynamicConcurrencyWindowValue" || key == "dynamicConcurrencyRequestStep" || key == "dynamicConcurrencyIncrement") &&
+			(number < 1 || number > 1000000 || math.Trunc(number) != number) {
+			return Defaults[key]
+		}
 		return number
+	}
+	if key == "dynamicConcurrencyWindowUnit" && value != "minute" && value != "hour" {
+		return Defaults[key]
 	}
 	return value
 }

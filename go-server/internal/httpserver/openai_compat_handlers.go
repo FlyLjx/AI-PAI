@@ -278,17 +278,21 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 }
 
 func (r *Router) dynamicAPIKeyConcurrencyLimit(key apiaccess.AccessKey) int {
-	baseLimit := apiaccess.DynamicConcurrencyLimit(key.ConcurrencyLimit, 0)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	hourlyRequestCount, err := apiaccess.NewRepository(r.db).HourlyRequestCount(ctx, key.ID, time.Now().Add(-time.Hour))
+	config := r.dynamicConcurrencyConfig(ctx)
+	baseLimit := apiaccess.DynamicConcurrencyLimitWithConfig(key.ConcurrencyLimit, 0, config)
+	if !config.Enabled {
+		return baseLimit
+	}
+	windowRequestCount, err := apiaccess.NewRepository(r.db).RequestCountSince(ctx, key.ID, time.Now().Add(-config.Window()))
 	if err != nil {
 		if r.logger != nil {
 			r.logger.Warn("dynamic API key concurrency lookup failed", "apiKeyId", key.ID, "error", err)
 		}
 		return baseLimit
 	}
-	return apiaccess.DynamicConcurrencyLimit(key.ConcurrencyLimit, hourlyRequestCount)
+	return apiaccess.DynamicConcurrencyLimitWithConfig(key.ConcurrencyLimit, windowRequestCount, config)
 }
 
 func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string) compatTaskResult {

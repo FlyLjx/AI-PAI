@@ -32,3 +32,18 @@ func TestRechargeSettingsRemainAvailable(t *testing.T) {
 		t.Fatalf("default recharge rate = %v, want 10", Defaults["rechargeRate"])
 	}
 }
+
+func TestDynamicConcurrencyDefaults(t *testing.T) {
+	want := Settings{
+		"dynamicConcurrencyEnabled":     true,
+		"dynamicConcurrencyWindowValue": float64(1),
+		"dynamicConcurrencyWindowUnit":  "hour",
+		"dynamicConcurrencyRequestStep": float64(50),
+		"dynamicConcurrencyIncrement":   float64(5),
+	}
+	for key, value := range want {
+		if Defaults[key] != value {
+			t.Fatalf("Defaults[%s] = %v, want %v", key, Defaults[key], value)
+		}
+	}
+}

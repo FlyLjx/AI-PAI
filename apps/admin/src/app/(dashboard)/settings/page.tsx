@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CreditCard, Loader2, Mail, RefreshCw, Save, Server, ShieldCheck } from 'lucide-react';
+import { CreditCard, Gauge, Loader2, Mail, RefreshCw, Save, Server, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
+import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SystemUpdatePanel } from '@/components/settings/SystemUpdatePanel';
 import { portalApi } from '@/lib/admin-api';
@@ -15,6 +16,11 @@ type SettingsForm = {
   registerMode: 'open' | 'closed';
   registerEmailVerification: boolean;
   taskTimeoutMinutes: number;
+  dynamicConcurrencyEnabled: boolean;
+  dynamicConcurrencyWindowValue: number;
+  dynamicConcurrencyWindowUnit: 'minute' | 'hour';
+  dynamicConcurrencyRequestStep: number;
+  dynamicConcurrencyIncrement: number;
   rechargeRate: number;
   alipayAppId: string;
   alipayGateway: string;
@@ -36,6 +42,11 @@ const emptySettings: SettingsForm = {
   registerMode: 'open',
   registerEmailVerification: false,
   taskTimeoutMinutes: 3,
+  dynamicConcurrencyEnabled: true,
+  dynamicConcurrencyWindowValue: 1,
+  dynamicConcurrencyWindowUnit: 'hour',
+  dynamicConcurrencyRequestStep: 50,
+  dynamicConcurrencyIncrement: 5,
   rechargeRate: 10,
   alipayAppId: '',
   alipayGateway: 'https://openapi.alipay.com/gateway.do',
@@ -49,6 +60,16 @@ const emptySettings: SettingsForm = {
   emailFromAddress: '',
 };
 
+const DYNAMIC_WINDOW_UNIT_OPTIONS = [
+  { value: 'minute', label: '分钟' },
+  { value: 'hour', label: '小时' },
+] as const;
+
+function positiveInteger(value: unknown, fallback: number) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 function normalizeSettings(data: Record<string, unknown>): SettingsForm {
   const rechargeRate = Number(data.rechargeRate);
   return {
@@ -58,7 +79,12 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     backendUrl: String(data.backendUrl || ''),
     registerMode: data.registerMode === 'closed' ? 'closed' : 'open',
     registerEmailVerification: Boolean(data.registerEmailVerification),
-    taskTimeoutMinutes: Number(data.taskTimeoutMinutes || 3),
+    taskTimeoutMinutes: positiveInteger(data.taskTimeoutMinutes, 3),
+    dynamicConcurrencyEnabled: data.dynamicConcurrencyEnabled !== false,
+    dynamicConcurrencyWindowValue: positiveInteger(data.dynamicConcurrencyWindowValue, 1),
+    dynamicConcurrencyWindowUnit: data.dynamicConcurrencyWindowUnit === 'minute' ? 'minute' : 'hour',
+    dynamicConcurrencyRequestStep: positiveInteger(data.dynamicConcurrencyRequestStep, 50),
+    dynamicConcurrencyIncrement: positiveInteger(data.dynamicConcurrencyIncrement, 5),
     rechargeRate: Number.isFinite(rechargeRate) && rechargeRate > 0 ? rechargeRate : 10,
     alipayAppId: String(data.alipayAppId || ''),
     alipayGateway: String(data.alipayGateway || 'https://openapi.alipay.com/gateway.do'),
@@ -112,6 +138,9 @@ export default function AdminSettingsPage() {
     event.preventDefault();
     if (!form.siteName.trim() || !form.logoText.trim()) return toast.error('请填写站点名称和 Logo 文字');
     if (form.taskTimeoutMinutes < 1) return toast.error('API 请求超时至少 1 分钟');
+    if (!Number.isSafeInteger(form.dynamicConcurrencyWindowValue) || form.dynamicConcurrencyWindowValue < 1) return toast.error('动态并发统计窗口必须是大于 0 的整数');
+    if (!Number.isSafeInteger(form.dynamicConcurrencyRequestStep) || form.dynamicConcurrencyRequestStep < 1) return toast.error('每档调用次数必须是大于 0 的整数');
+    if (!Number.isSafeInteger(form.dynamicConcurrencyIncrement) || form.dynamicConcurrencyIncrement < 1) return toast.error('每档增加并发必须是大于 0 的整数');
     if (!Number.isFinite(form.rechargeRate) || form.rechargeRate <= 0) return toast.error('充值比例必须大于 0');
     setSaving(true);
     try {
@@ -162,11 +191,12 @@ export default function AdminSettingsPage() {
         <div className="grid min-h-[320px] place-items-center rounded-md border border-[#DCE4DF] bg-white"><Loader2 className="h-6 w-6 animate-spin text-[#12B76A]" /></div>
       ) : (
         <form onSubmit={save} className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white">
-          <div className="grid grid-cols-2 gap-px border-b border-[#DCE4DF] bg-[#E8ECE9] lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-px border-b border-[#DCE4DF] bg-[#E8ECE9] lg:grid-cols-5">
             {[
               ['注册状态', form.registerMode === 'open' ? '开放注册' : '关闭注册', form.registerMode === 'open'],
               ['邮箱验证', form.registerEmailVerification ? '必须验证' : '不强制', form.registerEmailVerification],
               ['邮件服务', form.emailEnabled ? '已启用' : '已停用', form.emailEnabled],
+              ['动态并发', form.dynamicConcurrencyEnabled ? '已启用' : '已停用', form.dynamicConcurrencyEnabled],
               ['支付配置', form.alipayAppId && alipayPrivateKeyConfigured && form.alipayPublicKey ? '配置完整' : '待完善', Boolean(form.alipayAppId && alipayPrivateKeyConfigured && form.alipayPublicKey)],
             ].map(([label, value, active]) => <div key={String(label)} className="bg-[#FAFBFA] px-4 py-3"><span className="block text-[10px] font-semibold text-zinc-400">{label}</span><strong className={`mt-1 block text-xs ${active ? 'text-[#047857]' : 'text-zinc-600'}`}>{value}</strong></div>)}
           </div>
@@ -187,6 +217,20 @@ export default function AdminSettingsPage() {
               <div className="flex items-center gap-2 border-b border-[#DCE4DF] pb-2.5"><ShieldCheck className="h-4 w-4 text-[#0891B2]" /><div><h2 className="text-xs font-semibold">注册与账户</h2><p className="mt-0.5 text-[10px] text-zinc-400">API 客户开户规则</p></div></div>
               <label className="flex items-center justify-between gap-4 rounded-md border border-[#DCE4DF] p-3"><span><strong className="block text-[11px]">开放用户注册</strong><small className="mt-0.5 block text-[10px] text-zinc-400">关闭后仅管理员可创建 API 客户</small></span><input type="checkbox" checked={form.registerMode === 'open'} onChange={(event) => updateField('registerMode', event.target.checked ? 'open' : 'closed')} className="h-4 w-4 accent-[#047857]" /></label>
               <label className="flex items-center justify-between gap-4 rounded-md border border-[#DCE4DF] p-3"><span><strong className="block text-[11px]">注册邮箱验证</strong><small className="mt-0.5 block text-[10px] text-zinc-400">启用后须验证邮箱才能完成开户</small></span><input type="checkbox" checked={form.registerEmailVerification} onChange={(event) => updateField('registerEmailVerification', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
+            </section>
+
+            <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:col-span-2">
+              <div className="flex items-center justify-between gap-4 border-b border-[#DCE4DF] pb-2.5">
+                <div className="flex items-center gap-2"><Gauge className="h-4 w-4 text-[#2563EB]" /><div><h2 className="text-xs font-semibold">动态并发</h2><p className="mt-0.5 text-[10px] text-zinc-400">按每个 API Key 在滚动时间窗口内的调用量自动扩容</p></div></div>
+                <label className="flex shrink-0 items-center gap-2 text-[11px] font-semibold text-zinc-500"><input type="checkbox" checked={form.dynamicConcurrencyEnabled} onChange={(event) => updateField('dynamicConcurrencyEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />启用</label>
+              </div>
+              <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 ${form.dynamicConcurrencyEnabled ? '' : 'opacity-50'}`}>
+                <div><label htmlFor="dynamic-concurrency-window"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">滚动统计窗口</span></label><div className="grid grid-cols-[minmax(0,1fr)_110px] gap-2"><input id="dynamic-concurrency-window" disabled={!form.dynamicConcurrencyEnabled} min={1} max={1000000} step={1} type="number" value={form.dynamicConcurrencyWindowValue} onChange={(event) => updateField('dynamicConcurrencyWindowValue', Number(event.target.value))} className="min-w-0 rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /><AppSelect disabled={!form.dynamicConcurrencyEnabled} value={form.dynamicConcurrencyWindowUnit} options={DYNAMIC_WINDOW_UNIT_OPTIONS} onValueChange={(value) => updateField('dynamicConcurrencyWindowUnit', value as 'minute' | 'hour')} ariaLabel="动态并发统计窗口单位" /></div></div>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">每档调用次数</span><input disabled={!form.dynamicConcurrencyEnabled} min={1} max={1000000} step={1} type="number" value={form.dynamicConcurrencyRequestStep} onChange={(event) => updateField('dynamicConcurrencyRequestStep', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">每档增加并发</span><input disabled={!form.dynamicConcurrencyEnabled} min={1} max={1000000} step={1} type="number" value={form.dynamicConcurrencyIncrement} onChange={(event) => updateField('dynamicConcurrencyIncrement', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
+                <div><span className="mb-1 block text-[11px] font-semibold text-zinc-500">当前规则</span><p className="flex min-h-[34px] items-center rounded-md bg-[#F6F8F6] px-3 text-[11px] text-zinc-600">{form.dynamicConcurrencyEnabled ? `${form.dynamicConcurrencyWindowValue} ${form.dynamicConcurrencyWindowUnit === 'minute' ? '分钟' : '小时'}内每调用 ${form.dynamicConcurrencyRequestStep} 次，并发 +${form.dynamicConcurrencyIncrement}` : '仅使用各 Key 的基础并发'}</p></div>
+              </div>
+              <p className="text-[10px] text-zinc-400">动态并发不设上限。每个 Key 的基础并发仍可在“API 调用”页面单独调整。</p>
             </section>
 
             <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:border-b-0 xl:border-r">

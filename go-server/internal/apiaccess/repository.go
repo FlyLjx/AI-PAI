@@ -205,7 +205,7 @@ func (r *Repository) MarkUsed(ctx context.Context, id string) error {
 	return err
 }
 
-func (r *Repository) HourlyRequestCount(ctx context.Context, apiKeyID string, since time.Time) (int, error) {
+func (r *Repository) RequestCountSince(ctx context.Context, apiKeyID string, since time.Time) (int, error) {
 	var count int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
@@ -215,7 +215,7 @@ func (r *Repository) HourlyRequestCount(ctx context.Context, apiKeyID string, si
 	return count, err
 }
 
-func (r *Repository) HourlyRequestCounts(ctx context.Context, apiKeyIDs []string, since time.Time) (map[string]int, error) {
+func (r *Repository) RequestCountsSince(ctx context.Context, apiKeyIDs []string, since time.Time) (map[string]int, error) {
 	ids := make([]string, 0, len(apiKeyIDs))
 	seen := map[string]bool{}
 	for _, id := range apiKeyIDs {

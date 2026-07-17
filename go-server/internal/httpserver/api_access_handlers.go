@@ -165,7 +165,10 @@ func (r *Router) listUserAPIAccessKeys(w http.ResponseWriter, req *http.Request)
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	items, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).ListUserKeys(ctx, userID)
+	config := r.dynamicConcurrencyConfig(ctx)
+	items, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).
+		WithDynamicConcurrencyConfig(config).
+		ListUserKeys(ctx, userID)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -286,7 +289,10 @@ func (r *Router) adminAPIAccessKeys(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	repo := apiaccess.NewRepository(r.db)
-	items, err := apiaccess.NewService(repo, users.NewRepository(r.db)).ListAllKeys(ctx)
+	config := r.dynamicConcurrencyConfig(ctx)
+	items, err := apiaccess.NewService(repo, users.NewRepository(r.db)).
+		WithDynamicConcurrencyConfig(config).
+		ListAllKeys(ctx)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -296,7 +302,11 @@ func (r *Router) adminAPIAccessKeys(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"items": items, "stats": stats}})
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+		"items":              items,
+		"stats":              stats,
+		"dynamicConcurrency": config,
+	}})
 }
 
 func (r *Router) adminAPIAccessKeyByID(w http.ResponseWriter, req *http.Request) {

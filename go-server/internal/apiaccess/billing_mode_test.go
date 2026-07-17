@@ -91,9 +91,37 @@ func TestDynamicConcurrencyLimit(t *testing.T) {
 	}
 }
 
+func TestDynamicConcurrencyCustomConfig(t *testing.T) {
+	config := DynamicConcurrencyConfig{
+		Enabled:     true,
+		WindowValue: 10,
+		WindowUnit:  DynamicConcurrencyWindowMinute,
+		RequestStep: 20,
+		Increment:   3,
+	}
+	if config.Window() != 10*time.Minute {
+		t.Fatalf("window = %s, want 10m", config.Window())
+	}
+	if got := DynamicConcurrencyLimitWithConfig(10, 40, config); got != 16 {
+		t.Fatalf("custom limit = %d, want 16", got)
+	}
+	config.Enabled = false
+	if got := DynamicConcurrencyLimitWithConfig(10, 1000, config); got != 10 {
+		t.Fatalf("disabled limit = %d, want 10", got)
+	}
+}
+
+func TestDynamicConcurrencyHourWindow(t *testing.T) {
+	config := DefaultDynamicConcurrencyConfig()
+	config.WindowValue = 2
+	if config.Window() != 2*time.Hour {
+		t.Fatalf("window = %s, want 2h", config.Window())
+	}
+}
+
 func TestToPublicKeyExposesDynamicConcurrency(t *testing.T) {
-	public := ToPublicKey(AccessKey{ConcurrencyLimit: 10, HourlyRequestCount: 100})
-	if public.BaseConcurrencyLimit != 10 || public.DynamicConcurrencyBonus != 10 || public.ConcurrencyLimit != 20 || public.HourlyRequestCount != 100 {
+	public := ToPublicKey(AccessKey{ConcurrencyLimit: 10, WindowRequestCount: 100})
+	if public.BaseConcurrencyLimit != 10 || public.DynamicConcurrencyBonus != 10 || public.ConcurrencyLimit != 20 || public.WindowRequestCount != 100 || public.HourlyRequestCount != 100 {
 		t.Fatalf("unexpected dynamic concurrency fields: %#v", public)
 	}
 }
