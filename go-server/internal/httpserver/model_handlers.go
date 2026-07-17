@@ -59,6 +59,38 @@ func (r *Router) listModels(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
+func (r *Router) publicModelPrices(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	items, err := models.NewRepository(r.db).FindAll(ctx)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"data": customerPricingModels(items)})
+}
+
+func customerPricingModels(items []models.Model) []models.PublicPricingModel {
+	imageModels := make([]models.Model, 0, len(items))
+	for _, item := range items {
+		if item.Capability != "chat_image" || isTextOnlyChatModel(item.ModelName, item.DisplayName) {
+			continue
+		}
+		imageModels = append(imageModels, item)
+	}
+	unique := uniqueCompatModels(imageModels)
+	result := make([]models.PublicPricingModel, 0, len(unique))
+	for _, item := range unique {
+		result = append(result, models.ToPublicPricing(item))
+	}
+	return result
+}
+
 func (r *Router) modelByID(w http.ResponseWriter, req *http.Request) {
 	path := strings.Trim(strings.TrimPrefix(req.URL.Path, "/api/models/"), "/")
 	if path == "sync" && req.Method == http.MethodPost {

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
-  Activity, BookOpen, ChevronRight, HeartPulse, KeyRound, LayoutDashboard,
+  Activity, BadgeDollarSign, BookOpen, ChevronRight, HeartPulse, KeyRound, LayoutDashboard,
   Images, LoaderCircle, LogOut, MailWarning, Menu, Send, Settings, WalletCards, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -116,6 +116,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     { label: '生图台', href: '/playground', icon: Images },
     { label: 'API Key', href: '/api-keys', icon: KeyRound },
     { label: '用量记录', href: '/usage', icon: Activity },
+    { label: '模型价目', href: '/prices', icon: BadgeDollarSign },
     { label: '计费中心', href: '/billing', icon: WalletCards },
     { label: '接口状态', href: '/status', icon: HeartPulse },
     { label: 'API 文档', href: '/docs', icon: BookOpen },

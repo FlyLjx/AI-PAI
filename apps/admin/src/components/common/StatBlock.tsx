@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { LucideIcon } from 'lucide-react';
+import { ArrowDownRight, ArrowUpRight, LucideIcon, Minus } from 'lucide-react';
 
 interface StatBlockProps {
   title: string;
@@ -10,6 +10,7 @@ interface StatBlockProps {
   trend?: {
     value: string;
     type: 'positive' | 'negative' | 'neutral';
+    label?: string;
   };
   icon?: LucideIcon;
   color?: 'green' | 'cyan' | 'amber' | 'neutral';
@@ -46,6 +47,7 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
   };
 
   const { iconBg, accentBar, hoverBorder } = getColorClasses();
+  const TrendIcon = trend?.type === 'positive' ? ArrowUpRight : trend?.type === 'negative' ? ArrowDownRight : Minus;
 
   return (
     <div className={`group bg-white border border-[#DCE4DF] rounded-md overflow-hidden flex flex-col justify-between shadow-sm hover:shadow-md ${hoverBorder} transition-all duration-300 relative`}>
@@ -71,19 +73,22 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
         </div>
 
         {(subtext || trend) && (
-          <div className="mt-3 pt-2.5 border-t border-[#F6F8F6] flex items-center gap-1.5 text-[11px]">
-            {trend && (
-              <span className={`font-bold font-mono px-1.5 py-0.5 rounded ${
-                trend.type === 'positive' ? 'bg-[#12B76A]/8 text-[#12B76A]' :
-                trend.type === 'negative' ? 'bg-[#DC2626]/8 text-[#DC2626]' : 'bg-[#D97706]/8 text-[#D97706]'
-              }`}>
-                {trend.type === 'positive' && '+'}
-                {trend.value}
+          <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-[#F6F8F6] pt-2.5 text-[11px]">
+            {subtext && (
+              <span className="min-w-0 flex-1 truncate font-medium text-zinc-400">
+                {subtext}
               </span>
             )}
-            {subtext && (
-              <span className="text-zinc-400 font-medium truncate">
-                {subtext}
+            {trend && (
+              <span className="inline-flex shrink-0 items-center gap-1" aria-label={`${trend.label || '较昨日'} ${trend.value}`}>
+                <span className="text-zinc-400">{trend.label || '较昨日'}</span>
+                <span className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 font-mono font-bold ${
+                  trend.type === 'positive' ? 'bg-[#12B76A]/8 text-[#079455]' :
+                  trend.type === 'negative' ? 'bg-[#DC2626]/8 text-[#DC2626]' : 'bg-zinc-100 text-zinc-500'
+                }`}>
+                  <TrendIcon className="h-3 w-3" aria-hidden="true" />
+                  {trend.value}
+                </span>
               </span>
             )}
           </div>

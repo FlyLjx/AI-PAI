@@ -63,6 +63,10 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	yesterdayUsers, err := r.count(ctx, `SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE()`)
+	if err != nil {
+		return nil, err
+	}
 	orderTotals := map[string]int{"all": 0, "paid": 0, "pending": 0, "closed": 0, "failed": 0}
 	orderRows, err := r.db.QueryContext(ctx, `SELECT status, COUNT(*) FROM recharge_orders GROUP BY status`)
 	if err != nil {
@@ -87,16 +91,42 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 		return nil, err
 	}
 	todayOrders := 0
-	_ = r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM recharge_orders WHERE created_at >= CURDATE()`).Scan(&todayOrders)
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM recharge_orders WHERE created_at >= CURDATE()`).Scan(&todayOrders); err != nil {
+		return nil, err
+	}
+	yesterdayOrders := 0
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM recharge_orders WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE()`).Scan(&yesterdayOrders); err != nil {
+		return nil, err
+	}
 	var todayPaidAmount float64
-	_ = r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM recharge_orders WHERE status='paid' AND paid_at >= CURDATE()`).Scan(&todayPaidAmount)
-	var todayTasks, todayRunning, todayFailed int
-	_ = r.db.QueryRowContext(ctx, `
+	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM recharge_orders WHERE status='paid' AND paid_at >= CURDATE()`).Scan(&todayPaidAmount); err != nil {
+		return nil, err
+	}
+	var yesterdayPaidAmount float64
+	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM recharge_orders WHERE status='paid' AND paid_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND paid_at < CURDATE()`).Scan(&yesterdayPaidAmount); err != nil {
+		return nil, err
+	}
+	var todayTasks, todayRunning, todayFailed, todaySuccess int
+	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
 			COALESCE(SUM(status IN ('queued','pending','processing')),0),
-			COALESCE(SUM(status IN ('failed','canceled')),0)
+			COALESCE(SUM(status IN ('failed','canceled')),0),
+			COALESCE(SUM(status='success'),0)
 		FROM generation_tasks WHERE created_at >= CURDATE()
-	`).Scan(&todayTasks, &todayRunning, &todayFailed)
+	`).Scan(&todayTasks, &todayRunning, &todayFailed, &todaySuccess); err != nil {
+		return nil, err
+	}
+	var yesterdayTasks, yesterdayRunning, yesterdayFailed, yesterdaySuccess int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+			COALESCE(SUM(status IN ('queued','pending','processing')),0),
+			COALESCE(SUM(status IN ('failed','canceled')),0),
+			COALESCE(SUM(status='success'),0)
+		FROM generation_tasks
+		WHERE created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE()
+	`).Scan(&yesterdayTasks, &yesterdayRunning, &yesterdayFailed, &yesterdaySuccess); err != nil {
+		return nil, err
+	}
 	pendingOrders, _ := r.count(ctx, `SELECT COUNT(*) FROM recharge_orders WHERE status='pending'`)
 	runningTasks, _ := r.count(ctx, `SELECT COUNT(*) FROM generation_tasks WHERE status IN ('queued','pending','processing')`)
 	recentFailed, _ := r.count(ctx, `SELECT COUNT(*) FROM generation_tasks WHERE status IN ('failed','canceled') AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)`)
@@ -164,6 +194,12 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	result["today"] = map[string]any{
 		"users": todayUsers, "orders": todayOrders, "paidAmount": todayPaidAmount,
 		"tasks": todayTasks, "runningTasks": todayRunning, "failedTasks": todayFailed,
+		"successfulTasks": todaySuccess,
+	}
+	result["yesterday"] = map[string]any{
+		"users": yesterdayUsers, "orders": yesterdayOrders, "paidAmount": yesterdayPaidAmount,
+		"tasks": yesterdayTasks, "runningTasks": yesterdayRunning, "failedTasks": yesterdayFailed,
+		"successfulTasks": yesterdaySuccess,
 	}
 	result["users"] = map[string]any{
 		"total": totalUsers, "active": activeUsers,

@@ -71,6 +71,16 @@ type DashboardData = {
     tasks?: number;
     runningTasks?: number;
     failedTasks?: number;
+    successfulTasks?: number;
+  };
+  yesterday?: {
+    users?: number;
+    orders?: number;
+    paidAmount?: number;
+    tasks?: number;
+    runningTasks?: number;
+    failedTasks?: number;
+    successfulTasks?: number;
   };
   users?: { total?: number; active?: number };
   orders?: { all?: number; paid?: number; pending?: number; failed?: number; closed?: number };
@@ -122,6 +132,29 @@ function durationLabel(value: number | undefined): string {
   if (seconds < 60) return `${seconds.toFixed(1)}秒`;
   const minutes = Math.floor(seconds / 60);
   return `${minutes}分${Math.round(seconds % 60)}秒`;
+}
+
+function dayOverDayTrend(currentValue: number | null, previousValue: number | null) {
+  if (currentValue === null || previousValue === null || !Number.isFinite(currentValue) || !Number.isFinite(previousValue)) {
+    return { value: '--', type: 'neutral' as const, label: '今日较昨日' };
+  }
+  if (previousValue === 0) {
+    if (currentValue === 0) return { value: '0%', type: 'neutral' as const, label: '今日较昨日' };
+    return { value: '新增', type: 'positive' as const, label: '今日较昨日' };
+  }
+  const change = ((currentValue - previousValue) / Math.abs(previousValue)) * 100;
+  const rounded = Math.round(Math.abs(change) * 10) / 10;
+  const value = `${rounded.toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%`;
+  if (change > 0) return { value: `+${value}`, type: 'positive' as const, label: '今日较昨日' };
+  if (change < 0) return { value: `-${value}`, type: 'negative' as const, label: '今日较昨日' };
+  return { value, type: 'neutral' as const, label: '今日较昨日' };
+}
+
+function dailySuccessRate(success: number | undefined, failed: number | undefined): number | null {
+  const successCount = Number(success || 0);
+  const failedCount = Number(failed || 0);
+  const completed = successCount + failedCount;
+  return completed > 0 ? (successCount / completed) * 100 : null;
 }
 
 function statusView(status = '') {
@@ -191,6 +224,13 @@ export default function AdminDashboardPage() {
   const failed = Number(stats.failed || 0) + Number(stats.canceled || 0);
   const completed = successful + failed;
   const successRate = completed ? Math.round((successful / completed) * 100) : 100;
+  const revenueTrend = dayOverDayTrend(Number(data.today?.paidAmount || 0), Number(data.yesterday?.paidAmount || 0));
+  const requestTrend = dayOverDayTrend(Number(data.today?.tasks || 0), Number(data.yesterday?.tasks || 0));
+  const successRateTrend = dayOverDayTrend(
+    dailySuccessRate(data.today?.successfulTasks, data.today?.failedTasks),
+    dailySuccessRate(data.yesterday?.successfulTasks, data.yesterday?.failedTasks),
+  );
+  const customerTrend = dayOverDayTrend(Number(data.today?.users || 0), Number(data.yesterday?.users || 0));
   const pendingCount = Number(data.pending?.runningTasks || 0) + Number(data.pending?.pendingOrders || 0);
   const recentOrders = data.recentOrders || [];
   const recentTasks = data.recentTasks || [];
@@ -295,10 +335,10 @@ export default function AdminDashboardPage() {
           </section>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <StatBlock title="今日实收" value={formatCNY(Number(data.today?.paidAmount || 0))} subtext={`${Number(data.today?.orders || 0)} 笔充值/订阅订单`} color="green" icon={CircleDollarSign} />
-            <StatBlock title="累计 API 请求" value={Number(stats.total || 0).toLocaleString('zh-CN')} subtext={`今日 ${Number(data.today?.tasks || 0).toLocaleString('zh-CN')} 次`} color="cyan" icon={Activity} />
-            <StatBlock title="请求成功率" value={`${successRate}%`} subtext={`累计返回 ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张图片`} color={successRate >= 95 ? 'green' : 'amber'} icon={Cable} />
-            <StatBlock title="API 客户" value={Number(data.users?.total || 0).toLocaleString('zh-CN')} subtext={`启用 ${Number(data.users?.active || 0)}，今日新增 ${Number(data.today?.users || 0)}`} color="neutral" icon={Users} />
+            <StatBlock title="今日实收" value={formatCNY(Number(data.today?.paidAmount || 0))} subtext={`${Number(data.today?.orders || 0)} 笔充值/订阅订单`} trend={revenueTrend} color="green" icon={CircleDollarSign} />
+            <StatBlock title="累计 API 请求" value={Number(stats.total || 0).toLocaleString('zh-CN')} subtext={`今日 ${Number(data.today?.tasks || 0).toLocaleString('zh-CN')} 次`} trend={requestTrend} color="cyan" icon={Activity} />
+            <StatBlock title="请求成功率" value={`${successRate}%`} subtext={`累计返回 ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张图片`} trend={successRateTrend} color={successRate >= 95 ? 'green' : 'amber'} icon={Cable} />
+            <StatBlock title="API 客户" value={Number(data.users?.total || 0).toLocaleString('zh-CN')} subtext={`启用 ${Number(data.users?.active || 0)}，今日新增 ${Number(data.today?.users || 0)}`} trend={customerTrend} color="neutral" icon={Users} />
           </div>
 
           <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="upstream-status-title">

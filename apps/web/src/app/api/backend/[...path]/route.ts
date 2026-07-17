@@ -5,6 +5,7 @@ type Rule = { pattern: RegExp; methods: string[] };
 
 const CUSTOMER_ROUTES: Rule[] = [
   { pattern: /^\/api\/settings\/public$/, methods: ['GET'] },
+  { pattern: /^\/api\/models\/pricing$/, methods: ['GET'] },
   { pattern: /^\/api\/users\/(login|register|verify-email|verify-email-change)$/, methods: ['POST'] },
   { pattern: /^\/api\/users\/password\/(forgot|reset)$/, methods: ['POST'] },
   { pattern: /^\/api\/users\/[^/]+\/profile$/, methods: ['GET'] },

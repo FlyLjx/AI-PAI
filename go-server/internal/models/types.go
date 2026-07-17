@@ -55,6 +55,17 @@ type PublicModel struct {
 	UpdatedAt          string   `json:"updatedAt"`
 }
 
+type PublicPricingModel struct {
+	ID               string   `json:"id"`
+	DisplayName      string   `json:"displayName"`
+	Price1K          float64  `json:"price1k"`
+	Price2K          float64  `json:"price2k"`
+	Price4K          float64  `json:"price4k"`
+	EnabledSizeTiers []string `json:"enabledSizeTiers"`
+	SortOrder        int      `json:"sortOrder"`
+	UpdatedAt        string   `json:"updatedAt"`
+}
+
 func ToPublic(model Model) PublicModel {
 	return PublicModel{
 		ID:                 model.ID,
@@ -79,6 +90,19 @@ func ToPublic(model Model) PublicModel {
 		Status:             model.Status,
 		CreatedAt:          model.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:          model.UpdatedAt.Format(time.RFC3339),
+	}
+}
+
+func ToPublicPricing(model Model) PublicPricingModel {
+	return PublicPricingModel{
+		ID:               model.DisplayName,
+		DisplayName:      model.DisplayName,
+		Price1K:          model.Price1K,
+		Price2K:          model.Price2K,
+		Price4K:          model.Price4K,
+		EnabledSizeTiers: ParseEnabledSizeTiersFromStrings(model.EnabledSizeTiers),
+		SortOrder:        model.SortOrder,
+		UpdatedAt:        model.UpdatedAt.Format(time.RFC3339),
 	}
 }
 

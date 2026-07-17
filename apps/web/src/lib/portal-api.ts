@@ -88,6 +88,17 @@ export type CompatibleModel = {
   enabled_size_tiers?: Array<'1k' | '2k' | '4k'>;
 };
 
+export type PricingModel = {
+  id: string;
+  displayName: string;
+  price1k: number;
+  price2k: number;
+  price4k: number;
+  enabledSizeTiers: Array<'1k' | '2k' | '4k'>;
+  sortOrder: number;
+  updatedAt: string;
+};
+
 export type ImageGenerationInput = {
   model: string;
   prompt: string;
@@ -362,6 +373,7 @@ async function openAIRequest<T>(path: string, apiKey: string, options: RequestIn
 
 export const portalApi = {
   publicSettings: () => api<Record<string, unknown>>('/api/settings/public'),
+  pricingModels: () => api<PricingModel[]>('/api/models/pricing'),
   listKeys: (user: PortalUser) => api<APIKey[]>(`/api/api-access/keys${query({ userId: user.id })}`, {}, user.token),
   createKey: (user: PortalUser, name: string, billingMode: SelectableAPIKeyBillingMode) => api<APIKey>('/api/api-access/keys', { method: 'POST', body: JSON.stringify({ userId: user.id, name, billingMode }) }, user.token),
   revealKey: (user: PortalUser, id: string) => api<{ key: string }>(`/api/api-access/keys/${encodeURIComponent(id)}/reveal`, { method: 'POST' }, user.token),

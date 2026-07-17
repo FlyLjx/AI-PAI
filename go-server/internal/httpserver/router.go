@@ -80,6 +80,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/api-providers", r.listProviders)
 	r.mux.HandleFunc("/api/api-providers/", r.providerByID)
 	r.mux.HandleFunc("/api/models", r.listModels)
+	r.mux.HandleFunc("/api/models/pricing", r.publicModelPrices)
 	r.mux.HandleFunc("/api/models/", r.modelByID)
 	r.mux.HandleFunc("/api/api-access/keys", r.userAPIAccessKeys)
 	r.mux.HandleFunc("/api/api-access/keys/", r.userAPIAccessKeyByID)
