@@ -367,7 +367,7 @@ button { cursor: pointer; }
   .mobile-drawer .nav-item { grid-template-columns: 20px minmax(0, 1fr); border: 1px solid #edf0ee; }
   .mobile-logout { min-height: 38px; display: flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid #ffd6d6; border-radius: 7px; background: #fff7f7; color: #b42318; font-size: 12px; font-weight: 700; }
   .app-main { padding: 18px 13px 86px; }
-  .bottom-nav { position: fixed; inset: auto 0 0; z-index: 40; height: 60px; display: grid; grid-template-columns: repeat(4, 1fr); border-top: 1px solid #e5e7eb; background: rgba(255,255,255,.98); padding-bottom: env(safe-area-inset-bottom, 0); }
+  .bottom-nav { position: fixed; inset: auto 0 0; z-index: 40; height: 60px; display: grid; grid-template-columns: repeat(5, 1fr); border-top: 1px solid #e5e7eb; background: rgba(255,255,255,.98); padding-bottom: env(safe-area-inset-bottom, 0); }
   .bottom-nav a { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: #7d8781; font-size: 10px; font-weight: 650; text-decoration: none; }
   .bottom-nav a.is-active { color: #087443; }
   .metric-grid { grid-template-columns: 1fr 1fr; gap: 8px; }

@@ -52,6 +52,8 @@ jobs:
           docker build \
             --label org.opencontainers.image.revision=${{ github.sha }} \
             --label org.opencontainers.image.version=$BUILD_VERSION \
+            --build-arg BUILD_VERSION=$BUILD_VERSION \
+            --build-arg BUILD_COMMIT=$BUILD_COMMIT \
             -t ghcr.io/flyljx/ai-pai-web:ci .
           docker build \
             --label org.opencontainers.image.revision=${{ github.sha }} \

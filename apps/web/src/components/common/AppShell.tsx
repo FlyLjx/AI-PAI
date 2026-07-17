@@ -9,9 +9,22 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BillingRail } from './BillingRail';
+import { WEB_BUILD_COMMIT, WEB_BUILD_VERSION, reloadForBuild } from '@/lib/build-version';
 import { APIError, clearSession, getSession, portalApi, refreshSession, type PortalUser } from '@/lib/portal-api';
 
 type NavItem = { label: string; href: string; icon: React.ComponentType<{ size?: number; className?: string }> };
+
+const USER_NAV_ITEMS: NavItem[] = [
+  { label: '控制台', href: '/dashboard', icon: LayoutDashboard },
+  { label: '生图台', href: '/playground', icon: Images },
+  { label: 'API Key', href: '/api-keys', icon: KeyRound },
+  { label: '用量记录', href: '/usage', icon: Activity },
+  { label: '模型价目', href: '/prices', icon: BadgeDollarSign },
+  { label: '计费中心', href: '/billing', icon: WalletCards },
+  { label: '接口状态', href: '/status', icon: HeartPulse },
+  { label: 'API 文档', href: '/docs', icon: BookOpen },
+  { label: '账户设置', href: '/settings', icon: Settings },
+];
 
 function Navigation({ items, pathname, mobile = false, onNavigate }: { items: NavItem[]; pathname: string; mobile?: boolean; onNavigate: () => void }) {
   return (
@@ -107,23 +120,35 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [router]);
 
+  useEffect(() => {
+    let active = true;
+    const checkBuild = async () => {
+      try {
+        const response = await fetch(`/api/build?_=${Date.now()}`, { cache: 'no-store' });
+        if (!response.ok || !active) return;
+        const build = await response.json() as { version?: string };
+        if (build.version && build.version !== 'local' && build.version !== WEB_BUILD_VERSION) {
+          reloadForBuild(build.version);
+        }
+      } catch {
+        // The web container may be restarting during an update; the next check retries.
+      }
+    };
+    const firstCheck = window.setTimeout(() => void checkBuild(), 3_000);
+    const timer = window.setInterval(() => void checkBuild(), 30_000);
+    return () => {
+      active = false;
+      window.clearTimeout(firstCheck);
+      window.clearInterval(timer);
+    };
+  }, []);
+
   if (!ready || !user) {
     return <div className="min-h-screen grid place-items-center bg-[#f7f8f6]"><div className="loading-ring" /></div>;
   }
 
-  const userNav: NavItem[] = [
-    { label: '控制台', href: '/dashboard', icon: LayoutDashboard },
-    { label: '生图台', href: '/playground', icon: Images },
-    { label: 'API Key', href: '/api-keys', icon: KeyRound },
-    { label: '用量记录', href: '/usage', icon: Activity },
-    { label: '模型价目', href: '/prices', icon: BadgeDollarSign },
-    { label: '计费中心', href: '/billing', icon: WalletCards },
-    { label: '接口状态', href: '/status', icon: HeartPulse },
-    { label: 'API 文档', href: '/docs', icon: BookOpen },
-    { label: '账户设置', href: '/settings', icon: Settings },
-  ];
-  const mobileNav = userNav.filter((item) => (
-    ['/dashboard', '/playground', '/usage', '/billing'].includes(item.href)
+  const mobileNav = USER_NAV_ITEMS.filter((item) => (
+    ['/dashboard', '/playground', '/usage', '/prices', '/billing'].includes(item.href)
   ));
   const logout = () => {
     clearSession();
@@ -149,11 +174,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="app-sidebar">
         <Link href="/dashboard" className="brand-lockup">
           <span className="brand-mark">AI</span>
-          <span><strong>AI-PAI</strong><small>API 中转站</small></span>
+          <span><strong>AI-PAI</strong><small title={`Commit ${WEB_BUILD_COMMIT}`}>API 中转站 · {WEB_BUILD_VERSION}</small></span>
         </Link>
         <BillingRail user={user} />
         <div className="sidebar-section-label">开发者工作台</div>
-        <div className="sidebar-scroll"><Navigation items={userNav} pathname={pathname} onNavigate={() => setMobileOpen(false)} /></div>
+        <div className="sidebar-scroll"><Navigation items={USER_NAV_ITEMS} pathname={pathname} onNavigate={() => setMobileOpen(false)} /></div>
         <div className="sidebar-account">
           <span className="account-avatar">{user.email.slice(0, 1).toUpperCase()}</span>
           <span className="account-copy"><strong>{user.email}</strong><small>API 客户</small></span>
@@ -167,7 +192,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </Link>
         <button type="button" onClick={() => setMobileOpen(!mobileOpen)} aria-label="打开导航">{mobileOpen ? <X /> : <Menu />}</button>
       </header>
-      {mobileOpen && <div className="mobile-drawer"><Navigation items={userNav} pathname={pathname} mobile onNavigate={() => setMobileOpen(false)} /><button className="mobile-logout" onClick={logout}><LogOut size={16} />退出登录</button></div>}
+      {mobileOpen && <div className="mobile-drawer"><Navigation items={USER_NAV_ITEMS} pathname={pathname} mobile onNavigate={() => setMobileOpen(false)} /><button className="mobile-logout" onClick={logout}><LogOut size={16} />退出登录</button></div>}
 
       <main className="app-main">
         {!user.emailVerifiedAt && (

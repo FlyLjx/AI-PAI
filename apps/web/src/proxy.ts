@@ -1,9 +1,19 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
 const DEFAULT_ADMIN_INTERNAL_URL = 'http://127.0.0.1:3002';
-const ADMIN_CACHE_CONTROL = 'private, no-cache, no-store, max-age=0, must-revalidate';
+const APP_CACHE_CONTROL = 'private, no-cache, no-store, max-age=0, must-revalidate';
+
+function disablePageCache(response: NextResponse) {
+  response.headers.set('Cache-Control', APP_CACHE_CONTROL);
+  response.headers.set('CDN-Cache-Control', 'no-store');
+  return response;
+}
 
 export function proxy(request: NextRequest) {
+  if (!request.nextUrl.pathname.startsWith('/sys-admins')) {
+    return disablePageCache(NextResponse.next());
+  }
+
   const configured = process.env.ADMIN_INTERNAL_URL || DEFAULT_ADMIN_INTERNAL_URL;
   let adminOrigin: URL;
   try {
@@ -14,11 +24,9 @@ export function proxy(request: NextRequest) {
   }
 
   const destination = new URL(`${request.nextUrl.pathname}${request.nextUrl.search}`, adminOrigin);
-  const response = NextResponse.rewrite(destination);
-  response.headers.set('Cache-Control', ADMIN_CACHE_CONTROL);
-  return response;
+  return disablePageCache(NextResponse.rewrite(destination));
 }
 
 export const config = {
-  matcher: ['/sys-admins', '/sys-admins/:path*'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js|woff|woff2)$).*)'],
 };
