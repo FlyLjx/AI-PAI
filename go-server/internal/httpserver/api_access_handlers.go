@@ -376,6 +376,48 @@ func (r *Router) adminAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": items, "pagination": map[string]any{"total": total, "page": queryInt(req, "page", 1), "pageSize": queryInt(req, "pageSize", 20)}})
 }
 
+func (r *Router) adminAPIAccessOperations(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	now := time.Now().In(time.Local)
+	rangeKey, startAt := adminOperationsRange(req.URL.Query().Get("range"), now)
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	data, err := apiaccess.NewRepository(r.db).AdminOperations(
+		ctx,
+		startAt,
+		now,
+		rangeKey,
+		req.URL.Query().Get("metric"),
+		queryInt(req, "limit", 10),
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+func adminOperationsRange(value string, now time.Time) (string, time.Time) {
+	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "7d":
+		return "7d", dayStart.AddDate(0, 0, -6)
+	case "15d":
+		return "15d", dayStart.AddDate(0, 0, -14)
+	case "30d":
+		return "30d", dayStart.AddDate(0, 0, -29)
+	default:
+		return "today", dayStart
+	}
+}
+
 func (r *Router) requireFrontUser(req *http.Request, explicitUserID string) (string, error) {
 	token := bearerToken(req)
 	if token == "" {

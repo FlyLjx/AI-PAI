@@ -547,6 +547,208 @@ func buildLogWhere(input ListLogsInput) (string, []any) {
 	return "WHERE " + strings.Join(conditions, " AND "), args
 }
 
+func (r *Repository) AdminOperations(ctx context.Context, startAt time.Time, now time.Time, rangeKey string, metric string, limit int) (AdminOperationsSnapshot, error) {
+	if limit < 1 {
+		limit = 10
+	}
+	if limit > 50 {
+		limit = 50
+	}
+	metric = normalizeAdminOperationsMetric(metric)
+	orderBy := map[string]string{
+		"requests": "request_count",
+		"images":   "image_count",
+		"credits":  "credits_spent",
+		"failures": "failed_count",
+		"duration": "average_duration_seconds",
+	}[metric]
+
+	snapshot := AdminOperationsSnapshot{
+		Range:       strings.TrimSpace(rangeKey),
+		Metric:      metric,
+		TopUsers:    []AdminOperationsTopUser{},
+		ActiveCalls: []AdminOperationsActiveCall{},
+		GeneratedAt: now.Format(time.RFC3339),
+	}
+	topRows, err := r.db.QueryContext(ctx, `
+		SELECT
+			api_access_logs.user_id,
+			users.email,
+			CASE
+				WHEN COUNT(DISTINCT COALESCE(api_access_keys.billing_mode, 'auto')) > 1 THEN 'mixed'
+				ELSE COALESCE(MAX(api_access_keys.billing_mode), 'auto')
+			END AS billing_mode,
+			COUNT(*) AS request_count,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success_count,
+			COALESCE(SUM(CASE WHEN api_access_logs.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN api_access_logs.image_count ELSE 0 END), 0) AS image_count,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN generation_tasks.cost_credits ELSE 0 END), 0) AS credits_spent,
+			COALESCE(AVG(CASE WHEN api_access_logs.status IN ('success', 'succeeded', 'failed') THEN generation_tasks.duration_seconds ELSE NULL END), 0) AS average_duration_seconds,
+			MAX(api_access_logs.created_at) AS last_request_at
+		FROM api_access_logs
+		LEFT JOIN users ON users.id = api_access_logs.user_id
+		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+		LEFT JOIN generation_tasks ON generation_tasks.id = api_access_logs.task_id
+		WHERE api_access_logs.created_at >= ?
+			AND api_access_logs.status IN ('queued', 'processing', 'success', 'succeeded', 'failed')
+		GROUP BY api_access_logs.user_id, users.email
+		ORDER BY `+orderBy+` DESC, request_count DESC, last_request_at DESC
+		LIMIT ?
+	`, startAt, limit)
+	if err != nil {
+		return snapshot, err
+	}
+	for topRows.Next() {
+		var item AdminOperationsTopUser
+		var email sql.NullString
+		var lastRequestAt time.Time
+		if err := topRows.Scan(
+			&item.UserID,
+			&email,
+			&item.BillingMode,
+			&item.RequestCount,
+			&item.SuccessCount,
+			&item.FailedCount,
+			&item.ImageCount,
+			&item.CreditsSpent,
+			&item.AverageDurationSeconds,
+			&lastRequestAt,
+		); err != nil {
+			topRows.Close()
+			return snapshot, err
+		}
+		if email.Valid {
+			item.UserEmail = &email.String
+		}
+		completed := item.SuccessCount + item.FailedCount
+		if completed > 0 {
+			item.SuccessRate = float64(item.SuccessCount) / float64(completed) * 100
+		}
+		item.LastRequestAt = appclock.DatabaseTime(lastRequestAt).Format(time.RFC3339)
+		snapshot.TopUsers = append(snapshot.TopUsers, item)
+	}
+	if err := topRows.Close(); err != nil {
+		return snapshot, err
+	}
+	if err := topRows.Err(); err != nil {
+		return snapshot, err
+	}
+
+	activeRows, err := r.db.QueryContext(ctx, `
+		SELECT
+			api_access_logs.id,
+			generation_tasks.id,
+			api_access_logs.user_id,
+			users.email,
+			api_access_logs.api_key_id,
+			api_access_keys.name,
+			api_access_keys.key_prefix,
+			COALESCE(api_access_keys.billing_mode, 'auto'),
+			COALESCE(api_access_keys.concurrency_limit, 1),
+			COALESCE(ai_models.display_name, api_access_logs.model, ''),
+			generation_tasks.size_tier,
+			generation_tasks.size,
+			generation_tasks.quantity,
+			generation_tasks.status,
+			generation_tasks.created_at
+		FROM generation_tasks
+		INNER JOIN api_access_logs ON api_access_logs.task_id = generation_tasks.id
+		LEFT JOIN users ON users.id = api_access_logs.user_id
+		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+		LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
+		WHERE generation_tasks.status IN ('queued', 'pending', 'processing')
+		ORDER BY generation_tasks.created_at ASC, generation_tasks.id ASC
+	`)
+	if err != nil {
+		return snapshot, err
+	}
+	activeUsers := map[string]bool{}
+	activeByKey := map[string]int{}
+	totalElapsed := 0.0
+	for activeRows.Next() {
+		var item AdminOperationsActiveCall
+		var email, keyName, keyPrefix, size sql.NullString
+		var createdAt time.Time
+		if err := activeRows.Scan(
+			&item.LogID,
+			&item.TaskID,
+			&item.UserID,
+			&email,
+			&item.APIKeyID,
+			&keyName,
+			&keyPrefix,
+			&item.BillingMode,
+			&item.ConcurrencyLimit,
+			&item.Model,
+			&item.SizeTier,
+			&size,
+			&item.Quantity,
+			&item.Status,
+			&createdAt,
+		); err != nil {
+			activeRows.Close()
+			return snapshot, err
+		}
+		if email.Valid {
+			item.UserEmail = &email.String
+		}
+		if keyName.Valid {
+			item.KeyName = &keyName.String
+		}
+		if keyPrefix.Valid {
+			item.KeyPrefix = &keyPrefix.String
+		}
+		if size.Valid {
+			item.Size = &size.String
+		}
+		item.ConcurrencyLimit = normalizedConcurrencyLimit(item.ConcurrencyLimit)
+		createdAt = appclock.DatabaseTime(createdAt)
+		item.CreatedAt = createdAt.Format(time.RFC3339)
+		item.ElapsedSeconds = now.Sub(createdAt).Seconds()
+		if item.ElapsedSeconds < 0 {
+			item.ElapsedSeconds = 0
+		}
+		activeUsers[item.UserID] = true
+		activeByKey[item.APIKeyID]++
+		totalElapsed += item.ElapsedSeconds
+		snapshot.ActiveCalls = append(snapshot.ActiveCalls, item)
+	}
+	if err := activeRows.Close(); err != nil {
+		return snapshot, err
+	}
+	if err := activeRows.Err(); err != nil {
+		return snapshot, err
+	}
+	for index := range snapshot.ActiveCalls {
+		item := &snapshot.ActiveCalls[index]
+		item.ActiveForKey = activeByKey[item.APIKeyID]
+		switch item.Status {
+		case "processing":
+			snapshot.ProcessingRequests++
+		default:
+			snapshot.QueuedRequests++
+		}
+		if item.ElapsedSeconds >= 120 {
+			snapshot.SlowRequests++
+		}
+	}
+	snapshot.ActiveUsers = len(activeUsers)
+	snapshot.ActiveRequests = len(snapshot.ActiveCalls)
+	if snapshot.ActiveRequests > 0 {
+		snapshot.AverageElapsedSeconds = totalElapsed / float64(snapshot.ActiveRequests)
+	}
+	return snapshot, nil
+}
+
+func normalizeAdminOperationsMetric(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "images", "credits", "failures", "duration":
+		return strings.ToLower(strings.TrimSpace(value))
+	default:
+		return "requests"
+	}
+}
+
 func (r *Repository) AdminStats(ctx context.Context) (AdminStats, error) {
 	var stats AdminStats
 	if err := r.db.QueryRowContext(ctx, `

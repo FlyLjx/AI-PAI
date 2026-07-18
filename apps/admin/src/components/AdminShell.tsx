@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   Activity, Cable, ChevronRight, CircleDollarSign, CreditCard, Database,
-  Gauge, LogOut, Menu, Package, ReceiptText, ShieldCheck, Users, X,
+  Gauge, LogOut, Menu, Package, Radio, ReceiptText, ShieldCheck, Users, X,
 } from 'lucide-react';
 import { ADMIN_BASE_PATH } from '../../admin-path';
 import { adminAuth, type AdminIdentity } from '@/lib/admin-api';
@@ -13,6 +13,7 @@ import { ADMIN_BUILD_COMMIT, ADMIN_BUILD_VERSION, reloadForBuild } from '@/lib/b
 
 const adminNav = [
   { label: '数据概览', href: '/dashboard', icon: Gauge },
+  { label: '实时运营', href: '/api-operations', icon: Radio },
   { label: '用户管理', href: '/users', icon: Users },
   { label: 'API 调用', href: '/api-access', icon: Activity },
   { label: '上游接口', href: '/upstream-apis', icon: Cable },

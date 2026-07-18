@@ -180,6 +180,54 @@ type AdminStats struct {
 	TodayImageCount int `json:"todayImageCount"`
 }
 
+type AdminOperationsTopUser struct {
+	UserID                 string  `json:"userId"`
+	UserEmail              *string `json:"userEmail,omitempty"`
+	BillingMode            string  `json:"billingMode"`
+	RequestCount           int     `json:"requestCount"`
+	SuccessCount           int     `json:"successCount"`
+	FailedCount            int     `json:"failedCount"`
+	ImageCount             int     `json:"imageCount"`
+	CreditsSpent           float64 `json:"creditsSpent"`
+	AverageDurationSeconds float64 `json:"averageDurationSeconds"`
+	SuccessRate            float64 `json:"successRate"`
+	LastRequestAt          string  `json:"lastRequestAt"`
+}
+
+type AdminOperationsActiveCall struct {
+	LogID            string  `json:"logId"`
+	TaskID           string  `json:"taskId"`
+	UserID           string  `json:"userId"`
+	UserEmail        *string `json:"userEmail,omitempty"`
+	APIKeyID         string  `json:"apiKeyId"`
+	KeyName          *string `json:"keyName,omitempty"`
+	KeyPrefix        *string `json:"keyPrefix,omitempty"`
+	BillingMode      string  `json:"billingMode"`
+	ConcurrencyLimit int     `json:"concurrencyLimit"`
+	ActiveForKey     int     `json:"activeForKey"`
+	Model            string  `json:"model"`
+	SizeTier         string  `json:"sizeTier"`
+	Size             *string `json:"size,omitempty"`
+	Quantity         int     `json:"quantity"`
+	Status           string  `json:"status"`
+	ElapsedSeconds   float64 `json:"elapsedSeconds"`
+	CreatedAt        string  `json:"createdAt"`
+}
+
+type AdminOperationsSnapshot struct {
+	Range                 string                      `json:"range"`
+	Metric                string                      `json:"metric"`
+	ActiveUsers           int                         `json:"activeUsers"`
+	ActiveRequests        int                         `json:"activeRequests"`
+	QueuedRequests        int                         `json:"queuedRequests"`
+	ProcessingRequests    int                         `json:"processingRequests"`
+	SlowRequests          int                         `json:"slowRequests"`
+	AverageElapsedSeconds float64                     `json:"averageElapsedSeconds"`
+	TopUsers              []AdminOperationsTopUser    `json:"topUsers"`
+	ActiveCalls           []AdminOperationsActiveCall `json:"activeCalls"`
+	GeneratedAt           string                      `json:"generatedAt"`
+}
+
 func ToPublicKey(key AccessKey) PublicAccessKey {
 	return ToPublicKeyWithConfig(key, DefaultDynamicConcurrencyConfig())
 }

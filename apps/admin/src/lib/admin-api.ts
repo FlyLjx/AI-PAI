@@ -94,6 +94,57 @@ export type UsageLog = {
   finishedAt?: string;
 };
 
+export type AdminOperationsRange = 'today' | '7d' | '15d' | '30d';
+export type AdminOperationsMetric = 'requests' | 'images' | 'credits' | 'failures' | 'duration';
+
+export type AdminOperationsTopUser = {
+  userId: string;
+  userEmail?: string;
+  billingMode: string;
+  requestCount: number;
+  successCount: number;
+  failedCount: number;
+  imageCount: number;
+  creditsSpent: number;
+  averageDurationSeconds: number;
+  successRate: number;
+  lastRequestAt: string;
+};
+
+export type AdminOperationsActiveCall = {
+  logId: string;
+  taskId: string;
+  userId: string;
+  userEmail?: string;
+  apiKeyId: string;
+  keyName?: string;
+  keyPrefix?: string;
+  billingMode: string;
+  concurrencyLimit: number;
+  activeForKey: number;
+  model: string;
+  sizeTier: string;
+  size?: string;
+  quantity: number;
+  status: string;
+  elapsedSeconds: number;
+  createdAt: string;
+};
+
+export type AdminOperationsSnapshot = {
+  range: AdminOperationsRange;
+  metric: AdminOperationsMetric;
+  activeUsers: number;
+  activeRequests: number;
+  queuedRequests: number;
+  processingRequests: number;
+  slowRequests: number;
+  averageElapsedSeconds: number;
+  topUsers: AdminOperationsTopUser[];
+  activeCalls: AdminOperationsActiveCall[];
+  generatedAt: string;
+};
+
 export type Plan = {
   id: string;
   name: string;
@@ -296,6 +347,7 @@ export const portalApi = {
   updateAdminKey: (id: string, input: { status?: string; concurrencyLimit?: number }) => api<APIKey>(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   adminUsage: (page = 1) => api<UsageLog[]>(`/api/admin/api-access/logs${query({ page, pageSize: 30 })}`),
+  adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),
   settings: () => api<Record<string, unknown>>('/api/settings'),
   updateSettings: (input: Record<string, unknown>) => api('/api/settings', { method: 'PATCH', body: JSON.stringify(input) }),

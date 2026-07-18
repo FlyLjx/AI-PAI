@@ -89,6 +89,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/admin/api-access/keys", r.adminAPIAccessKeys)
 	r.mux.HandleFunc("/api/admin/api-access/keys/", r.adminAPIAccessKeyByID)
 	r.mux.HandleFunc("/api/admin/api-access/logs", r.adminAPIAccessLogs)
+	r.mux.HandleFunc("/api/admin/api-access/operations", r.adminAPIAccessOperations)
 	r.mux.HandleFunc("/api/admin/system-update", r.systemUpdate)
 	r.mux.HandleFunc("/api/subscriptions/public/plans", r.plans)
 	r.mux.HandleFunc("/api/subscriptions/public/current", r.currentSubscription)

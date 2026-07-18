@@ -143,6 +143,14 @@ export default function AdminUsersPage() {
   }, []);
 
   useEffect(() => {
+    const initialSearch = new URLSearchParams(window.location.search).get('search')?.trim();
+    const timer = window.setTimeout(() => {
+      if (initialSearch) setSearch(initialSearch);
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
