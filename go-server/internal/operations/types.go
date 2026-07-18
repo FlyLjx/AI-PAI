@@ -66,17 +66,59 @@ type CustomSubscriptionGrant struct {
 }
 
 type Invite struct {
-	ID            string  `json:"id"`
-	InviterID     string  `json:"inviterId"`
-	InviterEmail  *string `json:"inviterEmail,omitempty"`
-	InviteeID     string  `json:"inviteeId"`
-	InviteeEmail  *string `json:"inviteeEmail,omitempty"`
-	RewardCredits float64 `json:"rewardCredits"`
-	RewardType    string  `json:"rewardType"`
-	RewardPlanID  *string `json:"rewardPlanId,omitempty"`
-	RewardLabel   *string `json:"rewardLabel,omitempty"`
-	InviteeIP     *string `json:"inviteeIp"`
-	CreatedAt     string  `json:"createdAt"`
+	ID                   string  `json:"id"`
+	InviterID            string  `json:"inviterId"`
+	InviterEmail         *string `json:"inviterEmail,omitempty"`
+	InviteeID            string  `json:"inviteeId"`
+	InviteeEmail         *string `json:"inviteeEmail,omitempty"`
+	RewardCredits        float64 `json:"rewardCredits"`
+	RewardType           string  `json:"rewardType"`
+	RewardPlanID         *string `json:"rewardPlanId,omitempty"`
+	RewardLabel          *string `json:"rewardLabel,omitempty"`
+	InviteeRewardCredits float64 `json:"inviteeRewardCredits"`
+	InviteeRewardType    string  `json:"inviteeRewardType"`
+	InviteeRewardPlanID  *string `json:"inviteeRewardPlanId,omitempty"`
+	InviteeRewardLabel   *string `json:"inviteeRewardLabel,omitempty"`
+	Status               string  `json:"status"`
+	RiskReason           *string `json:"riskReason,omitempty"`
+	InviteeIP            *string `json:"inviteeIp"`
+	VerifiedAt           *string `json:"verifiedAt,omitempty"`
+	RewardedAt           *string `json:"rewardedAt,omitempty"`
+	CreatedAt            string  `json:"createdAt"`
+}
+
+type InviteRewardSpec struct {
+	Type    string
+	Credits float64
+	PlanID  string
+}
+
+type InviteRiskLimits struct {
+	Enabled          bool
+	BlockSameIP      bool
+	BlockSameDevice  bool
+	MaxPerIP24h      int
+	MaxPerDevice24h  int
+	MaxPerInviter24h int
+}
+
+type InviteBindingInput struct {
+	InviterID     string
+	InviteeID     string
+	InviteeIP     string
+	IPHash        string
+	DeviceHash    string
+	InviterReward InviteRewardSpec
+	InviteeReward InviteRewardSpec
+	Risk          InviteRiskLimits
+}
+
+type InviteRewardResult struct {
+	InviteID   string `json:"inviteId"`
+	InviterID  string `json:"inviterId"`
+	InviteeID  string `json:"inviteeId"`
+	Status     string `json:"status"`
+	RiskReason string `json:"riskReason,omitempty"`
 }
 
 type InviteDeleteResult struct {

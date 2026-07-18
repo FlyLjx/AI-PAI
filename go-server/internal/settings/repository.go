@@ -11,6 +11,7 @@ import (
 
 var ErrInvalidRechargeRate = errors.New("充值比例必须大于 0")
 var ErrInvalidDynamicConcurrency = errors.New("动态并发配置不正确")
+var ErrInvalidInviteSettings = errors.New("邀请奖励或注册风控配置不正确")
 
 type Repository struct {
 	db *database.DB
@@ -79,6 +80,26 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 			}
 			value = number
 		}
+		if key == "inviteInviterRewardType" || key == "inviteInviteeRewardType" || key == "inviteRewardType" {
+			rewardType, ok := value.(string)
+			if !ok || (rewardType != "none" && rewardType != "balance" && rewardType != "subscription") {
+				return nil, ErrInvalidInviteSettings
+			}
+		}
+		if key == "inviteInviterRewardCredits" || key == "inviteInviteeRewardCredits" {
+			number, ok := numericSettingValue(value)
+			if !ok || number < 0 || number > 100000000 || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, ErrInvalidInviteSettings
+			}
+			value = number
+		}
+		if isInviteRiskIntegerKey(key) {
+			number, ok := numericSettingValue(value)
+			if !ok || number < 1 || number > 1000000 || math.Trunc(number) != number || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, ErrInvalidInviteSettings
+			}
+			value = number
+		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT INTO system_settings (setting_key, setting_value)
 			VALUES (?, ?)
@@ -91,6 +112,17 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 		return nil, err
 	}
 	return r.Get(ctx)
+}
+
+func isInviteRiskIntegerKey(key string) bool {
+	switch key {
+	case "inviteRiskMaxPerIP24h", "inviteRiskMaxPerDevice24h", "inviteRiskMaxPerInviter24h",
+		"registrationRiskMaxPerIP24h", "registrationRiskMaxPerDevice24h",
+		"registrationChallengeMinSeconds", "registrationChallengeMaxPerIPHour":
+		return true
+	default:
+		return false
+	}
 }
 
 func numericSettingValue(value any) (float64, bool) {
@@ -122,6 +154,12 @@ func parseValue(key string, value string) any {
 		}
 		if (key == "dynamicConcurrencyWindowValue" || key == "dynamicConcurrencyRequestStep" || key == "dynamicConcurrencyIncrement") &&
 			(number < 1 || number > 1000000 || math.Trunc(number) != number) {
+			return Defaults[key]
+		}
+		if isInviteRiskIntegerKey(key) && (number < 1 || number > 1000000 || math.Trunc(number) != number) {
+			return Defaults[key]
+		}
+		if (key == "inviteInviterRewardCredits" || key == "inviteInviteeRewardCredits") && (number < 0 || number > 100000000) {
 			return Defaults[key]
 		}
 		return number

@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   Activity, BadgeDollarSign, BookOpen, ChevronRight, HeartPulse, KeyRound, LayoutDashboard,
-  Images, LoaderCircle, LogOut, MailWarning, Menu, Send, Settings, WalletCards, X,
+  Gift, Images, LoaderCircle, LogOut, MailWarning, Menu, Send, Settings, WalletCards, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BillingRail } from './BillingRail';
@@ -21,6 +21,7 @@ const USER_NAV_ITEMS: NavItem[] = [
   { label: '用量记录', href: '/usage', icon: Activity },
   { label: '模型价目', href: '/prices', icon: BadgeDollarSign },
   { label: '计费中心', href: '/billing', icon: WalletCards },
+  { label: '邀请返利', href: '/invite', icon: Gift },
   { label: '接口状态', href: '/status', icon: HeartPulse },
   { label: 'API 文档', href: '/docs', icon: BookOpen },
   { label: '账户设置', href: '/settings', icon: Settings },

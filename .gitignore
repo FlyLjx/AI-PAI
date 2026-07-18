@@ -46,6 +46,7 @@ next-env.d.ts
 /.tmp/
 /logs/
 /release/
+/go-server/tmp/
 /.codex-screenshots/
 /design-qa.md
 /.vendor/

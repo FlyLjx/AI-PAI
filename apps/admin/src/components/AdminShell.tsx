@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
-  Activity, Cable, ChevronRight, CircleDollarSign, CreditCard, Database,
+  Activity, Cable, ChevronRight, CircleDollarSign, CreditCard, Database, Gift,
   Gauge, LogOut, Menu, Package, Radio, ReceiptText, ShieldCheck, Users, X,
 } from 'lucide-react';
 import { ADMIN_BASE_PATH } from '../../admin-path';
@@ -21,6 +21,7 @@ const adminNav = [
   { label: '订阅套餐', href: '/packages', icon: Package },
   { label: '订阅管理', href: '/subscriptions', icon: CreditCard },
   { label: '充值流水', href: '/recharges', icon: ReceiptText },
+  { label: '邀请返利', href: '/invites', icon: Gift },
   { label: '系统日志', href: '/logs', icon: Database },
   { label: '系统设置', href: '/settings', icon: ShieldCheck },
 ];

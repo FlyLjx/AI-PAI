@@ -25,6 +25,12 @@ export async function proxyToGo(request: Request, path: string): Promise<Respons
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
+  const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || request.headers.get('x-real-ip')?.trim();
+  if (clientIP) {
+    headers.set('x-forwarded-for', clientIP);
+    headers.set('x-real-ip', clientIP);
+  }
   headers.set('x-forwarded-host', forwardedOrigin.host);
   headers.set('x-forwarded-proto', forwardedOrigin.protocol.replace(':', ''));
 

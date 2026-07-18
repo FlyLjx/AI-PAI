@@ -94,6 +94,28 @@ export type UsageLog = {
   finishedAt?: string;
 };
 
+export type AdminInviteRecord = {
+  id: string;
+  inviterId: string;
+  inviterEmail?: string;
+  inviteeId: string;
+  inviteeEmail?: string;
+  rewardCredits: number;
+  rewardType: string;
+  rewardPlanId?: string;
+  rewardLabel?: string;
+  inviteeRewardCredits: number;
+  inviteeRewardType: string;
+  inviteeRewardPlanId?: string;
+  inviteeRewardLabel?: string;
+  status: string;
+  riskReason?: string;
+  inviteeIp?: string;
+  verifiedAt?: string;
+  rewardedAt?: string;
+  createdAt: string;
+};
+
 export type AdminOperationsRange = 'today' | '7d' | '15d' | '30d';
 export type AdminOperationsMetric = 'requests' | 'images' | 'credits' | 'failures' | 'duration';
 
@@ -348,6 +370,7 @@ export const portalApi = {
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   adminUsage: (page = 1) => api<UsageLog[]>(`/api/admin/api-access/logs${query({ page, pageSize: 30 })}`),
   adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
+  adminInvites: (page = 1, pageSize = 30) => api<AdminInviteRecord[]>(`/api/invites${query({ page, pageSize })}`),
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),
   settings: () => api<Record<string, unknown>>('/api/settings'),
   updateSettings: (input: Record<string, unknown>) => api('/api/settings', { method: 'PATCH', body: JSON.stringify(input) }),

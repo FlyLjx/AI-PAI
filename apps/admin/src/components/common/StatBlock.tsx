@@ -73,14 +73,9 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
         </div>
 
         {(subtext || trend) && (
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1 border-t border-[#F6F8F6] pt-2.5 text-[11px]">
-            {subtext && (
-              <span className="min-w-0 flex-1 truncate font-medium text-zinc-400">
-                {subtext}
-              </span>
-            )}
+          <div className="mt-3 min-h-[54px] border-t border-[#F0F3F1] pt-2.5 text-[11px]">
             {trend && (
-              <span className="inline-flex shrink-0 items-center gap-1" aria-label={`${trend.label || '较昨日'} ${trend.value}`}>
+              <div className="flex items-center justify-between gap-2" aria-label={`${trend.label || '较昨日'} ${trend.value}`}>
                 <span className="text-zinc-400">{trend.label || '较昨日'}</span>
                 <span className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 font-mono font-bold ${
                   trend.type === 'positive' ? 'bg-[#12B76A]/8 text-[#079455]' :
@@ -89,7 +84,14 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
                   <TrendIcon className="h-3 w-3" aria-hidden="true" />
                   {trend.value}
                 </span>
-              </span>
+              </div>
+            )}
+            {subtext && (
+              <div className={`${trend ? 'mt-2 border-t border-[#F6F8F6] pt-2' : ''} flex items-center justify-between gap-2`}>
+                <span className="min-w-0 truncate font-medium text-zinc-500">
+                  {subtext}
+                </span>
+              </div>
             )}
           </div>
         )}

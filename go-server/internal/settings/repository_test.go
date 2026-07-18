@@ -78,3 +78,28 @@ func TestParseInvalidDynamicConcurrencyFallsBackToDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateRejectsInvalidInviteSettings(t *testing.T) {
+	tests := []Settings{
+		{"inviteInviterRewardType": "coupon"},
+		{"inviteInviteeRewardCredits": float64(-1)},
+		{"inviteRiskMaxPerIP24h": float64(0)},
+		{"registrationChallengeMinSeconds": float64(1.5)},
+	}
+	for _, input := range tests {
+		rawDB, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+		_, err = NewRepository(database.Wrap(rawDB)).Update(context.Background(), input)
+		if !errors.Is(err, ErrInvalidInviteSettings) {
+			t.Fatalf("input %#v error = %v, want ErrInvalidInviteSettings", input, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		rawDB.Close()
+	}
+}

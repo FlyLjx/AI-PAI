@@ -84,6 +84,7 @@ type DashboardData = {
   };
   users?: { total?: number; active?: number };
   orders?: { all?: number; paid?: number; pending?: number; failed?: number; closed?: number };
+  revenue?: { totalPaidAmount?: number };
   taskStats?: {
     total?: number;
     queued?: number;
@@ -223,13 +224,12 @@ export default function AdminDashboardPage() {
   const successful = Number(stats.success || 0);
   const failed = Number(stats.failed || 0) + Number(stats.canceled || 0);
   const completed = successful + failed;
-  const successRate = completed ? Math.round((successful / completed) * 100) : 100;
+  const totalSuccessRate = completed ? Math.round((successful / completed) * 100) : null;
+  const todaySuccessRate = dailySuccessRate(data.today?.successfulTasks, data.today?.failedTasks);
+  const yesterdaySuccessRate = dailySuccessRate(data.yesterday?.successfulTasks, data.yesterday?.failedTasks);
   const revenueTrend = dayOverDayTrend(Number(data.today?.paidAmount || 0), Number(data.yesterday?.paidAmount || 0));
   const requestTrend = dayOverDayTrend(Number(data.today?.tasks || 0), Number(data.yesterday?.tasks || 0));
-  const successRateTrend = dayOverDayTrend(
-    dailySuccessRate(data.today?.successfulTasks, data.today?.failedTasks),
-    dailySuccessRate(data.yesterday?.successfulTasks, data.yesterday?.failedTasks),
-  );
+  const successRateTrend = dayOverDayTrend(todaySuccessRate, yesterdaySuccessRate);
   const customerTrend = dayOverDayTrend(Number(data.today?.users || 0), Number(data.yesterday?.users || 0));
   const pendingCount = Number(data.pending?.runningTasks || 0) + Number(data.pending?.pendingOrders || 0);
   const recentOrders = data.recentOrders || [];
@@ -335,10 +335,10 @@ export default function AdminDashboardPage() {
           </section>
 
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <StatBlock title="今日实收" value={formatCNY(Number(data.today?.paidAmount || 0))} subtext={`${Number(data.today?.orders || 0)} 笔充值/订阅订单`} trend={revenueTrend} color="green" icon={CircleDollarSign} />
-            <StatBlock title="累计 API 请求" value={Number(stats.total || 0).toLocaleString('zh-CN')} subtext={`今日 ${Number(data.today?.tasks || 0).toLocaleString('zh-CN')} 次`} trend={requestTrend} color="cyan" icon={Activity} />
-            <StatBlock title="请求成功率" value={`${successRate}%`} subtext={`累计返回 ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张图片`} trend={successRateTrend} color={successRate >= 95 ? 'green' : 'amber'} icon={Cable} />
-            <StatBlock title="API 客户" value={Number(data.users?.total || 0).toLocaleString('zh-CN')} subtext={`启用 ${Number(data.users?.active || 0)}，今日新增 ${Number(data.today?.users || 0)}`} trend={customerTrend} color="neutral" icon={Users} />
+            <StatBlock title="今日实收" value={formatCNY(Number(data.today?.paidAmount || 0))} subtext={`累计实收 ${formatCNY(Number(data.revenue?.totalPaidAmount || 0))} · ${Number(data.orders?.paid || 0).toLocaleString('zh-CN')} 笔`} trend={revenueTrend} color="green" icon={CircleDollarSign} />
+            <StatBlock title="今日 API 请求" value={Number(data.today?.tasks || 0).toLocaleString('zh-CN')} subtext={`累计请求 ${Number(stats.total || 0).toLocaleString('zh-CN')} 次`} trend={requestTrend} color="cyan" icon={Activity} />
+            <StatBlock title="今日请求成功率" value={todaySuccessRate === null ? '--' : `${Math.round(todaySuccessRate)}%`} subtext={`累计成功率 ${totalSuccessRate === null ? '--' : `${totalSuccessRate}%`} · 返回 ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张`} trend={successRateTrend} color={todaySuccessRate === null ? 'neutral' : todaySuccessRate >= 95 ? 'green' : 'amber'} icon={Cable} />
+            <StatBlock title="今日新增客户" value={Number(data.today?.users || 0).toLocaleString('zh-CN')} subtext={`累计客户 ${Number(data.users?.total || 0).toLocaleString('zh-CN')} · 启用 ${Number(data.users?.active || 0).toLocaleString('zh-CN')}`} trend={customerTrend} color="neutral" icon={Users} />
           </div>
 
           <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="upstream-status-title">

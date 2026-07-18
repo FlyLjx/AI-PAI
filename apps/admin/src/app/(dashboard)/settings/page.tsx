@@ -1,12 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CreditCard, Gauge, Loader2, Mail, RefreshCw, Save, Server, ShieldCheck } from 'lucide-react';
+import { CreditCard, Gauge, Gift, Loader2, Mail, RefreshCw, Save, Server, ShieldAlert, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SystemUpdatePanel } from '@/components/settings/SystemUpdatePanel';
-import { portalApi } from '@/lib/admin-api';
+import { portalApi, type Plan } from '@/lib/admin-api';
 
 type SettingsForm = {
   siteName: string;
@@ -22,6 +22,24 @@ type SettingsForm = {
   dynamicConcurrencyRequestStep: number;
   dynamicConcurrencyIncrement: number;
   rechargeRate: number;
+  inviteEnabled: boolean;
+  inviteInviterRewardType: 'balance' | 'subscription';
+  inviteInviterRewardCredits: number;
+  inviteInviterRewardPlanId: string;
+  inviteInviteeRewardType: 'balance' | 'subscription';
+  inviteInviteeRewardCredits: number;
+  inviteInviteeRewardPlanId: string;
+  inviteRiskEnabled: boolean;
+  inviteRiskBlockSameIP: boolean;
+  inviteRiskBlockSameDevice: boolean;
+  inviteRiskMaxPerIP24h: number;
+  inviteRiskMaxPerDevice24h: number;
+  inviteRiskMaxPerInviter24h: number;
+  registrationRiskEnabled: boolean;
+  registrationRiskMaxPerIP24h: number;
+  registrationRiskMaxPerDevice24h: number;
+  registrationChallengeMinSeconds: number;
+  registrationChallengeMaxPerIPHour: number;
   alipayAppId: string;
   alipayGateway: string;
   alipayPublicKey: string;
@@ -48,6 +66,24 @@ const emptySettings: SettingsForm = {
   dynamicConcurrencyRequestStep: 50,
   dynamicConcurrencyIncrement: 5,
   rechargeRate: 10,
+  inviteEnabled: false,
+  inviteInviterRewardType: 'subscription',
+  inviteInviterRewardCredits: 0,
+  inviteInviterRewardPlanId: '',
+  inviteInviteeRewardType: 'balance',
+  inviteInviteeRewardCredits: 0,
+  inviteInviteeRewardPlanId: '',
+  inviteRiskEnabled: true,
+  inviteRiskBlockSameIP: true,
+  inviteRiskBlockSameDevice: true,
+  inviteRiskMaxPerIP24h: 2,
+  inviteRiskMaxPerDevice24h: 1,
+  inviteRiskMaxPerInviter24h: 10,
+  registrationRiskEnabled: true,
+  registrationRiskMaxPerIP24h: 5,
+  registrationRiskMaxPerDevice24h: 2,
+  registrationChallengeMinSeconds: 2,
+  registrationChallengeMaxPerIPHour: 30,
   alipayAppId: '',
   alipayGateway: 'https://openapi.alipay.com/gateway.do',
   alipayPublicKey: '',
@@ -63,6 +99,11 @@ const emptySettings: SettingsForm = {
 const DYNAMIC_WINDOW_UNIT_OPTIONS = [
   { value: 'minute', label: '分钟' },
   { value: 'hour', label: '小时' },
+] as const;
+
+const INVITE_REWARD_TYPE_OPTIONS = [
+  { value: 'balance', label: '余额奖励' },
+  { value: 'subscription', label: '订阅奖励' },
 ] as const;
 
 function positiveInteger(value: unknown, fallback: number) {
@@ -86,6 +127,24 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     dynamicConcurrencyRequestStep: positiveInteger(data.dynamicConcurrencyRequestStep, 50),
     dynamicConcurrencyIncrement: positiveInteger(data.dynamicConcurrencyIncrement, 5),
     rechargeRate: Number.isFinite(rechargeRate) && rechargeRate > 0 ? rechargeRate : 10,
+    inviteEnabled: data.inviteEnabled !== false,
+    inviteInviterRewardType: data.inviteInviterRewardType === 'balance' ? 'balance' : 'subscription',
+    inviteInviterRewardCredits: Number(data.inviteInviterRewardCredits || 0),
+    inviteInviterRewardPlanId: String(data.inviteInviterRewardPlanId || data.inviteRewardPlanId || ''),
+    inviteInviteeRewardType: data.inviteInviteeRewardType === 'subscription' ? 'subscription' : 'balance',
+    inviteInviteeRewardCredits: Number(data.inviteInviteeRewardCredits || 0),
+    inviteInviteeRewardPlanId: String(data.inviteInviteeRewardPlanId || ''),
+    inviteRiskEnabled: data.inviteRiskEnabled !== false,
+    inviteRiskBlockSameIP: data.inviteRiskBlockSameIP !== false,
+    inviteRiskBlockSameDevice: data.inviteRiskBlockSameDevice !== false,
+    inviteRiskMaxPerIP24h: positiveInteger(data.inviteRiskMaxPerIP24h, 2),
+    inviteRiskMaxPerDevice24h: positiveInteger(data.inviteRiskMaxPerDevice24h, 1),
+    inviteRiskMaxPerInviter24h: positiveInteger(data.inviteRiskMaxPerInviter24h, 10),
+    registrationRiskEnabled: data.registrationRiskEnabled !== false,
+    registrationRiskMaxPerIP24h: positiveInteger(data.registrationRiskMaxPerIP24h, 5),
+    registrationRiskMaxPerDevice24h: positiveInteger(data.registrationRiskMaxPerDevice24h, 2),
+    registrationChallengeMinSeconds: positiveInteger(data.registrationChallengeMinSeconds, 2),
+    registrationChallengeMaxPerIPHour: positiveInteger(data.registrationChallengeMaxPerIPHour, 30),
     alipayAppId: String(data.alipayAppId || ''),
     alipayGateway: String(data.alipayGateway || 'https://openapi.alipay.com/gateway.do'),
     alipayPublicKey: String(data.alipayPublicKey || ''),
@@ -108,13 +167,15 @@ export default function AdminSettingsPage() {
   const [alipayPrivateKey, setAlipayPrivateKey] = useState('');
   const [emailPasswordConfigured, setEmailPasswordConfigured] = useState(false);
   const [alipayPrivateKeyConfigured, setAlipayPrivateKeyConfigured] = useState(false);
+  const [plans, setPlans] = useState<Plan[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const response = await portalApi.settings();
+      const [response, planResponse] = await Promise.all([portalApi.settings(), portalApi.adminPlans()]);
       const values = response.data;
+      setPlans((planResponse.data || []).filter((plan) => plan.status === 'active'));
       setForm(normalizeSettings(values));
       setEmailPasswordConfigured(Boolean(values.emailPassword));
       setAlipayPrivateKeyConfigured(Boolean(values.alipayPrivateKey));
@@ -142,6 +203,12 @@ export default function AdminSettingsPage() {
     if (!Number.isSafeInteger(form.dynamicConcurrencyRequestStep) || form.dynamicConcurrencyRequestStep < 1) return toast.error('每档调用次数必须是大于 0 的整数');
     if (!Number.isSafeInteger(form.dynamicConcurrencyIncrement) || form.dynamicConcurrencyIncrement < 1) return toast.error('每档增加并发必须是大于 0 的整数');
     if (!Number.isFinite(form.rechargeRate) || form.rechargeRate <= 0) return toast.error('充值比例必须大于 0');
+    if (form.inviteEnabled) {
+      if (form.inviteInviterRewardType === 'balance' && form.inviteInviterRewardCredits <= 0) return toast.error('请设置邀请人的余额奖励');
+      if (form.inviteInviterRewardType === 'subscription' && !form.inviteInviterRewardPlanId) return toast.error('请选择邀请人的订阅奖励');
+      if (form.inviteInviteeRewardType === 'balance' && form.inviteInviteeRewardCredits <= 0) return toast.error('请设置新用户的余额奖励');
+      if (form.inviteInviteeRewardType === 'subscription' && !form.inviteInviteeRewardPlanId) return toast.error('请选择新用户的订阅奖励');
+    }
     setSaving(true);
     try {
       const input: Record<string, unknown> = {
@@ -152,6 +219,8 @@ export default function AdminSettingsPage() {
         backendUrl: form.backendUrl.trim(),
         taskTimeoutMinutes: Number(form.taskTimeoutMinutes || 3),
         rechargeRate: Number(form.rechargeRate),
+        inviteRewardType: form.inviteInviterRewardType,
+        inviteRewardPlanId: form.inviteInviterRewardPlanId,
         alipayAppId: form.alipayAppId.trim(),
         alipayGateway: form.alipayGateway.trim(),
         alipayPublicKey: form.alipayPublicKey.trim(),
@@ -191,13 +260,14 @@ export default function AdminSettingsPage() {
         <div className="grid min-h-[320px] place-items-center rounded-md border border-[#DCE4DF] bg-white"><Loader2 className="h-6 w-6 animate-spin text-[#12B76A]" /></div>
       ) : (
         <form onSubmit={save} className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white">
-          <div className="grid grid-cols-2 gap-px border-b border-[#DCE4DF] bg-[#E8ECE9] lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-px border-b border-[#DCE4DF] bg-[#E8ECE9] lg:grid-cols-6">
             {[
               ['注册状态', form.registerMode === 'open' ? '开放注册' : '关闭注册', form.registerMode === 'open'],
               ['邮箱验证', form.registerEmailVerification ? '必须验证' : '不强制', form.registerEmailVerification],
               ['邮件服务', form.emailEnabled ? '已启用' : '已停用', form.emailEnabled],
               ['动态并发', form.dynamicConcurrencyEnabled ? '已启用' : '已停用', form.dynamicConcurrencyEnabled],
               ['支付配置', form.alipayAppId && alipayPrivateKeyConfigured && form.alipayPublicKey ? '配置完整' : '待完善', Boolean(form.alipayAppId && alipayPrivateKeyConfigured && form.alipayPublicKey)],
+              ['邀请返利', form.inviteEnabled ? '活动开启' : '活动暂停', form.inviteEnabled],
             ].map(([label, value, active]) => <div key={String(label)} className="bg-[#FAFBFA] px-4 py-3"><span className="block text-[10px] font-semibold text-zinc-400">{label}</span><strong className={`mt-1 block text-xs ${active ? 'text-[#047857]' : 'text-zinc-600'}`}>{value}</strong></div>)}
           </div>
 
@@ -217,6 +287,45 @@ export default function AdminSettingsPage() {
               <div className="flex items-center gap-2 border-b border-[#DCE4DF] pb-2.5"><ShieldCheck className="h-4 w-4 text-[#0891B2]" /><div><h2 className="text-xs font-semibold">注册与账户</h2><p className="mt-0.5 text-[10px] text-zinc-400">API 客户开户规则</p></div></div>
               <label className="flex items-center justify-between gap-4 rounded-md border border-[#DCE4DF] p-3"><span><strong className="block text-[11px]">开放用户注册</strong><small className="mt-0.5 block text-[10px] text-zinc-400">关闭后仅管理员可创建 API 客户</small></span><input type="checkbox" checked={form.registerMode === 'open'} onChange={(event) => updateField('registerMode', event.target.checked ? 'open' : 'closed')} className="h-4 w-4 accent-[#047857]" /></label>
               <label className="flex items-center justify-between gap-4 rounded-md border border-[#DCE4DF] p-3"><span><strong className="block text-[11px]">注册邮箱验证</strong><small className="mt-0.5 block text-[10px] text-zinc-400">启用后须验证邮箱才能完成开户</small></span><input type="checkbox" checked={form.registerEmailVerification} onChange={(event) => updateField('registerEmailVerification', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
+            </section>
+
+            <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:col-span-2">
+              <div className="flex items-center justify-between gap-4 border-b border-[#DCE4DF] pb-2.5">
+                <div className="flex items-center gap-2"><Gift className="h-4 w-4 text-[#D97706]" /><div><h2 className="text-xs font-semibold">邀请返利</h2><p className="mt-0.5 text-[10px] text-zinc-400">双方奖励独立配置，邮箱验证后自动发放</p></div></div>
+                <label className="flex shrink-0 items-center gap-2 text-[11px] font-semibold text-zinc-500"><input type="checkbox" checked={form.inviteEnabled} onChange={(event) => updateField('inviteEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />启用活动</label>
+              </div>
+              <div className={`grid grid-cols-1 gap-4 lg:grid-cols-2 ${form.inviteEnabled ? '' : 'opacity-50'}`}>
+                <div className="grid gap-3 rounded-md border border-[#DCE4DF] p-4 sm:grid-cols-2">
+                  <div className="sm:col-span-2"><strong className="text-[11px]">邀请人奖励</strong><p className="mt-0.5 text-[10px] text-zinc-400">好友验证邮箱后到账</p></div>
+                  <div><span className="mb-1 block text-[11px] font-semibold text-zinc-500">奖励类型</span><AppSelect disabled={!form.inviteEnabled} value={form.inviteInviterRewardType} options={INVITE_REWARD_TYPE_OPTIONS} onValueChange={(value) => updateField('inviteInviterRewardType', value as 'balance' | 'subscription')} ariaLabel="邀请人奖励类型" /></div>
+                  {form.inviteInviterRewardType === 'balance' ? <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">奖励余额</span><input disabled={!form.inviteEnabled} min={0.0001} max={100000000} step={0.0001} type="number" value={form.inviteInviterRewardCredits} onChange={(event) => updateField('inviteInviterRewardCredits', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label> : <div><span className="mb-1 block text-[11px] font-semibold text-zinc-500">订阅套餐</span><AppSelect disabled={!form.inviteEnabled} value={form.inviteInviterRewardPlanId} options={plans.map((plan) => ({ value: plan.id, label: `${plan.name} · ${plan.durationDays} 天` }))} onValueChange={(value) => updateField('inviteInviterRewardPlanId', value)} ariaLabel="邀请人订阅奖励" placeholder="选择套餐" /></div>}
+                </div>
+                <div className="grid gap-3 rounded-md border border-[#DCE4DF] p-4 sm:grid-cols-2">
+                  <div className="sm:col-span-2"><strong className="text-[11px]">新用户奖励</strong><p className="mt-0.5 text-[10px] text-zinc-400">被邀请人完成验证后到账</p></div>
+                  <div><span className="mb-1 block text-[11px] font-semibold text-zinc-500">奖励类型</span><AppSelect disabled={!form.inviteEnabled} value={form.inviteInviteeRewardType} options={INVITE_REWARD_TYPE_OPTIONS} onValueChange={(value) => updateField('inviteInviteeRewardType', value as 'balance' | 'subscription')} ariaLabel="新用户奖励类型" /></div>
+                  {form.inviteInviteeRewardType === 'balance' ? <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">奖励余额</span><input disabled={!form.inviteEnabled} min={0.0001} max={100000000} step={0.0001} type="number" value={form.inviteInviteeRewardCredits} onChange={(event) => updateField('inviteInviteeRewardCredits', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label> : <div><span className="mb-1 block text-[11px] font-semibold text-zinc-500">订阅套餐</span><AppSelect disabled={!form.inviteEnabled} value={form.inviteInviteeRewardPlanId} options={plans.map((plan) => ({ value: plan.id, label: `${plan.name} · ${plan.durationDays} 天` }))} onValueChange={(value) => updateField('inviteInviteeRewardPlanId', value)} ariaLabel="新用户订阅奖励" placeholder="选择套餐" /></div>}
+                </div>
+              </div>
+              <div className="border-t border-[#EDF0EE] pt-4">
+                <div className="mb-3 flex items-center justify-between gap-3"><span className="flex items-center gap-2"><ShieldAlert className="h-4 w-4 text-[#B42318]" /><span><strong className="block text-[11px]">邀请风控</strong><small className="text-[10px] text-zinc-400">异常邀请保留审计记录但不发奖</small></span></span><label className="flex items-center gap-2 text-[11px] text-zinc-500"><input type="checkbox" checked={form.inviteRiskEnabled} onChange={(event) => updateField('inviteRiskEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />启用</label></div>
+                <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5 ${form.inviteRiskEnabled ? '' : 'opacity-50'}`}>
+                  <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">单 IP / 24 小时</span><input disabled={!form.inviteRiskEnabled} min={1} type="number" value={form.inviteRiskMaxPerIP24h} onChange={(event) => updateField('inviteRiskMaxPerIP24h', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+                  <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">单设备 / 24 小时</span><input disabled={!form.inviteRiskEnabled} min={1} type="number" value={form.inviteRiskMaxPerDevice24h} onChange={(event) => updateField('inviteRiskMaxPerDevice24h', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+                  <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">单邀请人 / 24 小时</span><input disabled={!form.inviteRiskEnabled} min={1} type="number" value={form.inviteRiskMaxPerInviter24h} onChange={(event) => updateField('inviteRiskMaxPerInviter24h', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+                  <label className="flex items-center gap-2 rounded-md border border-[#DCE4DF] px-3 text-[10px] text-zinc-600"><input disabled={!form.inviteRiskEnabled} type="checkbox" checked={form.inviteRiskBlockSameIP} onChange={(event) => updateField('inviteRiskBlockSameIP', event.target.checked)} className="h-3.5 w-3.5 accent-[#047857]" />拦截同 IP</label>
+                  <label className="flex items-center gap-2 rounded-md border border-[#DCE4DF] px-3 text-[10px] text-zinc-600"><input disabled={!form.inviteRiskEnabled} type="checkbox" checked={form.inviteRiskBlockSameDevice} onChange={(event) => updateField('inviteRiskBlockSameDevice', event.target.checked)} className="h-3.5 w-3.5 accent-[#047857]" />拦截同设备</label>
+                </div>
+              </div>
+              <div className="border-t border-[#EDF0EE] pt-4">
+                <div className="mb-3 flex items-center justify-between gap-3"><span><strong className="block text-[11px]">注册机防护</strong><small className="text-[10px] text-zinc-400">一次性挑战、提交延迟、蜜罐、IP 与设备注册上限</small></span><label className="flex items-center gap-2 text-[11px] text-zinc-500"><input type="checkbox" checked={form.registrationRiskEnabled} onChange={(event) => updateField('registrationRiskEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />启用</label></div>
+                <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 ${form.registrationRiskEnabled ? '' : 'opacity-50'}`}>
+                  <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">单 IP 注册 / 24 小时</span><input disabled={!form.registrationRiskEnabled} min={1} type="number" value={form.registrationRiskMaxPerIP24h} onChange={(event) => updateField('registrationRiskMaxPerIP24h', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+                  <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">单设备注册 / 24 小时</span><input disabled={!form.registrationRiskEnabled} min={1} type="number" value={form.registrationRiskMaxPerDevice24h} onChange={(event) => updateField('registrationRiskMaxPerDevice24h', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+                  <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">最短填写时间（秒）</span><input disabled={!form.registrationRiskEnabled} min={1} type="number" value={form.registrationChallengeMinSeconds} onChange={(event) => updateField('registrationChallengeMinSeconds', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+                  <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">挑战请求 / IP / 小时</span><input disabled={!form.registrationRiskEnabled} min={1} type="number" value={form.registrationChallengeMaxPerIPHour} onChange={(event) => updateField('registrationChallengeMaxPerIPHour', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+                </div>
+              </div>
+              <p className="text-[10px] text-zinc-400">邀请注册始终要求完成邮箱验证后才发奖，即使全站注册邮箱验证开关关闭也不例外。</p>
             </section>
 
             <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:col-span-2">

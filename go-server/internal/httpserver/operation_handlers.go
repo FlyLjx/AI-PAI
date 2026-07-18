@@ -144,6 +144,10 @@ func (r *Router) currentSubscription(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) invites(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
 	if _, err := r.requireAdmin(req); err != nil {
 		writeError(w, err)
 		return
@@ -163,7 +167,11 @@ func (r *Router) inviteSummary(w http.ResponseWriter, req *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
-	userID := strings.TrimSpace(req.URL.Query().Get("userId"))
+	userID, authErr := r.requireFrontUser(req, req.URL.Query().Get("userId"))
+	if authErr != nil {
+		writeError(w, authErr)
+		return
+	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	values, err := settings.NewRepository(r.db).Get(ctx)
@@ -182,17 +190,33 @@ func (r *Router) inviteSummary(w http.ResponseWriter, req *http.Request) {
 			data["inviteCode"] = inviteCode
 		}
 	}
-	data["rewardType"] = "subscription"
-	planID := strings.TrimSpace(anyString(values["inviteRewardPlanId"]))
-	data["rewardPlanId"] = planID
-	if planID != "" {
-		if plan, err := operations.NewRepository(r.db).FindPlan(ctx, planID); err == nil && plan != nil {
-			data["rewardPlanName"] = plan.Name
-			data["rewardText"] = plan.Name
+	config := inviteProgramConfigFromSettings(values)
+	operationRepo := operations.NewRepository(r.db)
+	inviterPlanName := ""
+	if config.InviterReward.Type == "subscription" && config.InviterReward.PlanID != "" {
+		if plan, err := operationRepo.FindPlan(ctx, config.InviterReward.PlanID); err == nil && plan != nil {
+			inviterPlanName = plan.Name
 		}
 	}
-	if data["rewardText"] == nil {
-		data["rewardText"] = "订阅权益"
+	inviteePlanName := ""
+	if config.InviteeReward.Type == "subscription" && config.InviteeReward.PlanID != "" {
+		if plan, err := operationRepo.FindPlan(ctx, config.InviteeReward.PlanID); err == nil && plan != nil {
+			inviteePlanName = plan.Name
+		}
+	}
+	data["enabled"] = config.Enabled && inviteRewardSpecConfigured(config.InviterReward) && inviteRewardSpecConfigured(config.InviteeReward)
+	data["rewardType"] = config.InviterReward.Type
+	data["rewardPlanId"] = config.InviterReward.PlanID
+	data["rewardPlanName"] = inviterPlanName
+	data["rewardText"] = inviteRewardDescription(config.InviterReward, inviterPlanName)
+	data["inviteeRewardText"] = inviteRewardDescription(config.InviteeReward, inviteePlanName)
+	data["inviterReward"] = map[string]any{
+		"type": config.InviterReward.Type, "credits": config.InviterReward.Credits,
+		"planId": config.InviterReward.PlanID, "planName": inviterPlanName,
+	}
+	data["inviteeReward"] = map[string]any{
+		"type": config.InviteeReward.Type, "credits": config.InviteeReward.Credits,
+		"planId": config.InviteeReward.PlanID, "planName": inviteePlanName,
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }

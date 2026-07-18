@@ -106,6 +106,10 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM recharge_orders WHERE status='paid' AND paid_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND paid_at < CURDATE()`).Scan(&yesterdayPaidAmount); err != nil {
 		return nil, err
 	}
+	var totalPaidAmount float64
+	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM recharge_orders WHERE status='paid'`).Scan(&totalPaidAmount); err != nil {
+		return nil, err
+	}
 	var todayTasks, todayRunning, todayFailed, todaySuccess int
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
@@ -205,6 +209,9 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 		"total": totalUsers, "active": activeUsers,
 	}
 	result["orders"] = orderTotals
+	result["revenue"] = map[string]any{
+		"totalPaidAmount": totalPaidAmount,
+	}
 	result["taskStats"] = map[string]any{
 		"total":       taskTotal,
 		"queued":      taskQueued,
@@ -847,7 +854,15 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 			COALESCE(user_invites.reward_type, 'subscription') AS reward_type,
 			user_invites.reward_plan_id,
 			user_invites.reward_label,
+			user_invites.invitee_reward_credits,
+			COALESCE(user_invites.invitee_reward_type, 'none') AS invitee_reward_type,
+			user_invites.invitee_reward_plan_id,
+			user_invites.invitee_reward_label,
+			COALESCE(user_invites.status, 'rewarded') AS status,
+			user_invites.risk_reason,
 			user_invites.invitee_ip,
+			user_invites.verified_at,
+			user_invites.rewarded_at,
 			user_invites.created_at
 		FROM user_invites
 		LEFT JOIN users inviter ON inviter.id=user_invites.inviter_id
@@ -870,14 +885,24 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 }
 
 func (r *Repository) InviteSummary(ctx context.Context, userID string) (map[string]any, error) {
-	var count int
+	var count, pendingCount, blockedCount int
 	var subscriptionRewards int
+	var balanceRewards float64
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
-			COALESCE(SUM(CASE WHEN COALESCE(reward_type, 'subscription') = 'subscription' THEN 1 ELSE 0 END),0)
+			COALESCE(SUM(CASE WHEN COALESCE(reward_type, 'subscription') = 'subscription' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN COALESCE(reward_type, 'subscription') = 'balance' THEN reward_credits ELSE 0 END),0)
 		FROM user_invites
-		WHERE inviter_id=?
-	`, userID).Scan(&count, &subscriptionRewards); err != nil {
+		WHERE inviter_id=? AND COALESCE(status, 'rewarded')='rewarded'
+	`, userID).Scan(&count, &subscriptionRewards, &balanceRewards); err != nil {
+		return nil, err
+	}
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0)
+		FROM user_invites WHERE inviter_id=?
+	`, userID).Scan(&pendingCount, &blockedCount); err != nil {
 		return nil, err
 	}
 
@@ -897,6 +922,9 @@ func (r *Repository) InviteSummary(ctx context.Context, userID string) (map[stri
 	return map[string]any{
 		"inviteCount":              count,
 		"total":                    count,
+		"pendingCount":             pendingCount,
+		"blockedCount":             blockedCount,
+		"totalBalanceRewards":      balanceRewards,
 		"totalSubscriptionRewards": subscriptionRewards,
 		"records":                  records,
 		"receivedInvite":           receivedInvite,
@@ -910,7 +938,15 @@ func (r *Repository) inviteRecords(ctx context.Context, where string, arg any, l
 			COALESCE(user_invites.reward_type, 'subscription') AS reward_type,
 			user_invites.reward_plan_id,
 			user_invites.reward_label,
+			user_invites.invitee_reward_credits,
+			COALESCE(user_invites.invitee_reward_type, 'none') AS invitee_reward_type,
+			user_invites.invitee_reward_plan_id,
+			user_invites.invitee_reward_label,
+			COALESCE(user_invites.status, 'rewarded') AS status,
+			user_invites.risk_reason,
 			user_invites.invitee_ip,
+			user_invites.verified_at,
+			user_invites.rewarded_at,
 			user_invites.created_at
 		FROM user_invites
 		LEFT JOIN users inviter ON inviter.id=user_invites.inviter_id
@@ -980,6 +1016,348 @@ func (r *Repository) RewardInviteSubscription(ctx context.Context, inviterID str
 		return err
 	}
 	return tx.Commit()
+}
+
+type preparedInviteReward struct {
+	Type         string
+	Credits      float64
+	PlanID       string
+	Label        string
+	PlanSnapshot string
+}
+
+func (r *Repository) BindInvite(ctx context.Context, input InviteBindingInput) (*InviteRewardResult, error) {
+	input.InviterID = strings.TrimSpace(input.InviterID)
+	input.InviteeID = strings.TrimSpace(input.InviteeID)
+	input.InviteeIP = strings.TrimSpace(input.InviteeIP)
+	input.IPHash = strings.TrimSpace(input.IPHash)
+	input.DeviceHash = strings.TrimSpace(input.DeviceHash)
+	if input.InviterID == "" || input.InviteeID == "" || input.InviterID == input.InviteeID {
+		return nil, nil
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var inviterID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id FROM users
+		WHERE id=? AND status='active' AND email_verified_at IS NOT NULL
+		FOR UPDATE
+	`, input.InviterID).Scan(&inviterID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var existingID, existingStatus string
+	err = tx.QueryRowContext(ctx, `SELECT id, COALESCE(status, 'rewarded') FROM user_invites WHERE invitee_id=? FOR UPDATE`, input.InviteeID).Scan(&existingID, &existingStatus)
+	if err == nil {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return &InviteRewardResult{InviteID: existingID, InviterID: input.InviterID, InviteeID: input.InviteeID, Status: existingStatus}, nil
+	}
+	if err != sql.ErrNoRows {
+		return nil, err
+	}
+
+	inviterReward, inviterRewardErr := prepareInviteReward(ctx, tx, input.InviterReward)
+	inviteeReward, inviteeRewardErr := prepareInviteReward(ctx, tx, input.InviteeReward)
+	status := "pending"
+	riskReason := ""
+	if inviterRewardErr != nil || inviteeRewardErr != nil || (inviterReward.Type == "none" && inviteeReward.Type == "none") {
+		status = "blocked"
+		riskReason = "邀请奖励配置不完整"
+	}
+	if riskReason == "" {
+		riskReason, err = inviteRiskReason(ctx, tx, "", input.InviterID, input.InviteeIP, input.IPHash, input.DeviceHash, input.Risk)
+		if err != nil {
+			return nil, err
+		}
+		if riskReason != "" {
+			status = "blocked"
+		}
+	}
+
+	inviteID := newOperationID()
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO user_invites (
+			id, inviter_id, invitee_id,
+			reward_credits, reward_type, reward_plan_id, reward_label, reward_plan_snapshot,
+			invitee_reward_credits, invitee_reward_type, invitee_reward_plan_id, invitee_reward_label, invitee_reward_plan_snapshot,
+			status, ip_hash, device_hash, risk_reason, invitee_ip
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, inviteID, input.InviterID, input.InviteeID,
+		inviterReward.Credits, inviterReward.Type, optionalOperationString(inviterReward.PlanID), optionalOperationString(inviterReward.Label), optionalOperationString(inviterReward.PlanSnapshot),
+		inviteeReward.Credits, inviteeReward.Type, optionalOperationString(inviteeReward.PlanID), optionalOperationString(inviteeReward.Label), optionalOperationString(inviteeReward.PlanSnapshot),
+		status, optionalOperationString(input.IPHash), optionalOperationString(input.DeviceHash), optionalOperationString(riskReason), optionalOperationString(input.InviteeIP)); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return &InviteRewardResult{InviteID: inviteID, InviterID: input.InviterID, InviteeID: input.InviteeID, Status: status, RiskReason: riskReason}, nil
+}
+
+func (r *Repository) RemovePendingInvite(ctx context.Context, inviteeID string) error {
+	_, err := r.db.ExecContext(ctx, `DELETE FROM user_invites WHERE invitee_id=?`, strings.TrimSpace(inviteeID))
+	return err
+}
+
+func (r *Repository) FinalizeInviteRewards(ctx context.Context, inviteeID string, risk InviteRiskLimits) (*InviteRewardResult, error) {
+	inviteeID = strings.TrimSpace(inviteeID)
+	if inviteeID == "" {
+		return nil, nil
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var inviteID, inviterID, storedInviteeID, status string
+	var inviterType, inviteeType string
+	var inviterCredits, inviteeCredits float64
+	var inviterPlanID, inviterSnapshot, inviteePlanID, inviteeSnapshot sql.NullString
+	var inviteeIP, ipHash, deviceHash sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT id, inviter_id, invitee_id, COALESCE(status, 'rewarded'),
+			COALESCE(reward_type, 'none'), reward_credits, reward_plan_id, reward_plan_snapshot,
+			COALESCE(invitee_reward_type, 'none'), invitee_reward_credits, invitee_reward_plan_id, invitee_reward_plan_snapshot,
+			invitee_ip, device_hash, COALESCE(ip_hash, '')
+		FROM user_invites
+		WHERE invitee_id=?
+		FOR UPDATE
+	`, inviteeID).Scan(
+		&inviteID, &inviterID, &storedInviteeID, &status,
+		&inviterType, &inviterCredits, &inviterPlanID, &inviterSnapshot,
+		&inviteeType, &inviteeCredits, &inviteePlanID, &inviteeSnapshot,
+		&inviteeIP, &deviceHash, &ipHash,
+	)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := &InviteRewardResult{InviteID: inviteID, InviterID: inviterID, InviteeID: storedInviteeID, Status: status}
+	if status != "pending" {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+
+	var verifiedUserID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id FROM users
+		WHERE id=? AND status='active' AND email_verified_at IS NOT NULL
+		FOR UPDATE
+	`, storedInviteeID).Scan(&verifiedUserID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	riskReason, err := inviteRiskReason(ctx, tx, inviteID, inviterID, inviteeIP.String, ipHash.String, deviceHash.String, risk)
+	if err != nil {
+		return nil, err
+	}
+	if riskReason != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE user_invites SET status='blocked', risk_reason=?, verified_at=NOW() WHERE id=?`, riskReason, inviteID); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		result.Status = "blocked"
+		result.RiskReason = riskReason
+		return result, nil
+	}
+
+	if err := grantInviteRewardInTx(ctx, tx, inviterID, "邀请奖励：被邀请人已完成邮箱验证", inviterType, inviterCredits, inviterPlanID.String, inviterSnapshot.String); err != nil {
+		return nil, err
+	}
+	if err := grantInviteRewardInTx(ctx, tx, storedInviteeID, "新人奖励：已完成邀请注册和邮箱验证", inviteeType, inviteeCredits, inviteePlanID.String, inviteeSnapshot.String); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE user_invites
+		SET status='rewarded', risk_reason=NULL, verified_at=NOW(), rewarded_at=NOW()
+		WHERE id=? AND status='pending'
+	`, inviteID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	result.Status = "rewarded"
+	return result, nil
+}
+
+func prepareInviteReward(ctx context.Context, tx *database.Tx, input InviteRewardSpec) (preparedInviteReward, error) {
+	rewardType := strings.ToLower(strings.TrimSpace(input.Type))
+	switch rewardType {
+	case "", "none":
+		return preparedInviteReward{Type: "none"}, nil
+	case "balance":
+		credits := normalizeOperationCreditAmount(input.Credits)
+		if credits <= 0 {
+			return preparedInviteReward{Type: "none"}, errors.New("邀请余额奖励必须大于 0")
+		}
+		return preparedInviteReward{Type: "balance", Credits: credits, Label: fmt.Sprintf("%s 余额", strconv.FormatFloat(credits, 'f', -1, 64))}, nil
+	case "subscription":
+		planID := strings.TrimSpace(input.PlanID)
+		if planID == "" {
+			return preparedInviteReward{Type: "none"}, errors.New("邀请订阅奖励缺少套餐")
+		}
+		plan, err := scanPlan(tx.QueryRowContext(ctx, `
+			SELECT id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent,
+				allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at
+			FROM subscription_plans WHERE id=? AND status='active' FOR UPDATE
+		`, planID))
+		if err != nil {
+			return preparedInviteReward{Type: "none"}, err
+		}
+		snapshot, err := encodeSubscriptionPlanSnapshot(&plan)
+		if err != nil {
+			return preparedInviteReward{Type: "none"}, err
+		}
+		return preparedInviteReward{Type: "subscription", PlanID: plan.ID, Label: plan.Name, PlanSnapshot: snapshot}, nil
+	default:
+		return preparedInviteReward{Type: "none"}, errors.New("不支持的邀请奖励类型")
+	}
+}
+
+func inviteRiskReason(ctx context.Context, tx *database.Tx, excludeInviteID string, inviterID string, inviteeIP string, ipHash string, deviceHash string, risk InviteRiskLimits) (string, error) {
+	if !risk.Enabled {
+		return "", nil
+	}
+	if risk.BlockSameDevice && strings.TrimSpace(deviceHash) == "" {
+		return "设备标识缺失，奖励已进入风控拦截", nil
+	}
+	if risk.BlockSameIP && strings.TrimSpace(ipHash) != "" {
+		var sameIP int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM users
+			LEFT JOIN user_registration_fingerprints ON user_registration_fingerprints.user_id=users.id
+			WHERE users.id=? AND (user_registration_fingerprints.ip_hash=? OR users.invited_ip=?)
+		`, inviterID, ipHash, strings.TrimSpace(inviteeIP)).Scan(&sameIP); err != nil {
+			return "", err
+		}
+		if sameIP > 0 {
+			return "邀请人与被邀请人使用相同网络地址", nil
+		}
+	}
+	if risk.BlockSameDevice && strings.TrimSpace(deviceHash) != "" {
+		var sameDevice int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM user_registration_fingerprints WHERE user_id=? AND device_hash=?`, inviterID, deviceHash).Scan(&sameDevice); err != nil {
+			return "", err
+		}
+		if sameDevice > 0 {
+			return "邀请人与被邀请人使用相同设备", nil
+		}
+	}
+
+	checks := []struct {
+		limit  int
+		query  string
+		args   []any
+		reason string
+	}{
+		{risk.MaxPerIP24h, `SELECT COUNT(*) FROM user_invites WHERE id<>? AND invitee_ip=? AND status IN ('pending','rewarded') AND created_at>=DATE_SUB(NOW(), INTERVAL 1 DAY)`, []any{excludeInviteID, strings.TrimSpace(inviteeIP)}, "同一网络地址 24 小时内有效邀请过多"},
+		{risk.MaxPerDevice24h, `SELECT COUNT(*) FROM user_invites WHERE id<>? AND device_hash=? AND status IN ('pending','rewarded') AND created_at>=DATE_SUB(NOW(), INTERVAL 1 DAY)`, []any{excludeInviteID, strings.TrimSpace(deviceHash)}, "同一设备 24 小时内有效邀请过多"},
+		{risk.MaxPerInviter24h, `SELECT COUNT(*) FROM user_invites WHERE id<>? AND inviter_id=? AND status IN ('pending','rewarded') AND created_at>=DATE_SUB(NOW(), INTERVAL 1 DAY)`, []any{excludeInviteID, inviterID}, "邀请人 24 小时内有效邀请已达到上限"},
+	}
+	for _, check := range checks {
+		if check.limit <= 0 || strings.TrimSpace(fmt.Sprint(check.args[1])) == "" {
+			continue
+		}
+		var count int
+		if err := tx.QueryRowContext(ctx, check.query, check.args...).Scan(&count); err != nil {
+			return "", err
+		}
+		if count >= check.limit {
+			return check.reason, nil
+		}
+	}
+	return "", nil
+}
+
+func grantInviteRewardInTx(ctx context.Context, tx *database.Tx, userID string, remark string, rewardType string, credits float64, planID string, planSnapshot string) error {
+	switch strings.ToLower(strings.TrimSpace(rewardType)) {
+	case "", "none":
+		return nil
+	case "balance":
+		credits = normalizeOperationCreditAmount(credits)
+		if credits <= 0 {
+			return errors.New("邀请余额奖励配置无效")
+		}
+		var balance float64
+		if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id=? AND status='active' FOR UPDATE`, userID).Scan(&balance); err != nil {
+			return err
+		}
+		nextBalance := normalizeOperationCreditAmount(balance + credits)
+		if _, err := tx.ExecContext(ctx, `UPDATE users SET credits=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, nextBalance, userID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark)
+			VALUES (?, ?, 'invite_reward', ?, ?, ?)
+		`, newOperationID(), userID, credits, nextBalance, remark)
+		return err
+	case "subscription":
+		return grantSubscriptionSnapshotInTx(ctx, tx, userID, planID, planSnapshot, time.Now())
+	default:
+		return errors.New("邀请奖励类型无效")
+	}
+}
+
+func grantSubscriptionSnapshotInTx(ctx context.Context, tx *database.Tx, userID string, planID string, snapshot string, now time.Time) error {
+	plan := subscriptionPlanFromSnapshot(snapshot, nil)
+	if plan == nil || plan.DurationDays <= 0 {
+		return errors.New("邀请订阅快照无效")
+	}
+	if strings.TrimSpace(planID) == "" {
+		planID = plan.ID
+	}
+	baseTime := now
+	var currentExpires sql.NullTime
+	err := tx.QueryRowContext(ctx, `SELECT expires_at FROM user_subscriptions WHERE user_id=? FOR UPDATE`, userID).Scan(&currentExpires)
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+	if currentExpires.Valid && currentExpires.Time.After(now) {
+		baseTime = currentExpires.Time
+	}
+	expiresAt := baseTime.AddDate(0, 0, plan.DurationDays)
+	if err == sql.ErrNoRows {
+		_, err = tx.ExecContext(ctx, `
+			INSERT INTO user_subscriptions (id, user_id, plan_id, plan_snapshot, status, started_at, expires_at)
+			VALUES (?, ?, ?, ?, 'active', ?, ?)
+		`, newOperationID(), userID, planID, snapshot, now, expiresAt)
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `
+		UPDATE user_subscriptions
+		SET plan_id=?, plan_snapshot=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
+		WHERE user_id=?
+	`, planID, snapshot, now, expiresAt, userID)
+	return err
+}
+
+func optionalOperationString(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (r *Repository) DeleteInvite(ctx context.Context, id string) (*InviteDeleteResult, error) {
@@ -2078,9 +2456,31 @@ func scanPlanWithPrefix(row interface{ Scan(dest ...any) error }, prefix ...any)
 
 func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 	var item Invite
-	var inviter, invitee, rewardType, planID, label, ip sql.NullString
+	var inviter, invitee, rewardType, planID, label sql.NullString
+	var inviteeRewardType, inviteePlanID, inviteeLabel, riskReason, ip sql.NullString
+	var verifiedAt, rewardedAt sql.NullTime
 	var created time.Time
-	err := row.Scan(&item.ID, &item.InviterID, &inviter, &item.InviteeID, &invitee, &item.RewardCredits, &rewardType, &planID, &label, &ip, &created)
+	err := row.Scan(
+		&item.ID,
+		&item.InviterID,
+		&inviter,
+		&item.InviteeID,
+		&invitee,
+		&item.RewardCredits,
+		&rewardType,
+		&planID,
+		&label,
+		&item.InviteeRewardCredits,
+		&inviteeRewardType,
+		&inviteePlanID,
+		&inviteeLabel,
+		&item.Status,
+		&riskReason,
+		&ip,
+		&verifiedAt,
+		&rewardedAt,
+		&created,
+	)
 	item.InviterEmail = nullString(inviter)
 	item.InviteeEmail = nullString(invitee)
 	item.RewardType = "subscription"
@@ -2089,7 +2489,22 @@ func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 	}
 	item.RewardPlanID = nullString(planID)
 	item.RewardLabel = nullString(label)
+	item.InviteeRewardType = "none"
+	if inviteeRewardType.Valid && strings.TrimSpace(inviteeRewardType.String) != "" {
+		item.InviteeRewardType = inviteeRewardType.String
+	}
+	item.InviteeRewardPlanID = nullString(inviteePlanID)
+	item.InviteeRewardLabel = nullString(inviteeLabel)
+	item.RiskReason = nullString(riskReason)
 	item.InviteeIP = nullString(ip)
+	if verifiedAt.Valid {
+		value := appclock.DatabaseTime(verifiedAt.Time).Format(time.RFC3339)
+		item.VerifiedAt = &value
+	}
+	if rewardedAt.Valid {
+		value := appclock.DatabaseTime(rewardedAt.Time).Format(time.RFC3339)
+		item.RewardedAt = &value
+	}
 	item.CreatedAt = appclock.DatabaseTime(created).Format(time.RFC3339)
 	return item, err
 }

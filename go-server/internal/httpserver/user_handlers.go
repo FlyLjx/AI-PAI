@@ -48,6 +48,7 @@ func (r *Router) userLogin(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusForbidden, "用户已被禁用"))
 		return
 	}
+	user = r.settleInviteRewards(ctx, user)
 	token, err := r.tokens.CreateUserToken(user.ID)
 	if err != nil {
 		writeError(w, err)
@@ -316,6 +317,7 @@ func (r *Router) verifyUserEmailByAdmin(w http.ResponseWriter, req *http.Request
 		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
 		return
 	}
+	updated = r.settleInviteRewards(ctx, updated)
 	data := r.publicUserWithSubscription(ctx, updated)
 	r.publishCurrentUser(context.Background(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
@@ -609,15 +611,19 @@ func (r *Router) registerUser(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool) {
 	var input struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
+		Email          string `json:"email"`
+		Password       string `json:"password"`
+		Role           string `json:"role"`
+		InviteCode     string `json:"inviteCode"`
+		DeviceID       string `json:"deviceId"`
+		ChallengeToken string `json:"challengeToken"`
+		Website        string `json:"website"`
 	}
 	if err := decodeCompatJSON(req, &input); err != nil {
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
 		return
 	}
-	email := strings.TrimSpace(input.Email)
+	email := strings.ToLower(strings.TrimSpace(input.Email))
 	if email == "" || len(input.Password) < 6 {
 		writeError(w, newAppError(http.StatusBadRequest, "请输入邮箱和至少 6 位密码"))
 		return
@@ -629,11 +635,9 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	repo := users.NewRepository(r.db)
-	if existing, err := repo.FindByEmail(ctx, email); err == nil && existing != nil {
-		writeError(w, newAppError(http.StatusConflict, "邮箱已存在"))
-		return
-	}
-	settingValues := map[string]any{}
+	settingValues := settings.Settings{}
+	fingerprint := registrationFingerprintForRequest(req, input.DeviceID)
+	inviteConfig := inviteProgramConfig{}
 	if !admin {
 		if values, err := settings.NewRepository(r.db).Get(ctx); err == nil {
 			settingValues = values
@@ -645,16 +649,91 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 			writeError(w, newAppError(http.StatusForbidden, "当前暂未开放注册"))
 			return
 		}
+		if strings.TrimSpace(input.Website) != "" {
+			writeError(w, newAppError(http.StatusTooManyRequests, "注册请求未通过安全校验"))
+			return
+		}
+		var err error
+		fingerprint, err = r.validateRegistrationRisk(ctx, req, input.ChallengeToken, input.DeviceID, registrationRiskConfigFromSettings(settingValues))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		inviteConfig = inviteProgramConfigFromSettings(settingValues)
+	}
+	if existing, err := repo.FindByEmail(ctx, email); err == nil && existing != nil {
+		writeError(w, newAppError(http.StatusConflict, "邮箱已存在"))
+		return
 	}
 	emailVerificationRequired := !admin && anyBool(settingValues["registerEmailVerification"])
+	var inviter *users.User
+	inviteCodeInput := strings.TrimSpace(input.InviteCode)
+	if !admin && inviteCodeInput != "" {
+		inviteCode := users.NormalizeInviteCode(inviteCodeInput)
+		if inviteCode == "" {
+			writeError(w, newAppError(http.StatusBadRequest, "邀请码格式不正确"))
+			return
+		}
+		if !inviteConfig.Enabled {
+			writeError(w, newAppError(http.StatusForbidden, "邀请活动暂未开放"))
+			return
+		}
+		if !inviteRewardSpecConfigured(inviteConfig.InviterReward) || !inviteRewardSpecConfigured(inviteConfig.InviteeReward) {
+			writeError(w, newAppError(http.StatusServiceUnavailable, "邀请奖励尚未配置完整，请联系管理员"))
+			return
+		}
+		if !anyBool(settingValues["emailEnabled"]) {
+			writeError(w, newAppError(http.StatusServiceUnavailable, "邀请注册需要先启用邮箱验证服务"))
+			return
+		}
+		var err error
+		inviter, err = repo.FindByInviteCode(ctx, inviteCode)
+		if errors.Is(err, sql.ErrNoRows) || inviter == nil || inviter.Status != "active" || inviter.EmailVerifiedAt == nil || strings.EqualFold(inviter.Email, email) {
+			writeError(w, newAppError(http.StatusBadRequest, "邀请码无效或暂不可用"))
+			return
+		}
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		emailVerificationRequired = true
+	}
 	now := time.Now()
 	var emailVerifiedAt *time.Time
 	if !emailVerificationRequired {
 		emailVerifiedAt = &now
 	}
+	userID := newID()
+	operationRepo := operations.NewRepository(r.db)
+	var binding *operations.InviteRewardResult
+	var err error
+	if inviter != nil {
+		binding, err = operationRepo.BindInvite(ctx, operations.InviteBindingInput{
+			InviterID:     inviter.ID,
+			InviteeID:     userID,
+			InviteeIP:     fingerprint.IP,
+			IPHash:        fingerprint.IPHash,
+			DeviceHash:    fingerprint.DeviceHash,
+			InviterReward: inviteConfig.InviterReward,
+			InviteeReward: inviteConfig.InviteeReward,
+			Risk:          inviteConfig.Risk,
+		})
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
+	invitedBy := ""
+	invitedIP := ""
+	if inviter != nil {
+		invitedBy = inviter.ID
+		invitedIP = fingerprint.IP
+	}
 	user, err := repo.Create(ctx, users.User{
-		ID:              newID(),
+		ID:              userID,
 		Email:           email,
+		InvitedBy:       invitedBy,
+		InvitedIP:       invitedIP,
 		PasswordHash:    auth.HashPassword(input.Password),
 		Credits:         0,
 		Role:            role,
@@ -662,8 +741,21 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 		EmailVerifiedAt: emailVerifiedAt,
 	})
 	if err != nil {
+		if binding != nil {
+			_ = operationRepo.RemovePendingInvite(context.Background(), userID)
+		}
 		writeError(w, err)
 		return
+	}
+	if !admin {
+		if err := r.recordRegistrationFingerprint(ctx, user.ID, fingerprint); err != nil {
+			if binding != nil {
+				_ = operationRepo.RemovePendingInvite(context.Background(), user.ID)
+			}
+			_, _ = repo.Delete(context.Background(), user.ID)
+			writeError(w, err)
+			return
+		}
 	}
 	if admin {
 		writeJSON(w, http.StatusCreated, map[string]any{"data": users.ToPublicUser(user)})

@@ -41,7 +41,7 @@ type UserDraft = {
 };
 
 type GrantMode = 'plan' | 'custom';
-type CreditLogFilter = 'all' | 'deduct' | 'recharge' | 'manual_adjust';
+type CreditLogFilter = 'all' | 'deduct' | 'recharge' | 'manual_adjust' | 'invite_reward';
 
 const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active' };
 const pageSize = 12;
@@ -56,6 +56,7 @@ function creditLogView(log: CreditLog) {
   const change = creditLogChange(log);
   if (log.type === 'deduct') return { label: 'API 消费', tone: 'border-red-200 bg-red-50 text-red-700', amountTone: 'text-red-600', change };
   if (log.type === 'recharge') return { label: '余额充值', tone: 'border-emerald-200 bg-emerald-50 text-emerald-700', amountTone: 'text-emerald-700', change };
+  if (log.type === 'invite_reward') return { label: '邀请奖励', tone: 'border-cyan-200 bg-cyan-50 text-cyan-700', amountTone: 'text-cyan-700', change };
   if (log.type === 'manual_adjust') return change < 0
     ? { label: '后台扣减', tone: 'border-amber-200 bg-amber-50 text-amber-700', amountTone: 'text-amber-700', change }
     : { label: '后台增加', tone: 'border-blue-200 bg-blue-50 text-blue-700', amountTone: 'text-blue-700', change };
@@ -573,7 +574,7 @@ export default function AdminUsersPage() {
             <div className="flex flex-wrap items-end gap-4 border-b border-[#EDF0EE] bg-[#FAFBFA] px-5 py-3">
               <div className="min-w-28"><small className="block text-[10px] font-semibold text-zinc-400">当前余额</small><strong className="mt-1 block font-mono text-base text-[#047857]">{formatCNY(Number(creditLogUser.credits || 0))}</strong></div>
               <div className="min-w-24"><small className="block text-[10px] font-semibold text-zinc-400">流水记录</small><strong className="mt-1 block font-mono text-base text-[#17201B]">{creditLogTotal.toLocaleString('zh-CN')} 条</strong></div>
-              <div className="ml-auto w-full sm:w-40"><span className="mb-1 block text-[10px] font-semibold text-zinc-400">变动类型</span><AppSelect compact value={creditLogFilter} onValueChange={(value) => { setCreditLogFilter(value as CreditLogFilter); setCreditLogPage(1); }} ariaLabel="积分明细类型" options={[{ value: 'all', label: '全部明细' }, { value: 'deduct', label: 'API 消费' }, { value: 'recharge', label: '余额充值' }, { value: 'manual_adjust', label: '后台调整' }]} /></div>
+              <div className="ml-auto w-full sm:w-40"><span className="mb-1 block text-[10px] font-semibold text-zinc-400">变动类型</span><AppSelect compact value={creditLogFilter} onValueChange={(value) => { setCreditLogFilter(value as CreditLogFilter); setCreditLogPage(1); }} ariaLabel="积分明细类型" options={[{ value: 'all', label: '全部明细' }, { value: 'deduct', label: 'API 消费' }, { value: 'recharge', label: '余额充值' }, { value: 'invite_reward', label: '邀请奖励' }, { value: 'manual_adjust', label: '后台调整' }]} /></div>
             </div>
 
             <div className="min-h-72 flex-1 overflow-auto">

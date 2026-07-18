@@ -24,6 +24,7 @@ export type PortalUser = {
   role: 'user' | 'admin';
   status: string;
   credits: number;
+  inviteCode?: string;
   token: string;
   emailVerifiedAt?: string | null;
   createdAt?: string;
@@ -39,6 +40,57 @@ export type RegistrationVerification = {
 };
 
 export type RegisterResult = PortalUser | RegistrationVerification;
+
+export type RegistrationChallenge = {
+  required: boolean;
+  token?: string;
+  minDelaySeconds?: number;
+  expiresInSeconds?: number;
+};
+
+export type InviteRewardView = {
+  type: 'none' | 'balance' | 'subscription';
+  credits: number;
+  planId?: string;
+  planName?: string;
+};
+
+export type InviteRecord = {
+  id: string;
+  inviterId: string;
+  inviterEmail?: string;
+  inviteeId: string;
+  inviteeEmail?: string;
+  rewardCredits: number;
+  rewardType: string;
+  rewardPlanId?: string;
+  rewardLabel?: string;
+  inviteeRewardCredits: number;
+  inviteeRewardType: string;
+  inviteeRewardPlanId?: string;
+  inviteeRewardLabel?: string;
+  status: string;
+  riskReason?: string;
+  verifiedAt?: string;
+  rewardedAt?: string;
+  createdAt: string;
+};
+
+export type InviteSummary = {
+  enabled: boolean;
+  inviteCode: string;
+  inviteCount: number;
+  pendingCount: number;
+  blockedCount: number;
+  totalBalanceRewards: number;
+  totalSubscriptionRewards: number;
+  rewardText: string;
+  inviteeRewardText: string;
+  inviterReward: InviteRewardView;
+  inviteeReward: InviteRewardView;
+  records: InviteRecord[];
+  receivedInvite?: InviteRecord | null;
+};
 
 export type VerifiedAccount = Pick<PortalUser, 'id' | 'email' | 'role' | 'status'> &
   Partial<Pick<PortalUser, 'credits' | 'emailVerifiedAt' | 'createdAt' | 'subscription'>>;
@@ -308,9 +360,19 @@ export function isRegistrationVerification(result: RegisterResult): result is Re
   return 'verificationRequired' in result && result.verificationRequired === true;
 }
 
-export async function register(email: string, password: string): Promise<RegisterResult> {
+export async function registrationChallenge(): Promise<RegistrationChallenge> {
+  const { data } = await api<RegistrationChallenge>('/api/users/register/challenge');
+  return data;
+}
+
+export async function register(email: string, password: string, options: {
+  inviteCode?: string;
+  deviceId?: string;
+  challengeToken?: string;
+  website?: string;
+} = {}): Promise<RegisterResult> {
   const { data } = await api<RegisterResult>('/api/users/register', {
-    method: 'POST', body: JSON.stringify({ email, password }),
+    method: 'POST', body: JSON.stringify({ email, password, ...options }),
   });
   if (isRegistrationVerification(data)) return data;
   if (!data.id || !data.token) throw new APIError('注册响应缺少登录凭据', 502);
@@ -391,6 +453,7 @@ export const portalApi = {
   syncRecharge: (user: PortalUser, id: string) => api<Record<string, unknown>>(`/api/recharge/${encodeURIComponent(id)}/sync`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }, user.token),
   requestEmailChange: (user: PortalUser, password: string, email: string) => api<EmailChangeRequest>(`/api/users/${encodeURIComponent(user.id)}/email`, { method: 'POST', body: JSON.stringify({ userId: user.id, password, email }) }, user.token),
   resendEmailVerification: (user: PortalUser) => api<RegistrationVerification>(`/api/users/${encodeURIComponent(user.id)}/resend-verification`, { method: 'POST' }, user.token),
+  inviteSummary: (user: PortalUser) => api<InviteSummary>(`/api/invites/summary${query({ userId: user.id })}`, {}, user.token),
   changePassword: (user: PortalUser, oldPassword: string, password: string) => api(`/api/users/${encodeURIComponent(user.id)}/password`, { method: 'PATCH', body: JSON.stringify({ userId: user.id, oldPassword, password }) }, user.token),
   compatibleModels: (apiKey: string) => openAIRequest<{ object: string; data: CompatibleModel[] }>('/v1/models', apiKey),
   generateImages: (apiKey: string, input: ImageGenerationInput) => openAIRequest<ImageGenerationResult>('/v1/images/generations', apiKey, {

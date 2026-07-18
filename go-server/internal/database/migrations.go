@@ -64,6 +64,42 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "user_invites", "reward_label", "VARCHAR(120) NULL", "reward_plan_id"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "reward_plan_snapshot", JSONTextType()+" NULL", "reward_label"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "invitee_reward_type", "VARCHAR(20) NOT NULL DEFAULT 'none'", "reward_plan_snapshot"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "invitee_reward_credits", "NUMERIC(12,4) NOT NULL DEFAULT 0", "invitee_reward_type"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "invitee_reward_plan_id", "VARCHAR(36) NULL", "invitee_reward_credits"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "invitee_reward_label", "VARCHAR(120) NULL", "invitee_reward_plan_id"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "invitee_reward_plan_snapshot", JSONTextType()+" NULL", "invitee_reward_label"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "status", "VARCHAR(20) NOT NULL DEFAULT 'rewarded'", "invitee_reward_plan_snapshot"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "ip_hash", "VARCHAR(64) NULL", "status"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "device_hash", "VARCHAR(64) NULL", "ip_hash"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "risk_reason", "VARCHAR(255) NULL", "device_hash"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "verified_at", "TIMESTAMP NULL", "risk_reason"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "rewarded_at", "TIMESTAMP NULL", "verified_at"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "subscription_lottery_prizes", "prize_type", "VARCHAR(20) NOT NULL DEFAULT 'subscription'", "name"); err != nil {
 		return err
 	}
@@ -102,6 +138,11 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_user_checkins_user_id_checkin_date", `CREATE INDEX idx_user_checkins_user_id_checkin_date ON user_checkins (user_id, checkin_date)`},
 		{"idx_user_invites_invitee_id", `CREATE INDEX idx_user_invites_invitee_id ON user_invites (invitee_id)`},
 		{"idx_user_invites_inviter_id", `CREATE INDEX idx_user_invites_inviter_id ON user_invites (inviter_id)`},
+		{"idx_user_invites_status_created", `CREATE INDEX idx_user_invites_status_created ON user_invites (status, created_at)`},
+		{"idx_user_invites_device_created", `CREATE INDEX idx_user_invites_device_created ON user_invites (device_hash, created_at)`},
+		{"idx_registration_fingerprints_ip_created", `CREATE INDEX idx_registration_fingerprints_ip_created ON user_registration_fingerprints (ip_hash, created_at)`},
+		{"idx_registration_fingerprints_device_created", `CREATE INDEX idx_registration_fingerprints_device_created ON user_registration_fingerprints (device_hash, created_at)`},
+		{"idx_registration_challenges_ip_created", `CREATE INDEX idx_registration_challenges_ip_created ON registration_challenges (ip_hash, created_at)`},
 		{"idx_api_access_logs_task_id", `CREATE INDEX idx_api_access_logs_task_id ON api_access_logs (task_id)`},
 		{"idx_subscription_lottery_prizes_status_sort", `CREATE INDEX idx_subscription_lottery_prizes_status_sort ON subscription_lottery_prizes (status, sort_order)`},
 		{"idx_subscription_lottery_records_user_created", `CREATE INDEX idx_subscription_lottery_records_user_created ON subscription_lottery_records (user_id, created_at)`},
@@ -543,7 +584,33 @@ func schemaBootstrapStatements() []string {
 				reward_type VARCHAR(20) NOT NULL DEFAULT 'credits',
 				reward_plan_id VARCHAR(36) NULL,
 				reward_label VARCHAR(120) NULL,
+				reward_plan_snapshot ` + JSONTextType() + ` NULL,
+				invitee_reward_type VARCHAR(20) NOT NULL DEFAULT 'none',
+				invitee_reward_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
+				invitee_reward_plan_id VARCHAR(36) NULL,
+				invitee_reward_label VARCHAR(120) NULL,
+				invitee_reward_plan_snapshot ` + JSONTextType() + ` NULL,
+				status VARCHAR(20) NOT NULL DEFAULT 'pending',
+				ip_hash VARCHAR(64) NULL,
+				device_hash VARCHAR(64) NULL,
+				risk_reason VARCHAR(255) NULL,
 				invitee_ip VARCHAR(64) NULL,
+				verified_at TIMESTAMP NULL,
+				rewarded_at TIMESTAMP NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE TABLE IF NOT EXISTS user_registration_fingerprints (
+				user_id VARCHAR(36) PRIMARY KEY,
+				ip_hash VARCHAR(64) NOT NULL,
+				device_hash VARCHAR(64) NULL,
+				user_agent_hash VARCHAR(64) NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE TABLE IF NOT EXISTS registration_challenges (
+				token_hash VARCHAR(64) PRIMARY KEY,
+				ip_hash VARCHAR(64) NOT NULL,
+				expires_at TIMESTAMP NOT NULL,
+				used_at TIMESTAMP NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
 			`CREATE TABLE IF NOT EXISTS subscription_lottery_prizes (
