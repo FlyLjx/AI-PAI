@@ -97,7 +97,7 @@ export default function AdminInvitesPage() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1040px] text-left text-xs">
             <thead className="bg-[#F7F8F6] text-[10px] text-zinc-500">
-              <tr><th className="px-4 py-3">邀请人</th><th className="px-4 py-3">被邀请人</th><th className="px-4 py-3">邀请人奖励</th><th className="px-4 py-3">新用户奖励</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">网络地址</th><th className="px-4 py-3">创建时间</th></tr>
+              <tr><th className="px-4 py-3">邀请人</th><th className="px-4 py-3">被邀请人</th><th className="px-4 py-3">邀请人奖励</th><th className="px-4 py-3">新用户奖励</th><th className="px-4 py-3">充值返利</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">网络地址</th><th className="px-4 py-3">创建时间</th></tr>
             </thead>
             <tbody className="divide-y divide-[#EDF0EE]">
               {items.map((item) => {
@@ -109,13 +109,14 @@ export default function AdminInvitesPage() {
                     <td className="max-w-[190px] px-4 py-3"><strong className="block truncate">{item.inviteeEmail || item.inviteeId}</strong><small className="block truncate font-mono text-[9px] text-zinc-400">{item.inviteeId}</small></td>
                     <td className="px-4 py-3 font-medium">{rewardText(item, 'inviter')}</td>
                     <td className="px-4 py-3 font-medium">{rewardText(item, 'invitee')}</td>
+                    <td className="whitespace-nowrap px-4 py-3"><strong className="block text-[11px] text-amber-700">{formatCNY(Number(item.rechargeRebateCredits || 0))}</strong><small className="text-[9px] text-zinc-400">{Number(item.rechargeRebateCount || 0)} 笔</small></td>
                     <td className="max-w-[230px] px-4 py-3"><span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${status.className}`}><StatusIcon className="h-3 w-3" />{status.label}</span>{item.riskReason && <small className="mt-1 block truncate text-[10px] text-red-600" title={item.riskReason}>{item.riskReason}</small>}</td>
                     <td className="px-4 py-3 font-mono text-[10px] text-zinc-500">{item.inviteeIp || '-'}</td>
                     <td className="whitespace-nowrap px-4 py-3 text-[10px] text-zinc-500">{formatDate(item.rewardedAt || item.createdAt)}</td>
                   </tr>
                 );
               })}
-              {!loading && !items.length && <tr><td colSpan={7} className="px-4 py-14 text-center text-zinc-400"><UserPlus className="mx-auto mb-2 h-6 w-6" />暂无邀请记录</td></tr>}
+              {!loading && !items.length && <tr><td colSpan={8} className="px-4 py-14 text-center text-zinc-400"><UserPlus className="mx-auto mb-2 h-6 w-6" />暂无邀请记录</td></tr>}
             </tbody>
           </table>
         </div>

@@ -32,7 +32,7 @@ func (r *Router) settings(w http.ResponseWriter, req *http.Request) {
 		defer cancel()
 		data, err := settings.NewRepository(r.db).Update(ctx, input)
 		if err != nil {
-			if errors.Is(err, settings.ErrInvalidRechargeRate) || errors.Is(err, settings.ErrInvalidDynamicConcurrency) || errors.Is(err, settings.ErrInvalidInviteSettings) {
+			if errors.Is(err, settings.ErrInvalidRechargeRate) || errors.Is(err, settings.ErrInvalidDynamicConcurrency) || errors.Is(err, settings.ErrInvalidInviteSettings) || errors.Is(err, settings.ErrInvalidAdminNotification) {
 				writeError(w, newAppError(http.StatusBadRequest, err.Error()))
 				return
 			}
@@ -131,7 +131,7 @@ func (r *Router) sendTestEmail(w http.ResponseWriter, req *http.Request, values 
 	smtpConfig := smtpSettingsFromMap(values)
 	siteName := emailBrandName(anyString(values["siteName"]))
 	body := "这是一封来自 " + siteName + " 的测试邮件。\n\n如果你收到这封邮件，说明 SMTP 配置可用，账户验证与服务通知可以正常发送。"
-	if err := sendSMTPMail(smtpConfig, email, siteName+" 邮件服务测试", body); err != nil {
+	if err := r.deliverMail(req.Context(), "smtp_test", smtpConfig, email, siteName+" 邮件服务测试", body); err != nil {
 		writeError(w, err)
 		return
 	}

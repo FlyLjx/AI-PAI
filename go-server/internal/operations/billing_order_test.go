@@ -60,12 +60,69 @@ func TestCompleteBalanceOrderSkipsAlreadyPaidOrder(t *testing.T) {
 	expectOrder(mock, "paid", "recharge", nil, 10, time.Now())
 	mock.ExpectCommit()
 
-	_, changed, err := repo.CompleteOrder(context.Background(), "out-1", "trade-1")
+	_, changed, err := repo.CompleteOrder(context.Background(), "out-1", "trade-1", InviteRechargeRebateConfig{Enabled: true, Percent: 5, RechargeRate: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if changed {
 		t.Fatal("expected an already paid order not to credit the user again")
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCompleteBalanceOrderAwardsInviteRechargeRebateAtomically(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+	repo := NewRepository(database.Wrap(rawDB))
+	now := time.Now()
+
+	mock.ExpectBegin()
+	expectOrder(mock, "pending", "recharge", nil, 10, now)
+	mock.ExpectQuery(`SELECT credits FROM users WHERE id=\? FOR UPDATE`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"credits"}).AddRow(5.0))
+	mock.ExpectExec(`UPDATE users SET credits=\? WHERE id=\?`).
+		WithArgs(15.0, "user-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO credit_logs`).
+		WithArgs(sqlmock.AnyArg(), "user-1", 10.0, 15.0, "支付宝充值 out-1").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectQuery(`SELECT id, inviter_id\s+FROM user_invites`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"id", "inviter_id"}).AddRow("invite-1", "inviter-1"))
+	mock.ExpectQuery(`SELECT credits FROM users WHERE id=\? AND status='active' FOR UPDATE`).
+		WithArgs("inviter-1").
+		WillReturnRows(sqlmock.NewRows([]string{"credits"}).AddRow(20.0))
+	mock.ExpectExec(`INSERT INTO invite_rebate_records`).
+		WithArgs(sqlmock.AnyArg(), "invite-1", "order-1", "inviter-1", "user-1", "recharge", 10.0, 10.0, 5.0, 5.0).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE users SET credits=\? WHERE id=\?`).
+		WithArgs(25.0, "inviter-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO credit_logs`).
+		WithArgs(sqlmock.AnyArg(), "inviter-1", 5.0, 25.0, "邀请好友充值返利 out-1").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE recharge_orders SET status='paid', trade_no=\?, paid_at=\?, updated_at=CURRENT_TIMESTAMP WHERE id=\?`).
+		WithArgs("trade-1", sqlmock.AnyArg(), "order-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	order, changed, err := repo.CompleteOrder(context.Background(), "out-1", "trade-1", InviteRechargeRebateConfig{
+		Enabled: true, Percent: 5, RechargeRate: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || order == nil || order.InviteRebate == nil {
+		t.Fatalf("unexpected completion result: changed=%v order=%#v", changed, order)
+	}
+	if order.InviteRebate.RebateCredits != 5 || order.InviteRebate.InviterID != "inviter-1" {
+		t.Fatalf("unexpected invite rebate: %#v", order.InviteRebate)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
@@ -109,7 +166,9 @@ func TestCompleteSubscriptionOrderGrantsQuotaAndBonusBalance(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
-	order, changed, err := repo.CompleteOrder(context.Background(), "out-1", "trade-1")
+	order, changed, err := repo.CompleteOrder(context.Background(), "out-1", "trade-1", InviteRechargeRebateConfig{
+		Enabled: true, Percent: 5, RechargeRate: 10, IncludeSubscriptions: false,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}

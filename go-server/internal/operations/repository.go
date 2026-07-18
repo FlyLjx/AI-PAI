@@ -863,10 +863,16 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 			user_invites.invitee_ip,
 			user_invites.verified_at,
 			user_invites.rewarded_at,
+			COALESCE(rebates.rebate_count, 0),
+			COALESCE(rebates.rebate_credits, 0),
 			user_invites.created_at
 		FROM user_invites
 		LEFT JOIN users inviter ON inviter.id=user_invites.inviter_id
 		LEFT JOIN users invitee ON invitee.id=user_invites.invitee_id
+		LEFT JOIN (
+			SELECT invite_id, COUNT(*) AS rebate_count, COALESCE(SUM(rebate_credits), 0) AS rebate_credits
+			FROM invite_rebate_records GROUP BY invite_id
+		) rebates ON rebates.invite_id=user_invites.id
 		ORDER BY user_invites.created_at DESC LIMIT ? OFFSET ?
 	`, pageSize, offset)
 	if err != nil {
@@ -905,6 +911,15 @@ func (r *Repository) InviteSummary(ctx context.Context, userID string) (map[stri
 	`, userID).Scan(&pendingCount, &blockedCount); err != nil {
 		return nil, err
 	}
+	var rechargeRebateCount int
+	var rechargeRebateTotal float64
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(SUM(rebate_credits), 0)
+		FROM invite_rebate_records
+		WHERE inviter_id=?
+	`, userID).Scan(&rechargeRebateCount, &rechargeRebateTotal); err != nil {
+		return nil, err
+	}
 
 	records, err := r.inviteRecords(ctx, `user_invites.inviter_id=?`, userID, 50)
 	if err != nil {
@@ -918,6 +933,10 @@ func (r *Repository) InviteSummary(ctx context.Context, userID string) (map[stri
 	if len(receivedRecords) > 0 {
 		receivedInvite = receivedRecords[0]
 	}
+	rebateRecords, err := r.inviteRechargeRebateRecords(ctx, userID, 50)
+	if err != nil {
+		return nil, err
+	}
 
 	return map[string]any{
 		"inviteCount":              count,
@@ -926,9 +945,56 @@ func (r *Repository) InviteSummary(ctx context.Context, userID string) (map[stri
 		"blockedCount":             blockedCount,
 		"totalBalanceRewards":      balanceRewards,
 		"totalSubscriptionRewards": subscriptionRewards,
+		"rechargeRebateCount":      rechargeRebateCount,
+		"rechargeRebateTotal":      rechargeRebateTotal,
+		"rebateRecords":            rebateRecords,
 		"records":                  records,
 		"receivedInvite":           receivedInvite,
 	}, nil
+}
+
+func (r *Repository) inviteRechargeRebateRecords(ctx context.Context, inviterID string, limit int) ([]InviteRechargeRebate, error) {
+	if limit < 1 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT invite_rebate_records.id, invite_rebate_records.invite_id, invite_rebate_records.order_id,
+			invite_rebate_records.inviter_id, invite_rebate_records.invitee_id, invitee.email,
+			invite_rebate_records.order_type, invite_rebate_records.order_amount,
+			invite_rebate_records.recharge_rate, invite_rebate_records.rebate_percent,
+			invite_rebate_records.rebate_credits, recharge_orders.out_trade_no,
+			invite_rebate_records.created_at
+		FROM invite_rebate_records
+		LEFT JOIN users invitee ON invitee.id=invite_rebate_records.invitee_id
+		LEFT JOIN recharge_orders ON recharge_orders.id=invite_rebate_records.order_id
+		WHERE invite_rebate_records.inviter_id=?
+		ORDER BY invite_rebate_records.created_at DESC, invite_rebate_records.id DESC
+		LIMIT ?
+	`, strings.TrimSpace(inviterID), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := make([]InviteRechargeRebate, 0, limit)
+	for rows.Next() {
+		var item InviteRechargeRebate
+		var inviteeEmail, outTradeNo sql.NullString
+		var createdAt time.Time
+		if err := rows.Scan(
+			&item.ID, &item.InviteID, &item.OrderID, &item.InviterID, &item.InviteeID, &inviteeEmail,
+			&item.OrderType, &item.OrderAmount, &item.RechargeRate, &item.RebatePercent,
+			&item.RebateCredits, &outTradeNo, &createdAt,
+		); err != nil {
+			return nil, err
+		}
+		item.InviteeEmail = nullString(inviteeEmail)
+		if outTradeNo.Valid {
+			item.OutTradeNo = outTradeNo.String
+		}
+		item.CreatedAt = appclock.DatabaseTime(createdAt).Format(time.RFC3339)
+		items = append(items, item)
+	}
+	return items, rows.Err()
 }
 
 func (r *Repository) inviteRecords(ctx context.Context, where string, arg any, limit int) ([]Invite, error) {
@@ -947,10 +1013,16 @@ func (r *Repository) inviteRecords(ctx context.Context, where string, arg any, l
 			user_invites.invitee_ip,
 			user_invites.verified_at,
 			user_invites.rewarded_at,
+			COALESCE(rebates.rebate_count, 0),
+			COALESCE(rebates.rebate_credits, 0),
 			user_invites.created_at
 		FROM user_invites
 		LEFT JOIN users inviter ON inviter.id=user_invites.inviter_id
 		LEFT JOIN users invitee ON invitee.id=user_invites.invitee_id
+		LEFT JOIN (
+			SELECT invite_id, COUNT(*) AS rebate_count, COALESCE(SUM(rebate_credits), 0) AS rebate_credits
+			FROM invite_rebate_records GROUP BY invite_id
+		) rebates ON rebates.invite_id=user_invites.id
 		WHERE `+where+`
 		ORDER BY user_invites.created_at DESC LIMIT ?
 	`, arg, limit)
@@ -2299,7 +2371,7 @@ func (r *Repository) FindOrderByOutTradeNo(ctx context.Context, outTradeNo strin
 	return &item, err
 }
 
-func (r *Repository) CompleteOrder(ctx context.Context, outTradeNo string, tradeNo string) (*RechargeOrder, bool, error) {
+func (r *Repository) CompleteOrder(ctx context.Context, outTradeNo string, tradeNo string, rebateConfigs ...InviteRechargeRebateConfig) (*RechargeOrder, bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, false, err
@@ -2374,6 +2446,13 @@ func (r *Repository) CompleteOrder(ctx context.Context, outTradeNo string, trade
 			return nil, false, err
 		}
 	}
+	if len(rebateConfigs) > 0 && rebateConfigs[0].Enabled {
+		inviteRebate, err := applyInviteRechargeRebateInTx(ctx, tx, order, rebateConfigs[0])
+		if err != nil {
+			return nil, false, err
+		}
+		order.InviteRebate = inviteRebate
+	}
 	tradeNo = strings.TrimSpace(tradeNo)
 	if _, err := tx.ExecContext(ctx, `UPDATE recharge_orders SET status='paid', trade_no=?, paid_at=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, tradeNo, now, order.ID); err != nil {
 		return nil, false, err
@@ -2387,6 +2466,81 @@ func (r *Repository) CompleteOrder(ctx context.Context, outTradeNo string, trade
 	order.PaidAt = &paidAt
 	order.UpdatedAt = paidAt
 	return &order, true, nil
+}
+
+func applyInviteRechargeRebateInTx(ctx context.Context, tx *database.Tx, order RechargeOrder, config InviteRechargeRebateConfig) (*InviteRechargeRebate, error) {
+	if !config.Enabled || config.Percent <= 0 || config.Percent > 100 || config.RechargeRate <= 0 {
+		return nil, nil
+	}
+	if order.OrderType == "subscription" && !config.IncludeSubscriptions {
+		return nil, nil
+	}
+	if order.OrderType != "recharge" && order.OrderType != "subscription" {
+		return nil, nil
+	}
+
+	var inviteID, inviterID string
+	err := tx.QueryRowContext(ctx, `
+		SELECT id, inviter_id
+		FROM user_invites
+		WHERE invitee_id=? AND COALESCE(status, 'rewarded')='rewarded'
+		ORDER BY created_at ASC
+		LIMIT 1
+		FOR UPDATE
+	`, order.UserID).Scan(&inviteID, &inviterID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	rebateCredits := normalizeOperationCreditAmount(order.Amount * config.RechargeRate * config.Percent / 100)
+	if rebateCredits <= 0 {
+		return nil, nil
+	}
+	var inviterBalance float64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT credits FROM users WHERE id=? AND status='active' FOR UPDATE
+	`, inviterID).Scan(&inviterBalance); errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	nextBalance := normalizeOperationCreditAmount(inviterBalance + rebateCredits)
+	record := &InviteRechargeRebate{
+		ID:            newOperationID(),
+		InviteID:      inviteID,
+		OrderID:       order.ID,
+		InviterID:     inviterID,
+		InviteeID:     order.UserID,
+		OrderType:     order.OrderType,
+		OrderAmount:   order.Amount,
+		RechargeRate:  config.RechargeRate,
+		RebatePercent: config.Percent,
+		RebateCredits: rebateCredits,
+		OutTradeNo:    order.OutTradeNo,
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO invite_rebate_records (
+			id, invite_id, order_id, inviter_id, invitee_id, order_type,
+			order_amount, recharge_rate, rebate_percent, rebate_credits
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, record.ID, record.InviteID, record.OrderID, record.InviterID, record.InviteeID, record.OrderType,
+		record.OrderAmount, record.RechargeRate, record.RebatePercent, record.RebateCredits); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE users SET credits=? WHERE id=?`, nextBalance, inviterID); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark)
+		VALUES (?, ?, 'invite_rebate', ?, ?, ?)
+	`, newOperationID(), inviterID, rebateCredits, nextBalance, "邀请好友充值返利 "+order.OutTradeNo); err != nil {
+		return nil, err
+	}
+	return record, nil
 }
 
 func normalizeOperationCreditAmount(value float64) float64 {
@@ -2479,6 +2633,8 @@ func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 		&ip,
 		&verifiedAt,
 		&rewardedAt,
+		&item.RechargeRebateCount,
+		&item.RechargeRebateCredits,
 		&created,
 	)
 	item.InviterEmail = nullString(inviter)

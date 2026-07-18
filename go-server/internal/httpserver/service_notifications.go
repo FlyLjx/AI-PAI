@@ -57,6 +57,7 @@ func newServiceNotificationManager(db *database.DB, logger *slog.Logger) *servic
 func StartServiceNotificationWorker(ctx context.Context, db *database.DB, logger *slog.Logger) {
 	manager := newServiceNotificationManager(db, logger)
 	go manager.runSubscriptionExpiryWorker(ctx)
+	go manager.runUpstreamHealthWorker(ctx)
 }
 
 func (r *Router) notifyBalanceInsufficient(userID string) {
@@ -118,7 +119,9 @@ func (m *serviceNotificationManager) sendBalanceReminder(ctx context.Context, us
 	}
 	brand := emailBrandName(anyString(values["siteName"]))
 	body := fmt.Sprintf("您的账户余额不足，本次 API 调用未能继续处理。\n\n当前余额：%s\n\n请充值后重新发起调用。为避免频繁打扰，余额不足提醒在 24 小时内只会发送一次。", formatNotificationCredits(credits))
-	if err := m.sendMail(
+	if err := m.deliverMail(
+		ctx,
+		"balance_reminder",
 		smtpConfig,
 		email,
 		brand+" 余额不足提醒",
@@ -190,7 +193,7 @@ func (m *serviceNotificationManager) sendSubscriptionExpiryReminders(ctx context
 			days = 1
 		}
 		body := fmt.Sprintf("您的订阅套餐“%s”将在 %d 天内到期。\n\n到期时间：%s\n\n为避免 API 调用在订阅到期后中断，请及时续费。", item.PlanName, days, expiresAt.Format("2006-01-02 15:04"))
-		if err := m.sendMail(smtpConfig, item.Email, brand+" 订阅即将到期提醒", body, mailAction{Text: "查看订阅", URL: actionURL}); err != nil {
+		if err := m.deliverMail(ctx, "subscription_expiry", smtpConfig, item.Email, brand+" 订阅即将到期提醒", body, mailAction{Text: "查看订阅", URL: actionURL}); err != nil {
 			m.release(key)
 			m.logWarn("subscription expiry reminder email failed", "userId", item.UserID, "subscriptionId", item.ID, "error", err)
 			continue

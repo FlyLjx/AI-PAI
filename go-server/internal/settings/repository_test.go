@@ -83,6 +83,10 @@ func TestUpdateRejectsInvalidInviteSettings(t *testing.T) {
 	tests := []Settings{
 		{"inviteInviterRewardType": "coupon"},
 		{"inviteInviteeRewardCredits": float64(-1)},
+		{"inviteRechargeRebatePercent": float64(0)},
+		{"inviteRechargeRebatePercent": float64(101)},
+		{"inviteRechargeRebateEnabled": "true"},
+		{"inviteRebateIncludeSubscriptions": float64(1)},
 		{"inviteRiskMaxPerIP24h": float64(0)},
 		{"registrationChallengeMinSeconds": float64(1.5)},
 	}
@@ -101,5 +105,47 @@ func TestUpdateRejectsInvalidInviteSettings(t *testing.T) {
 			t.Fatal(err)
 		}
 		rawDB.Close()
+	}
+}
+
+func TestParseInvalidInviteRechargeRebatePercentFallsBackToDefault(t *testing.T) {
+	for _, value := range []string{"0", "101", "invalid"} {
+		if got := parseValue("inviteRechargeRebatePercent", value); got != Defaults["inviteRechargeRebatePercent"] {
+			t.Fatalf("parseValue(inviteRechargeRebatePercent, %q) = %v, want %v", value, got, Defaults["inviteRechargeRebatePercent"])
+		}
+	}
+}
+
+func TestUpdateRejectsInvalidAdminNotificationSettings(t *testing.T) {
+	tests := []Settings{
+		{"adminUpstreamCheckIntervalMinutes": float64(0)},
+		{"adminUpstreamCheckIntervalMinutes": float64(1.5)},
+		{"adminUpstreamCheckIntervalMinutes": float64(1441)},
+		{"adminRechargeNotificationEnabled": "true"},
+		{"adminUpstreamNotificationEnabled": float64(1)},
+	}
+	for _, input := range tests {
+		rawDB, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+		_, err = NewRepository(database.Wrap(rawDB)).Update(context.Background(), input)
+		if !errors.Is(err, ErrInvalidAdminNotification) {
+			t.Fatalf("input %#v error = %v, want ErrInvalidAdminNotification", input, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		rawDB.Close()
+	}
+}
+
+func TestParseInvalidAdminNotificationIntervalFallsBackToDefault(t *testing.T) {
+	for _, value := range []string{"0", "1.5", "1441", "invalid"} {
+		if got := parseValue("adminUpstreamCheckIntervalMinutes", value); got != Defaults["adminUpstreamCheckIntervalMinutes"] {
+			t.Fatalf("parseValue(adminUpstreamCheckIntervalMinutes, %q) = %v, want %v", value, got, Defaults["adminUpstreamCheckIntervalMinutes"])
+		}
 	}
 }

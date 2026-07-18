@@ -66,25 +66,27 @@ type CustomSubscriptionGrant struct {
 }
 
 type Invite struct {
-	ID                   string  `json:"id"`
-	InviterID            string  `json:"inviterId"`
-	InviterEmail         *string `json:"inviterEmail,omitempty"`
-	InviteeID            string  `json:"inviteeId"`
-	InviteeEmail         *string `json:"inviteeEmail,omitempty"`
-	RewardCredits        float64 `json:"rewardCredits"`
-	RewardType           string  `json:"rewardType"`
-	RewardPlanID         *string `json:"rewardPlanId,omitempty"`
-	RewardLabel          *string `json:"rewardLabel,omitempty"`
-	InviteeRewardCredits float64 `json:"inviteeRewardCredits"`
-	InviteeRewardType    string  `json:"inviteeRewardType"`
-	InviteeRewardPlanID  *string `json:"inviteeRewardPlanId,omitempty"`
-	InviteeRewardLabel   *string `json:"inviteeRewardLabel,omitempty"`
-	Status               string  `json:"status"`
-	RiskReason           *string `json:"riskReason,omitempty"`
-	InviteeIP            *string `json:"inviteeIp"`
-	VerifiedAt           *string `json:"verifiedAt,omitempty"`
-	RewardedAt           *string `json:"rewardedAt,omitempty"`
-	CreatedAt            string  `json:"createdAt"`
+	ID                    string  `json:"id"`
+	InviterID             string  `json:"inviterId"`
+	InviterEmail          *string `json:"inviterEmail,omitempty"`
+	InviteeID             string  `json:"inviteeId"`
+	InviteeEmail          *string `json:"inviteeEmail,omitempty"`
+	RewardCredits         float64 `json:"rewardCredits"`
+	RewardType            string  `json:"rewardType"`
+	RewardPlanID          *string `json:"rewardPlanId,omitempty"`
+	RewardLabel           *string `json:"rewardLabel,omitempty"`
+	InviteeRewardCredits  float64 `json:"inviteeRewardCredits"`
+	InviteeRewardType     string  `json:"inviteeRewardType"`
+	InviteeRewardPlanID   *string `json:"inviteeRewardPlanId,omitempty"`
+	InviteeRewardLabel    *string `json:"inviteeRewardLabel,omitempty"`
+	Status                string  `json:"status"`
+	RiskReason            *string `json:"riskReason,omitempty"`
+	InviteeIP             *string `json:"inviteeIp"`
+	VerifiedAt            *string `json:"verifiedAt,omitempty"`
+	RewardedAt            *string `json:"rewardedAt,omitempty"`
+	RechargeRebateCount   int     `json:"rechargeRebateCount"`
+	RechargeRebateCredits float64 `json:"rechargeRebateCredits"`
+	CreatedAt             string  `json:"createdAt"`
 }
 
 type InviteRewardSpec struct {
@@ -119,6 +121,29 @@ type InviteRewardResult struct {
 	InviteeID  string `json:"inviteeId"`
 	Status     string `json:"status"`
 	RiskReason string `json:"riskReason,omitempty"`
+}
+
+type InviteRechargeRebateConfig struct {
+	Enabled              bool
+	Percent              float64
+	RechargeRate         float64
+	IncludeSubscriptions bool
+}
+
+type InviteRechargeRebate struct {
+	ID            string  `json:"id"`
+	InviteID      string  `json:"inviteId"`
+	OrderID       string  `json:"orderId"`
+	InviterID     string  `json:"inviterId"`
+	InviteeID     string  `json:"inviteeId"`
+	InviteeEmail  *string `json:"inviteeEmail,omitempty"`
+	OrderType     string  `json:"orderType"`
+	OrderAmount   float64 `json:"orderAmount"`
+	RechargeRate  float64 `json:"rechargeRate"`
+	RebatePercent float64 `json:"rebatePercent"`
+	RebateCredits float64 `json:"rebateCredits"`
+	OutTradeNo    string  `json:"outTradeNo"`
+	CreatedAt     string  `json:"createdAt"`
 }
 
 type InviteDeleteResult struct {
@@ -173,21 +198,22 @@ type LotteryDrawResult struct {
 }
 
 type RechargeOrder struct {
-	ID                 string  `json:"id"`
-	UserID             string  `json:"userId"`
-	UserEmail          *string `json:"userEmail,omitempty"`
-	OutTradeNo         string  `json:"outTradeNo"`
-	TradeNo            *string `json:"tradeNo"`
-	OrderType          string  `json:"orderType"`
-	SubscriptionPlanID *string `json:"subscriptionPlanId"`
-	Amount             float64 `json:"amount"`
-	Credits            float64 `json:"-"`
-	Status             string  `json:"status"`
-	PayURL             *string `json:"payUrl"`
-	QRCode             *string `json:"qrCode"`
-	PaidAt             *string `json:"paidAt"`
-	CreatedAt          string  `json:"createdAt"`
-	UpdatedAt          string  `json:"updatedAt"`
+	ID                 string                `json:"id"`
+	UserID             string                `json:"userId"`
+	UserEmail          *string               `json:"userEmail,omitempty"`
+	OutTradeNo         string                `json:"outTradeNo"`
+	TradeNo            *string               `json:"tradeNo"`
+	OrderType          string                `json:"orderType"`
+	SubscriptionPlanID *string               `json:"subscriptionPlanId"`
+	Amount             float64               `json:"amount"`
+	Credits            float64               `json:"-"`
+	Status             string                `json:"status"`
+	PayURL             *string               `json:"payUrl"`
+	QRCode             *string               `json:"qrCode"`
+	PaidAt             *string               `json:"paidAt"`
+	CreatedAt          string                `json:"createdAt"`
+	UpdatedAt          string                `json:"updatedAt"`
+	InviteRebate       *InviteRechargeRebate `json:"-"`
 }
 
 type DashboardTaskSummary struct {

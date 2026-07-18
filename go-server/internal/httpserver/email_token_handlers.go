@@ -186,7 +186,7 @@ func (r *Router) changeUserEmail(w http.ResponseWriter, req *http.Request, id st
 		if smtpConfig.validate() == nil {
 			siteName := emailBrandName(anyString(settingValues["siteName"]))
 			body := "你正在将 " + siteName + " 账户的登录邮箱修改为此邮箱。请在 2 小时内打开以下链接完成验证：\n\n" + verificationURL + "\n\n如果不是你本人操作，请忽略这封邮件，原邮箱不会改变。"
-			if sendErr := sendSMTPMail(smtpConfig, newEmail, "确认修改 "+siteName+" 登录邮箱", body, mailAction{Text: "确认修改邮箱", URL: verificationURL}); sendErr != nil {
+			if sendErr := r.deliverMail(ctx, "email_change", smtpConfig, newEmail, "确认修改 "+siteName+" 登录邮箱", body, mailAction{Text: "确认修改邮箱", URL: verificationURL}); sendErr != nil {
 				message = "验证链接已生成，但邮件发送失败：" + sendErr.Error()
 			} else {
 				message = "验证邮件已发送到新邮箱，请在 2 小时内完成确认。"
@@ -274,7 +274,7 @@ func (r *Router) forgotPassword(w http.ResponseWriter, req *http.Request) {
 		if smtpConfig.validate() == nil {
 			siteName := emailBrandName(anyString(settingValues["siteName"]))
 			body := "你正在重置 " + siteName + " 账户密码，请在 2 小时内打开以下链接完成操作：\n\n" + resetURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
-			if err := sendSMTPMail(smtpConfig, user.Email, "重置 "+siteName+" 账户密码", body, mailAction{Text: "立即重置密码", URL: resetURL}); err != nil {
+			if err := r.deliverMail(ctx, "password_reset", smtpConfig, user.Email, "重置 "+siteName+" 账户密码", body, mailAction{Text: "立即重置密码", URL: resetURL}); err != nil {
 				message = "密码重置链接已生成，但邮件发送失败：" + err.Error()
 			} else {
 				message = "密码重置邮件已发送，请查收。"
@@ -340,7 +340,7 @@ func (r *Router) sendEmailVerification(ctx context.Context, req *http.Request, u
 	if smtpConfig.validate() == nil {
 		siteName := emailBrandName(anyString(settingValues["siteName"]))
 		body := "你正在验证 " + siteName + " 账户邮箱，请在 24 小时内打开以下链接完成验证：\n\n" + verifyURL + "\n\n如果不是你本人操作，请忽略这封邮件。"
-		if err := sendSMTPMail(smtpConfig, user.Email, "验证 "+siteName+" 账户邮箱", body, mailAction{Text: "立即验证邮箱", URL: verifyURL}); err != nil {
+		if err := r.deliverMail(ctx, "email_verification", smtpConfig, user.Email, "验证 "+siteName+" 账户邮箱", body, mailAction{Text: "立即验证邮箱", URL: verifyURL}); err != nil {
 			message = "验证邮件发送失败：" + err.Error()
 			if registration {
 				message = "注册成功，但" + message

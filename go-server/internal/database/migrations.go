@@ -140,9 +140,16 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_user_invites_inviter_id", `CREATE INDEX idx_user_invites_inviter_id ON user_invites (inviter_id)`},
 		{"idx_user_invites_status_created", `CREATE INDEX idx_user_invites_status_created ON user_invites (status, created_at)`},
 		{"idx_user_invites_device_created", `CREATE INDEX idx_user_invites_device_created ON user_invites (device_hash, created_at)`},
+		{"idx_invite_rebate_records_inviter_created", `CREATE INDEX idx_invite_rebate_records_inviter_created ON invite_rebate_records (inviter_id, created_at)`},
+		{"idx_invite_rebate_records_invitee_created", `CREATE INDEX idx_invite_rebate_records_invitee_created ON invite_rebate_records (invitee_id, created_at)`},
+		{"idx_invite_rebate_records_invite_created", `CREATE INDEX idx_invite_rebate_records_invite_created ON invite_rebate_records (invite_id, created_at)`},
 		{"idx_registration_fingerprints_ip_created", `CREATE INDEX idx_registration_fingerprints_ip_created ON user_registration_fingerprints (ip_hash, created_at)`},
 		{"idx_registration_fingerprints_device_created", `CREATE INDEX idx_registration_fingerprints_device_created ON user_registration_fingerprints (device_hash, created_at)`},
 		{"idx_registration_challenges_ip_created", `CREATE INDEX idx_registration_challenges_ip_created ON registration_challenges (ip_hash, created_at)`},
+		{"idx_email_delivery_logs_created_at", `CREATE INDEX idx_email_delivery_logs_created_at ON email_delivery_logs (created_at)`},
+		{"idx_email_delivery_logs_status_created", `CREATE INDEX idx_email_delivery_logs_status_created ON email_delivery_logs (status, created_at)`},
+		{"idx_email_delivery_logs_category_created", `CREATE INDEX idx_email_delivery_logs_category_created ON email_delivery_logs (category, created_at)`},
+		{"idx_email_delivery_logs_recipient_created", `CREATE INDEX idx_email_delivery_logs_recipient_created ON email_delivery_logs (recipient, created_at)`},
 		{"idx_api_access_logs_task_id", `CREATE INDEX idx_api_access_logs_task_id ON api_access_logs (task_id)`},
 		{"idx_subscription_lottery_prizes_status_sort", `CREATE INDEX idx_subscription_lottery_prizes_status_sort ON subscription_lottery_prizes (status, sort_order)`},
 		{"idx_subscription_lottery_records_user_created", `CREATE INDEX idx_subscription_lottery_records_user_created ON subscription_lottery_records (user_id, created_at)`},
@@ -511,6 +518,19 @@ func schemaBootstrapStatements() []string {
 				setting_value TEXT NOT NULL,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
+			`CREATE TABLE IF NOT EXISTS email_delivery_logs (
+				id VARCHAR(36) PRIMARY KEY,
+				category VARCHAR(40) NOT NULL,
+				from_address VARCHAR(160) NOT NULL,
+				recipient VARCHAR(160) NOT NULL,
+				subject VARCHAR(255) NOT NULL,
+				content TEXT NOT NULL,
+				action_url TEXT NULL,
+				status VARCHAR(16) NOT NULL DEFAULT 'sending',
+				error_message TEXT NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				sent_at TIMESTAMP NULL
+			)`,
 			`CREATE TABLE IF NOT EXISTS recharge_orders (
 				id VARCHAR(36) PRIMARY KEY,
 				user_id VARCHAR(36) NOT NULL,
@@ -597,6 +617,19 @@ func schemaBootstrapStatements() []string {
 				invitee_ip VARCHAR(64) NULL,
 				verified_at TIMESTAMP NULL,
 				rewarded_at TIMESTAMP NULL,
+				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+			)`,
+			`CREATE TABLE IF NOT EXISTS invite_rebate_records (
+				id VARCHAR(36) PRIMARY KEY,
+				invite_id VARCHAR(36) NOT NULL,
+				order_id VARCHAR(36) NOT NULL UNIQUE,
+				inviter_id VARCHAR(36) NOT NULL,
+				invitee_id VARCHAR(36) NOT NULL,
+				order_type VARCHAR(24) NOT NULL,
+				order_amount NUMERIC(12,2) NOT NULL,
+				recharge_rate NUMERIC(12,4) NOT NULL,
+				rebate_percent NUMERIC(6,2) NOT NULL,
+				rebate_credits NUMERIC(12,4) NOT NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
 			`CREATE TABLE IF NOT EXISTS user_registration_fingerprints (
@@ -774,6 +807,39 @@ func schemaBootstrapStatements() []string {
 		}
 	}
 	return []string{
+		`CREATE TABLE IF NOT EXISTS invite_rebate_records (
+			id VARCHAR(36) PRIMARY KEY,
+			invite_id VARCHAR(36) NOT NULL,
+			order_id VARCHAR(36) NOT NULL UNIQUE,
+			inviter_id VARCHAR(36) NOT NULL,
+			invitee_id VARCHAR(36) NOT NULL,
+			order_type VARCHAR(24) NOT NULL,
+			order_amount NUMERIC(12,2) NOT NULL,
+			recharge_rate NUMERIC(12,4) NOT NULL,
+			rebate_percent NUMERIC(6,2) NOT NULL,
+			rebate_credits NUMERIC(12,4) NOT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			INDEX idx_invite_rebate_records_inviter_created (inviter_id, created_at),
+			INDEX idx_invite_rebate_records_invitee_created (invitee_id, created_at),
+			INDEX idx_invite_rebate_records_invite_created (invite_id, created_at)
+		)`,
+		`CREATE TABLE IF NOT EXISTS email_delivery_logs (
+			id VARCHAR(36) PRIMARY KEY,
+			category VARCHAR(40) NOT NULL,
+			from_address VARCHAR(160) NOT NULL,
+			recipient VARCHAR(160) NOT NULL,
+			subject VARCHAR(255) NOT NULL,
+			content TEXT NOT NULL,
+			action_url TEXT NULL,
+			status VARCHAR(16) NOT NULL DEFAULT 'sending',
+			error_message TEXT NULL,
+			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			sent_at DATETIME NULL,
+			INDEX idx_email_delivery_logs_created_at (created_at),
+			INDEX idx_email_delivery_logs_status_created (status, created_at),
+			INDEX idx_email_delivery_logs_category_created (category, created_at),
+			INDEX idx_email_delivery_logs_recipient_created (recipient, created_at)
+		)`,
 		`CREATE TABLE IF NOT EXISTS generation_result_images (
 			id VARCHAR(36) PRIMARY KEY,
 			task_id VARCHAR(36) NOT NULL,

@@ -12,6 +12,7 @@ import (
 var ErrInvalidRechargeRate = errors.New("充值比例必须大于 0")
 var ErrInvalidDynamicConcurrency = errors.New("动态并发配置不正确")
 var ErrInvalidInviteSettings = errors.New("邀请奖励或注册风控配置不正确")
+var ErrInvalidAdminNotification = errors.New("管理员通知配置不正确")
 
 type Repository struct {
 	db *database.DB
@@ -80,6 +81,18 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 			}
 			value = number
 		}
+		if key == "adminUpstreamCheckIntervalMinutes" {
+			number, ok := numericSettingValue(value)
+			if !ok || number < 1 || number > 1440 || math.Trunc(number) != number || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, ErrInvalidAdminNotification
+			}
+			value = number
+		}
+		if key == "adminRechargeNotificationEnabled" || key == "adminUpstreamNotificationEnabled" {
+			if _, ok := value.(bool); !ok {
+				return nil, ErrInvalidAdminNotification
+			}
+		}
 		if key == "inviteInviterRewardType" || key == "inviteInviteeRewardType" || key == "inviteRewardType" {
 			rewardType, ok := value.(string)
 			if !ok || (rewardType != "none" && rewardType != "balance" && rewardType != "subscription") {
@@ -92,6 +105,18 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 				return nil, ErrInvalidInviteSettings
 			}
 			value = number
+		}
+		if key == "inviteRechargeRebatePercent" {
+			number, ok := numericSettingValue(value)
+			if !ok || number <= 0 || number > 100 || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, ErrInvalidInviteSettings
+			}
+			value = number
+		}
+		if key == "inviteRechargeRebateEnabled" || key == "inviteRebateIncludeSubscriptions" {
+			if _, ok := value.(bool); !ok {
+				return nil, ErrInvalidInviteSettings
+			}
 		}
 		if isInviteRiskIntegerKey(key) {
 			number, ok := numericSettingValue(value)
@@ -156,10 +181,16 @@ func parseValue(key string, value string) any {
 			(number < 1 || number > 1000000 || math.Trunc(number) != number) {
 			return Defaults[key]
 		}
+		if key == "adminUpstreamCheckIntervalMinutes" && (number < 1 || number > 1440 || math.Trunc(number) != number) {
+			return Defaults[key]
+		}
 		if isInviteRiskIntegerKey(key) && (number < 1 || number > 1000000 || math.Trunc(number) != number) {
 			return Defaults[key]
 		}
 		if (key == "inviteInviterRewardCredits" || key == "inviteInviteeRewardCredits") && (number < 0 || number > 100000000) {
+			return Defaults[key]
+		}
+		if key == "inviteRechargeRebatePercent" && (number <= 0 || number > 100) {
 			return Defaults[key]
 		}
 		return number

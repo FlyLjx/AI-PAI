@@ -113,6 +113,8 @@ export type AdminInviteRecord = {
   inviteeIp?: string;
   verifiedAt?: string;
   rewardedAt?: string;
+  rechargeRebateCount: number;
+  rechargeRebateCredits: number;
   createdAt: string;
 };
 
@@ -193,6 +195,33 @@ export type SystemLogDetail = {
   content: string;
   offset: number;
   truncated: boolean;
+};
+
+export type MailDeliveryLog = {
+  id: string;
+  category: string;
+  fromAddress: string;
+  recipient: string;
+  subject: string;
+  content: string;
+  actionUrl?: string;
+  status: 'sending' | 'sent' | 'failed' | string;
+  errorMessage?: string;
+  createdAt: string;
+  sentAt?: string;
+};
+
+export type MailDeliverySummary = {
+  total: number;
+  sent: number;
+  failed: number;
+  sending: number;
+  today: number;
+};
+
+export type MailDeliveryLogPage = {
+  items: MailDeliveryLog[];
+  summary: MailDeliverySummary;
 };
 
 export type ProviderModel = {
@@ -370,6 +399,7 @@ export const portalApi = {
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   adminUsage: (page = 1) => api<UsageLog[]>(`/api/admin/api-access/logs${query({ page, pageSize: 30 })}`),
   adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
+  adminMailLogs: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; category?: string } = {}) => api<MailDeliveryLogPage>(`/api/admin/mail-logs${query(input)}`),
   adminInvites: (page = 1, pageSize = 30) => api<AdminInviteRecord[]>(`/api/invites${query({ page, pageSize })}`),
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),
   settings: () => api<Record<string, unknown>>('/api/settings'),

@@ -73,6 +73,24 @@ export type InviteRecord = {
   riskReason?: string;
   verifiedAt?: string;
   rewardedAt?: string;
+  rechargeRebateCount: number;
+  rechargeRebateCredits: number;
+  createdAt: string;
+};
+
+export type InviteRebateRecord = {
+  id: string;
+  inviteId: string;
+  orderId: string;
+  inviterId: string;
+  inviteeId: string;
+  inviteeEmail?: string;
+  orderType: string;
+  orderAmount: number;
+  rechargeRate: number;
+  rebatePercent: number;
+  rebateCredits: number;
+  outTradeNo?: string;
   createdAt: string;
 };
 
@@ -84,11 +102,17 @@ export type InviteSummary = {
   blockedCount: number;
   totalBalanceRewards: number;
   totalSubscriptionRewards: number;
+  rechargeRebateEnabled: boolean;
+  rechargeRebatePercent: number;
+  rebateIncludeSubscriptions: boolean;
+  rechargeRebateCount: number;
+  rechargeRebateTotal: number;
   rewardText: string;
   inviteeRewardText: string;
   inviterReward: InviteRewardView;
   inviteeReward: InviteRewardView;
   records: InviteRecord[];
+  rebateRecords: InviteRebateRecord[];
   receivedInvite?: InviteRecord | null;
 };
 

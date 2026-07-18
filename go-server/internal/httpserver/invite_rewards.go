@@ -50,6 +50,15 @@ func inviteProgramConfigFromSettings(values settings.Settings) inviteProgramConf
 	}
 }
 
+func inviteRechargeRebateConfigFromSettings(values settings.Settings) operations.InviteRechargeRebateConfig {
+	return operations.InviteRechargeRebateConfig{
+		Enabled:              anyBool(values["inviteRechargeRebateEnabled"]),
+		Percent:              anyFloat(values["inviteRechargeRebatePercent"], 5),
+		RechargeRate:         anyFloat(values["rechargeRate"], 10),
+		IncludeSubscriptions: anyBool(values["inviteRebateIncludeSubscriptions"]),
+	}
+}
+
 func (r *Router) finalizeInviteRewards(ctx context.Context, userID string) (*operations.InviteRewardResult, error) {
 	values, err := settings.NewRepository(r.db).Get(ctx)
 	if err != nil {

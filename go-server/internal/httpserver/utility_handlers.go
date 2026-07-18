@@ -21,46 +21,44 @@ func (r *Router) upstreamStability(w http.ResponseWriter, req *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 	defer cancel()
+	writeJSON(w, http.StatusOK, map[string]any{"data": fetchUpstreamStabilitySnapshot(ctx)})
+}
 
+func fetchUpstreamStabilitySnapshot(ctx context.Context) map[string]any {
 	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, upstreamStabilityEndpoint, nil)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"data": upstreamStabilityFallback("请求创建失败："+err.Error(), 0)})
-		return
+		return upstreamStabilityFallback("请求创建失败："+err.Error(), 0)
 	}
 	upstreamReq.Header.Set("Accept", "application/json")
 	resp, err := http.DefaultClient.Do(upstreamReq)
 	if err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"data": upstreamStabilityFallback("状态接口连接失败："+err.Error(), 0)})
-		return
+		return upstreamStabilityFallback("状态接口连接失败："+err.Error(), 0)
 	}
 	defer resp.Body.Close()
 
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		writeJSON(w, http.StatusOK, map[string]any{"data": upstreamStabilityFallback("状态接口返回异常："+strings.TrimSpace(string(body)), resp.StatusCode)})
-		return
+		return upstreamStabilityFallback("状态接口返回异常："+strings.TrimSpace(string(body)), resp.StatusCode)
 	}
 	var payload any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		writeJSON(w, http.StatusOK, map[string]any{"data": upstreamStabilityFallback("状态接口返回格式异常", resp.StatusCode)})
-		return
+		return upstreamStabilityFallback("状态接口返回格式异常", resp.StatusCode)
 	}
 	if data, ok := payload.(map[string]any); ok {
 		data["source"] = upstreamStabilityEndpoint
 		data["upstream_status_code"] = resp.StatusCode
 		data["reachable"] = true
 		data["fetched_at"] = time.Now().Format(time.RFC3339)
-		writeJSON(w, http.StatusOK, map[string]any{"data": data})
-		return
+		return data
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
+	return map[string]any{
 		"status":               "unknown",
 		"source":               upstreamStabilityEndpoint,
 		"upstream_status_code": resp.StatusCode,
 		"reachable":            true,
 		"payload":              payload,
 		"fetched_at":           time.Now().Format(time.RFC3339),
-	}})
+	}
 }
 
 func upstreamStabilityFallback(message string, upstreamStatusCode int) map[string]any {
@@ -208,7 +206,7 @@ func (r *Router) mailBroadcast(w http.ResponseWriter, req *http.Request) {
 	success := 0
 	failures := []map[string]string{}
 	for _, email := range recipients {
-		if err := sendSMTPMail(smtpConfig, email, input.Subject, input.Content, mailAction{Text: input.ActionText, URL: input.ActionURL}); err != nil {
+		if err := r.deliverMail(ctx, "broadcast", smtpConfig, email, input.Subject, input.Content, mailAction{Text: input.ActionText, URL: input.ActionURL}); err != nil {
 			failures = append(failures, formatMailFailure(email, err))
 			continue
 		}

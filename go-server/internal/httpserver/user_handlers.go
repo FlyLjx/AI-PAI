@@ -390,7 +390,7 @@ func (r *Router) userCreditLogs(w http.ResponseWriter, req *http.Request, id str
 	switch logType {
 	case "", "all":
 		logType = ""
-	case "deduct", "recharge", "manual_adjust":
+	case "deduct", "recharge", "manual_adjust", "invite_reward", "invite_rebate":
 	default:
 		writeError(w, newAppError(http.StatusBadRequest, "积分明细类型不正确"))
 		return

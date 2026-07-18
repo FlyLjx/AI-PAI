@@ -29,6 +29,9 @@ type SettingsForm = {
   inviteInviteeRewardType: 'balance' | 'subscription';
   inviteInviteeRewardCredits: number;
   inviteInviteeRewardPlanId: string;
+  inviteRechargeRebateEnabled: boolean;
+  inviteRechargeRebatePercent: number;
+  inviteRebateIncludeSubscriptions: boolean;
   inviteRiskEnabled: boolean;
   inviteRiskBlockSameIP: boolean;
   inviteRiskBlockSameDevice: boolean;
@@ -50,6 +53,9 @@ type SettingsForm = {
   emailUser: string;
   emailFromName: string;
   emailFromAddress: string;
+  adminRechargeNotificationEnabled: boolean;
+  adminUpstreamNotificationEnabled: boolean;
+  adminUpstreamCheckIntervalMinutes: number;
 };
 
 const emptySettings: SettingsForm = {
@@ -73,6 +79,9 @@ const emptySettings: SettingsForm = {
   inviteInviteeRewardType: 'balance',
   inviteInviteeRewardCredits: 0,
   inviteInviteeRewardPlanId: '',
+  inviteRechargeRebateEnabled: false,
+  inviteRechargeRebatePercent: 5,
+  inviteRebateIncludeSubscriptions: false,
   inviteRiskEnabled: true,
   inviteRiskBlockSameIP: true,
   inviteRiskBlockSameDevice: true,
@@ -94,6 +103,9 @@ const emptySettings: SettingsForm = {
   emailUser: '',
   emailFromName: 'AI-PAI',
   emailFromAddress: '',
+  adminRechargeNotificationEnabled: true,
+  adminUpstreamNotificationEnabled: true,
+  adminUpstreamCheckIntervalMinutes: 5,
 };
 
 const DYNAMIC_WINDOW_UNIT_OPTIONS = [
@@ -134,6 +146,9 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     inviteInviteeRewardType: data.inviteInviteeRewardType === 'subscription' ? 'subscription' : 'balance',
     inviteInviteeRewardCredits: Number(data.inviteInviteeRewardCredits || 0),
     inviteInviteeRewardPlanId: String(data.inviteInviteeRewardPlanId || ''),
+    inviteRechargeRebateEnabled: Boolean(data.inviteRechargeRebateEnabled),
+    inviteRechargeRebatePercent: Number(data.inviteRechargeRebatePercent || 5),
+    inviteRebateIncludeSubscriptions: Boolean(data.inviteRebateIncludeSubscriptions),
     inviteRiskEnabled: data.inviteRiskEnabled !== false,
     inviteRiskBlockSameIP: data.inviteRiskBlockSameIP !== false,
     inviteRiskBlockSameDevice: data.inviteRiskBlockSameDevice !== false,
@@ -155,6 +170,9 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     emailUser: String(data.emailUser || ''),
     emailFromName: String(data.emailFromName || data.siteName || 'AI-PAI'),
     emailFromAddress: String(data.emailFromAddress || ''),
+    adminRechargeNotificationEnabled: data.adminRechargeNotificationEnabled !== false,
+    adminUpstreamNotificationEnabled: data.adminUpstreamNotificationEnabled !== false,
+    adminUpstreamCheckIntervalMinutes: positiveInteger(data.adminUpstreamCheckIntervalMinutes, 5),
   };
 }
 
@@ -203,6 +221,8 @@ export default function AdminSettingsPage() {
     if (!Number.isSafeInteger(form.dynamicConcurrencyRequestStep) || form.dynamicConcurrencyRequestStep < 1) return toast.error('每档调用次数必须是大于 0 的整数');
     if (!Number.isSafeInteger(form.dynamicConcurrencyIncrement) || form.dynamicConcurrencyIncrement < 1) return toast.error('每档增加并发必须是大于 0 的整数');
     if (!Number.isFinite(form.rechargeRate) || form.rechargeRate <= 0) return toast.error('充值比例必须大于 0');
+    if (form.inviteRechargeRebateEnabled && (!Number.isFinite(form.inviteRechargeRebatePercent) || form.inviteRechargeRebatePercent <= 0 || form.inviteRechargeRebatePercent > 100)) return toast.error('充值返利比例必须大于 0 且不超过 100%');
+    if (!Number.isSafeInteger(form.adminUpstreamCheckIntervalMinutes) || form.adminUpstreamCheckIntervalMinutes < 1 || form.adminUpstreamCheckIntervalMinutes > 1440) return toast.error('上游状态检查间隔必须是 1 到 1440 分钟的整数');
     if (form.inviteEnabled) {
       if (form.inviteInviterRewardType === 'balance' && form.inviteInviterRewardCredits <= 0) return toast.error('请设置邀请人的余额奖励');
       if (form.inviteInviterRewardType === 'subscription' && !form.inviteInviterRewardPlanId) return toast.error('请选择邀请人的订阅奖励');
@@ -307,6 +327,18 @@ export default function AdminSettingsPage() {
                 </div>
               </div>
               <div className="border-t border-[#EDF0EE] pt-4">
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <span><strong className="block text-[11px]">好友充值返利</strong><small className="text-[10px] text-zinc-400">邀请关系已生效后，按好友实际支付金额返还邀请人余额</small></span>
+                  <label className="flex shrink-0 items-center gap-2 text-[11px] text-zinc-500"><input type="checkbox" checked={form.inviteRechargeRebateEnabled} onChange={(event) => updateField('inviteRechargeRebateEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />启用</label>
+                </div>
+                <div className={`grid grid-cols-1 gap-3 sm:grid-cols-[220px_minmax(0,1fr)_220px] ${form.inviteRechargeRebateEnabled ? '' : 'opacity-50'}`}>
+                  <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">返利比例</span><div className="flex h-[34px] items-center overflow-hidden rounded-md border border-[#DCE4DF] bg-white"><input disabled={!form.inviteRechargeRebateEnabled} min={0.01} max={100} step={0.01} type="number" value={form.inviteRechargeRebatePercent} onChange={(event) => updateField('inviteRechargeRebatePercent', Number(event.target.value))} className="min-w-0 flex-1 border-0 px-3 font-mono text-xs outline-none disabled:bg-zinc-50" /><span className="border-l border-[#DCE4DF] bg-[#F8FAF8] px-3 text-[11px] font-semibold text-zinc-500">%</span></div></label>
+                  <div><span className="mb-1 block text-[10px] font-semibold text-zinc-500">结算示例</span><p className="flex min-h-[34px] items-center rounded-md bg-[#F6F8F6] px-3 text-[11px] text-zinc-600">好友充值 100 元，邀请人获得 {Math.round(100 * form.rechargeRate * form.inviteRechargeRebatePercent) / 100} 余额</p></div>
+                  <label className="flex min-h-[34px] items-center gap-2 self-end rounded-md border border-[#DCE4DF] px-3 text-[10px] text-zinc-600"><input disabled={!form.inviteRechargeRebateEnabled} type="checkbox" checked={form.inviteRebateIncludeSubscriptions} onChange={(event) => updateField('inviteRebateIncludeSubscriptions', event.target.checked)} className="h-3.5 w-3.5 accent-[#047857]" />订阅订单也参与返利</label>
+                </div>
+                <p className="mt-2 text-[10px] text-zinc-400">返利余额 = 实付金额 × 充值比例 × 返利比例；每个支付订单只结算一次。</p>
+              </div>
+              <div className="border-t border-[#EDF0EE] pt-4">
                 <div className="mb-3 flex items-center justify-between gap-3"><span className="flex items-center gap-2"><ShieldAlert className="h-4 w-4 text-[#B42318]" /><span><strong className="block text-[11px]">邀请风控</strong><small className="text-[10px] text-zinc-400">异常邀请保留审计记录但不发奖</small></span></span><label className="flex items-center gap-2 text-[11px] text-zinc-500"><input type="checkbox" checked={form.inviteRiskEnabled} onChange={(event) => updateField('inviteRiskEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />启用</label></div>
                 <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5 ${form.inviteRiskEnabled ? '' : 'opacity-50'}`}>
                   <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">单 IP / 24 小时</span><input disabled={!form.inviteRiskEnabled} min={1} type="number" value={form.inviteRiskMaxPerIP24h} onChange={(event) => updateField('inviteRiskMaxPerIP24h', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
@@ -366,6 +398,12 @@ export default function AdminSettingsPage() {
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">发件邮箱</span><input type="email" value={form.emailFromAddress} onChange={(event) => updateField('emailFromAddress', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
               </div>
               <label className="flex items-center gap-2 text-[11px] text-zinc-500"><input type="checkbox" checked={form.emailSecure} onChange={(event) => updateField('emailSecure', event.target.checked)} className="h-3.5 w-3.5 accent-[#047857]" />使用 SSL/TLS（465 端口通常开启）</label>
+              <div className="space-y-2 border-t border-[#EDF0EE] pt-4">
+                <div><strong className="block text-[11px]">管理员邮件通知</strong><small className="text-[10px] text-zinc-400">发送给所有启用中的管理员账号邮箱</small></div>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">充值成功通知</strong><small className="text-[10px] text-zinc-400">余额充值或订阅购买到账时发送</small></span><input type="checkbox" checked={form.adminRechargeNotificationEnabled} onChange={(event) => updateField('adminRechargeNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">上游状态通知</strong><small className="text-[10px] text-zinc-400">异常与恢复时发送，持续异常 6 小时内不重复</small></span><input type="checkbox" checked={form.adminUpstreamNotificationEnabled} onChange={(event) => updateField('adminUpstreamNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">上游检查间隔（分钟）</span><input disabled={!form.adminUpstreamNotificationEnabled} min={1} max={1440} step={1} type="number" value={form.adminUpstreamCheckIntervalMinutes} onChange={(event) => updateField('adminUpstreamCheckIntervalMinutes', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
+              </div>
             </section>
           </div>
 

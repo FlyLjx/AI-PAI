@@ -218,6 +218,10 @@ func (r *Router) inviteSummary(w http.ResponseWriter, req *http.Request) {
 		"type": config.InviteeReward.Type, "credits": config.InviteeReward.Credits,
 		"planId": config.InviteeReward.PlanID, "planName": inviteePlanName,
 	}
+	rebateConfig := inviteRechargeRebateConfigFromSettings(values)
+	data["rechargeRebateEnabled"] = rebateConfig.Enabled
+	data["rechargeRebatePercent"] = rebateConfig.Percent
+	data["rebateIncludeSubscriptions"] = rebateConfig.IncludeSubscriptions
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
@@ -599,7 +603,7 @@ func (r *Router) alipayNotify(w http.ResponseWriter, req *http.Request) {
 		_, _ = w.Write([]byte("success"))
 		return
 	}
-	order, changed, err := operations.NewRepository(r.db).CompleteOrder(ctx, outTradeNo, tradeNo)
+	order, changed, err := operations.NewRepository(r.db).CompleteOrder(ctx, outTradeNo, tradeNo, inviteRechargeRebateConfigFromSettings(values))
 	if errors.Is(err, operations.ErrRechargeOrderClosed) {
 		if r.logger != nil {
 			r.logger.Warn("ignored payment callback for closed order", "outTradeNo", outTradeNo, "tradeNo", tradeNo)
@@ -618,6 +622,10 @@ func (r *Router) alipayNotify(w http.ResponseWriter, req *http.Request) {
 	}
 	if changed {
 		r.publishCurrentUser(context.Background(), order.UserID)
+		if order.InviteRebate != nil {
+			r.publishCurrentUser(context.Background(), order.InviteRebate.InviterID)
+		}
+		r.notifyRechargeSuccess(order)
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	_, _ = w.Write([]byte("success"))
@@ -741,7 +749,7 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 		writeJSON(w, http.StatusOK, map[string]any{"data": order})
 		return
 	}
-	paidOrder, changed, err := repo.CompleteOrder(ctx, order.OutTradeNo, queried.TradeNo)
+	paidOrder, changed, err := repo.CompleteOrder(ctx, order.OutTradeNo, queried.TradeNo, inviteRechargeRebateConfigFromSettings(values))
 	if errors.Is(err, operations.ErrRechargeOrderClosed) {
 		closedOrder, findErr := repo.FindOrder(ctx, order.ID)
 		if findErr != nil {
@@ -757,6 +765,10 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 	}
 	if changed {
 		r.publishCurrentUser(context.Background(), paidOrder.UserID)
+		if paidOrder.InviteRebate != nil {
+			r.publishCurrentUser(context.Background(), paidOrder.InviteRebate.InviterID)
+		}
+		r.notifyRechargeSuccess(paidOrder)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": paidOrder})
 }

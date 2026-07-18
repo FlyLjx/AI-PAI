@@ -90,6 +90,7 @@ func TestSendBalanceReminderUsesExistingSMTPSettings(t *testing.T) {
 		}
 		return nil
 	}
+	expectTrackedMailSuccess(mock, "balance_reminder", "user@example.com")
 	mock.ExpectExec(`INSERT INTO system_settings`).
 		WithArgs("notify.balance.user-1", sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -139,6 +140,7 @@ func TestSendSubscriptionExpiryRemindersUsesPlanSnapshot(t *testing.T) {
 		}
 		return nil
 	}
+	expectTrackedMailSuccess(mock, "subscription_expiry", "user@example.com")
 	mock.ExpectExec(`INSERT INTO system_settings`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
@@ -168,4 +170,13 @@ func notificationSettingRows(frontendURL string) *sqlmock.Rows {
 		AddRow("emailPassword", "secret").
 		AddRow("emailFromName", "AI-PAI").
 		AddRow("emailFromAddress", "sender@example.com")
+}
+
+func expectTrackedMailSuccess(mock sqlmock.Sqlmock, category string, recipient string) {
+	mock.ExpectExec(`INSERT INTO email_delivery_logs`).
+		WithArgs(sqlmock.AnyArg(), category, "sender@example.com", recipient, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE email_delivery_logs`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
 }
