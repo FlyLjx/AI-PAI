@@ -26,6 +26,7 @@ const (
 	subscriptionExpiryWindow     = 72 * time.Hour
 	subscriptionReminderCooldown = 365 * 24 * time.Hour
 	subscriptionSweepInterval    = time.Hour
+	defaultNotificationOrigin    = "https://ai.yccc.me"
 )
 
 type serviceNotificationManager struct {
@@ -311,8 +312,8 @@ func notificationActionURL(frontendURL string, path string) string {
 	if publicOrigin != "" && (frontendURL == "" || isLocalDevelopmentOrigin(frontendURL)) {
 		frontendURL = publicOrigin
 	}
-	if frontendURL == "" || isLegacyViteOrigin(frontendURL) {
-		frontendURL = "http://127.0.0.1:3000"
+	if frontendURL == "" || isLocalDevelopmentOrigin(frontendURL) {
+		frontendURL = defaultNotificationOrigin
 	}
 	return frontendURL + "/" + strings.TrimLeft(path, "/")
 }
@@ -324,14 +325,6 @@ func isLocalDevelopmentOrigin(value string) bool {
 	}
 	host := strings.ToLower(parsed.Hostname())
 	return host == "localhost" || host == "127.0.0.1" || host == "::1"
-}
-
-func isLegacyViteOrigin(value string) bool {
-	parsed, err := url.Parse(strings.TrimSpace(value))
-	if err != nil {
-		return false
-	}
-	return (strings.EqualFold(parsed.Hostname(), "localhost") || parsed.Hostname() == "127.0.0.1") && parsed.Port() == "5173"
 }
 
 func formatNotificationCredits(value float64) string {

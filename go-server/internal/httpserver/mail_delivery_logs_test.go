@@ -78,6 +78,60 @@ func TestDeliverTrackedMailRecordsFailure(t *testing.T) {
 	}
 }
 
+func TestDeliverTrackedMailBlocksAdminRouteInUserMail(t *testing.T) {
+	called := false
+	err := deliverTrackedMail(
+		context.Background(),
+		nil,
+		func(smtpSettings, string, string, string, ...mailAction) error {
+			called = true
+			return nil
+		},
+		smtpSettings{User: "sender@example.com"},
+		"balance_reminder",
+		"user@example.com",
+		"余额不足",
+		"请及时充值。",
+		mailAction{Text: "查看", URL: "https://ai.yccc.me/sys-admins/recharges"},
+	)
+	if err == nil {
+		t.Fatal("expected user mail with admin route to be rejected")
+	}
+	if called {
+		t.Fatal("mail sender should not be called for a rejected user mail")
+	}
+}
+
+func TestDeliverTrackedMailAllowsAdminRouteInAdminNotification(t *testing.T) {
+	called := false
+	err := deliverTrackedMail(
+		context.Background(),
+		nil,
+		func(smtpSettings, string, string, string, ...mailAction) error {
+			called = true
+			return nil
+		},
+		smtpSettings{User: "sender@example.com"},
+		"recharge_success",
+		"admin@example.com",
+		"充值成功",
+		"系统收到一笔订单。",
+		mailAction{Text: "查看充值流水", URL: "https://ai.yccc.me/sys-admins/recharges"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("admin notification should be sent")
+	}
+}
+
+func TestContainsAdminRouteDetectsEncodedPath(t *testing.T) {
+	if !containsAdminRoute("https://ai.yccc.me/redirect?next=%2Fsys-admins%2Fusers") {
+		t.Fatal("encoded admin route should be detected")
+	}
+}
+
 func TestUpstreamSnapshotHealth(t *testing.T) {
 	tests := []struct {
 		name     string

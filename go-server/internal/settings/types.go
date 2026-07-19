@@ -6,7 +6,7 @@ var Defaults = Settings{
 	"siteName":                          "AI-PAI",
 	"logoText":                          "AI-PAI",
 	"creditName":                        "余额",
-	"frontendUrl":                       "http://127.0.0.1:3000",
+	"frontendUrl":                       "https://ai.yccc.me",
 	"backendUrl":                        "http://localhost:3001",
 	"supportEnabled":                    true,
 	"supportTitle":                      "联系客服",

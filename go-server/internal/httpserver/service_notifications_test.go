@@ -43,10 +43,18 @@ func TestNotificationActionURLKeepsExplicitPublicOrigin(t *testing.T) {
 	}
 }
 
-func TestNotificationActionURLDoesNotReturnLegacyViteOrigin(t *testing.T) {
+func TestNotificationActionURLFallsBackToProductionDomain(t *testing.T) {
 	t.Setenv("APP_PUBLIC_ORIGIN", "")
 	got := notificationActionURL("http://localhost:5173", "/subscriptions")
-	if got != "http://127.0.0.1:3000/subscriptions" {
+	if got != "https://ai.yccc.me/subscriptions" {
+		t.Fatalf("notificationActionURL() = %q", got)
+	}
+}
+
+func TestNotificationActionURLRejectsLocalDeploymentOrigin(t *testing.T) {
+	t.Setenv("APP_PUBLIC_ORIGIN", "http://127.0.0.1:6985")
+	got := notificationActionURL("http://127.0.0.1:3000", "/sys-admins/recharges")
+	if got != "https://ai.yccc.me/sys-admins/recharges" {
 		t.Fatalf("notificationActionURL() = %q", got)
 	}
 }

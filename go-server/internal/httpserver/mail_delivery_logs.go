@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -50,6 +51,9 @@ func deliverTrackedMail(
 	if category == "" {
 		category = "system"
 	}
+	if err := validateMailAudience(category, content, actions); err != nil {
+		return err
+	}
 	fromAddress := strings.TrimSpace(settings.FromAddress)
 	if fromAddress == "" {
 		fromAddress = strings.TrimSpace(settings.User)
@@ -87,6 +91,39 @@ func deliverTrackedMail(
 		WHERE id=?
 	`, id)
 	return nil
+}
+
+func validateMailAudience(category string, content string, actions []mailAction) error {
+	if isAdminMailCategory(category) {
+		return nil
+	}
+	if containsAdminRoute(content) {
+		return newAppError(http.StatusBadRequest, "用户邮件正文不能包含管理后台地址")
+	}
+	for _, action := range actions {
+		if containsAdminRoute(action.URL) {
+			return newAppError(http.StatusBadRequest, "用户邮件按钮不能跳转到管理后台")
+		}
+	}
+	return nil
+}
+
+func isAdminMailCategory(category string) bool {
+	switch strings.ToLower(strings.TrimSpace(category)) {
+	case "recharge_success", "upstream_alert", "upstream_recovery":
+		return true
+	default:
+		return false
+	}
+}
+
+func containsAdminRoute(value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(value))
+	if strings.Contains(normalized, "/sys-admins") {
+		return true
+	}
+	decoded, err := url.QueryUnescape(normalized)
+	return err == nil && strings.Contains(decoded, "/sys-admins")
 }
 
 func nullableMailText(value string) any {
