@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useCallback, useEffect, useState } from 'react';
-import { ArrowRight, CircleAlert, ExternalLink, Gift, LoaderCircle, MailCheck, UserPlus } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { ArrowRight, CircleAlert, ExternalLink, LoaderCircle, MailCheck, UserPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { isRegistrationVerification, register, registrationChallenge, type RegistrationChallenge, type RegistrationVerification } from '@/lib/portal-api';
 import { useRegistrationAvailability } from '@/lib/use-registration-availability';
@@ -25,12 +25,29 @@ export default function RegisterPage() {
   const [verification, setVerification] = useState<RegistrationVerification | null>(null);
   const [challenge, setChallenge] = useState<RegistrationChallenge | null>(null);
   const [challengeLoading, setChallengeLoading] = useState(true);
+  const [challengeReady, setChallengeReady] = useState(false);
   const [loading, setLoading] = useState(false);
+  const challengeTimerRef = useRef<number | null>(null);
 
   const loadChallenge = useCallback(async () => {
+    if (challengeTimerRef.current !== null) window.clearTimeout(challengeTimerRef.current);
+    challengeTimerRef.current = null;
     setChallengeLoading(true);
+    setChallengeReady(false);
     try {
-      setChallenge(await registrationChallenge());
+      const nextChallenge = await registrationChallenge();
+      setChallenge(nextChallenge);
+      const delayMilliseconds = nextChallenge.required
+        ? Math.max(0, Number(nextChallenge.minDelaySeconds || 0) * 1000)
+        : 0;
+      if (delayMilliseconds > 0) {
+        challengeTimerRef.current = window.setTimeout(() => {
+          challengeTimerRef.current = null;
+          setChallengeReady(true);
+        }, delayMilliseconds);
+      } else {
+        setChallengeReady(true);
+      }
     } catch (error) {
       setChallenge(null);
       toast.error(error instanceof Error ? error.message : '注册安全校验加载失败');
@@ -45,13 +62,16 @@ export default function RegisterPage() {
       if (inviteCode) setForm((current) => ({ ...current, inviteCode }));
       void loadChallenge();
     }, 0);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.clearTimeout(timer);
+      if (challengeTimerRef.current !== null) window.clearTimeout(challengeTimerRef.current);
+    };
   }, [loadChallenge]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     if (form.password !== form.confirm) return toast.error('两次输入的密码不一致');
-    if (challenge?.required && !challenge.token) return toast.error('注册安全校验未就绪，请刷新后重试');
+    if (!challenge || (challenge.required && (!challenge.token || !challengeReady))) return toast.error('注册安全校验尚未完成，请稍后再试');
     setLoading(true);
     try {
       const result = await register(form.email, form.password, {
@@ -133,10 +153,10 @@ export default function RegisterPage() {
           <label className="field"><span>邮箱</span><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
           <label className="field"><span>密码</span><input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
           <label className="field"><span>确认密码</span><input type="password" required minLength={6} value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} /></label>
-          <label className="field"><span>邀请码（选填）</span><div className="relative"><Gift className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={14} /><input className="pl-9 font-mono uppercase" maxLength={16} value={form.inviteCode} onChange={(e) => setForm({ ...form, inviteCode: e.target.value.toUpperCase() })} placeholder="输入好友邀请码" /></div></label>
+          <label className="field"><span>邀请码（选填）</span><input className="font-mono uppercase" maxLength={16} value={form.inviteCode} onChange={(e) => setForm({ ...form, inviteCode: e.target.value.toUpperCase() })} placeholder="输入好友邀请码" /></label>
           <label className="pointer-events-none absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true"><span>网站</span><input tabIndex={-1} autoComplete="off" value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} /></label>
         </div>
-        <button className="btn primary w-full mt-6" disabled={loading || challengeLoading || (challenge?.required === true && !challenge.token)}>{loading ? '创建中...' : challengeLoading ? <><LoaderCircle size={14} className="animate-spin" />安全校验中</> : <>创建账户 <ArrowRight size={15} /></>}</button>
+        <button className="btn primary w-full mt-6" disabled={loading || challengeLoading || !challenge || (challenge.required && (!challenge.token || !challengeReady))}>{loading ? '创建中...' : challengeLoading || !challengeReady ? <><LoaderCircle size={14} className="animate-spin" />安全校验中</> : <>创建账户 <ArrowRight size={15} /></>}</button>
         <p className="mt-5 text-center text-xs text-[#748078]">已有账户？ <Link className="text-[#087443] font-bold" href="/login">返回登录</Link></p>
       </form>
     </main>
