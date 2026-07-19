@@ -127,10 +127,7 @@ func (repository *Repository) frequency(ctx context.Context, expression string, 
 func (repository *Repository) trend(ctx context.Context, filters Filters, where string, args []any) ([]TrendPoint, error) {
 	interval := trendInterval(filters.Range)
 	seconds := int64(interval / time.Second)
-	bucketExpression := fmt.Sprintf("FLOOR(UNIX_TIMESTAMP(created_at) / %d) * %d", seconds, seconds)
-	if database.CurrentDialect() == database.DialectPostgres {
-		bucketExpression = fmt.Sprintf("CAST(FLOOR(EXTRACT(EPOCH FROM created_at) / %d) AS BIGINT) * %d", seconds, seconds)
-	}
+	bucketExpression := trendBucketExpression(seconds)
 	query := fmt.Sprintf(`
 		SELECT %s AS bucket, COUNT(*),
 			COALESCE(SUM(CASE WHEN status_code < 400 THEN 1 ELSE 0 END), 0),
@@ -171,6 +168,13 @@ func (repository *Repository) trend(ctx context.Context, filters Filters, where 
 		})
 	}
 	return points, nil
+}
+
+func trendBucketExpression(seconds int64) string {
+	if database.CurrentDialect() == database.DialectPostgres {
+		return fmt.Sprintf("CAST(FLOOR(EXTRACT(EPOCH FROM (created_at AT TIME ZONE 'Asia/Shanghai')) / %d) AS BIGINT) * %d", seconds, seconds)
+	}
+	return fmt.Sprintf("FLOOR(UNIX_TIMESTAMP(created_at) / %d) * %d", seconds, seconds)
 }
 
 func normalizeFilters(filters Filters) Filters {
