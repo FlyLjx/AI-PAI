@@ -489,6 +489,91 @@ button { cursor: pointer; }
   line-height: 1.65;
 }
 
+.generation-reference-tray {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border: 1px dashed #cfd8d2;
+  border-radius: 7px;
+  background: #fafbf9;
+  transition: border-color .15s ease, background-color .15s ease;
+}
+
+.generation-reference-tray.is-empty { grid-template-columns: minmax(0, 1fr); }
+.generation-reference-tray.is-dragging { border-color: #12b76a; background: #effaf3; }
+
+.generation-reference-item,
+.generation-reference-upload {
+  position: relative;
+  aspect-ratio: 1;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #dce4df;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.generation-reference-item > img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+}
+
+.generation-reference-item > span {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  min-width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: rgba(17, 24, 20, .72);
+  color: #fff;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 9px;
+}
+
+.generation-reference-item > button {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, .7);
+  border-radius: 5px;
+  background: rgba(20, 28, 23, .72);
+  color: #fff;
+}
+
+.generation-reference-item > button:hover:not(:disabled) { background: #b42318; }
+
+.generation-reference-upload {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 64px;
+  border-style: dashed;
+  color: #66716a;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.generation-reference-tray.is-empty .generation-reference-upload {
+  aspect-ratio: auto;
+  min-height: 72px;
+  flex-direction: row;
+  font-size: 11px;
+}
+
+.generation-reference-upload:hover:not(:disabled) { border-color: #86efac; background: #f0fdf4; color: #087443; }
+
 .generation-parameter-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -726,6 +811,7 @@ button { cursor: pointer; }
 
 @media (max-width: 420px) {
   .generation-parameter-grid { grid-template-columns: 1fr; }
+  .generation-reference-tray:not(.is-empty) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 
 /* Public API gateway homepage */

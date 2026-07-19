@@ -444,7 +444,7 @@ export function userToken(): string {
 async function openAIRequest<T>(path: string, apiKey: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers);
   headers.set('Authorization', `Bearer ${apiKey}`);
-  if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
 
   const response = await fetch(path, { ...options, headers, cache: 'no-store' });
   const payload = await response.json().catch(() => null) as (T & {
@@ -480,8 +480,24 @@ export const portalApi = {
   inviteSummary: (user: PortalUser) => api<InviteSummary>(`/api/invites/summary${query({ userId: user.id })}`, {}, user.token),
   changePassword: (user: PortalUser, oldPassword: string, password: string) => api(`/api/users/${encodeURIComponent(user.id)}/password`, { method: 'PATCH', body: JSON.stringify({ userId: user.id, oldPassword, password }) }, user.token),
   compatibleModels: (apiKey: string) => openAIRequest<{ object: string; data: CompatibleModel[] }>('/v1/models', apiKey),
-  generateImages: (apiKey: string, input: ImageGenerationInput) => openAIRequest<ImageGenerationResult>('/v1/images/generations', apiKey, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  }),
+  generateImages: (apiKey: string, input: ImageGenerationInput, referenceImages: File[] = []) => {
+    if (referenceImages.length === 0) {
+      return openAIRequest<ImageGenerationResult>('/v1/images/generations', apiKey, {
+        method: 'POST',
+        body: JSON.stringify(input),
+      });
+    }
+    const body = new FormData();
+    body.set('model', input.model);
+    body.set('prompt', input.prompt);
+    body.set('n', String(input.n));
+    body.set('size_tier', input.size_tier);
+    body.set('aspect_ratio', input.aspect_ratio);
+    body.set('output_format', input.output_format);
+    referenceImages.forEach((file) => body.append('image[]', file, file.name));
+    return openAIRequest<ImageGenerationResult>('/v1/images/edits', apiKey, {
+      method: 'POST',
+      body,
+    });
+  },
 };

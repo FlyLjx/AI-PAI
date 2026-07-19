@@ -9,6 +9,7 @@ import {
   Download,
   Expand,
   Image as ImageIcon,
+  ImagePlus,
   Images,
   KeyRound,
   LoaderCircle,
@@ -35,6 +36,12 @@ import {
 type SizeTier = ImageGenerationInput['size_tier'];
 type AspectRatio = ImageGenerationInput['aspect_ratio'];
 type OutputFormat = ImageGenerationInput['output_format'];
+type ReferenceImage = { id: string; file: File; previewUrl: string };
+
+const maxReferenceImages = 4;
+const maxReferenceImageBytes = 20 * 1024 * 1024;
+const maxReferenceImagesTotalBytes = 75 * 1024 * 1024;
+const supportedReferenceImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
 
 const sizeOptions: AppSelectOption[] = [
   { value: '1k', label: '1K · 标准' },
@@ -104,6 +111,9 @@ export default function PlaygroundPage() {
   const mountedRef = useRef(true);
   const keyRequestRef = useRef(0);
   const generationFormRef = useRef<HTMLFormElement>(null);
+  const referenceInputRef = useRef<HTMLInputElement>(null);
+  const referenceImagesRef = useRef<ReferenceImage[]>([]);
+  const referenceImageIDRef = useRef(0);
   const [user, setUser] = useState<PortalUser | null>(null);
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
   const [selectedKeyId, setSelectedKeyId] = useState('');
@@ -111,6 +121,8 @@ export default function PlaygroundPage() {
   const [models, setModels] = useState<CompatibleModel[]>([]);
   const [selectedModel, setSelectedModel] = useState('');
   const [prompt, setPrompt] = useState('');
+  const [referenceImages, setReferenceImages] = useState<ReferenceImage[]>([]);
+  const [referenceDragActive, setReferenceDragActive] = useState(false);
   const [sizeTier, setSizeTier] = useState<SizeTier>('1k');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
   const [quantity, setQuantity] = useState(1);
@@ -201,6 +213,14 @@ export default function PlaygroundPage() {
   }, [loadKeys]);
 
   useEffect(() => {
+    referenceImagesRef.current = referenceImages;
+  }, [referenceImages]);
+
+  useEffect(() => () => {
+    referenceImagesRef.current.forEach((item) => URL.revokeObjectURL(item.previewUrl));
+  }, []);
+
+  useEffect(() => {
     const form = generationFormRef.current;
     if (!form) return;
 
@@ -259,6 +279,54 @@ export default function PlaygroundPage() {
     setSizeTier((current) => enabled.includes(current) ? current : enabled[0]);
   };
 
+  const addReferenceFiles = (files: File[]) => {
+    if (generating || files.length === 0) return;
+    const available = maxReferenceImages - referenceImages.length;
+    if (available <= 0) {
+      toast.error('最多上传 4 张参考图');
+      return;
+    }
+
+    const validFiles = files.filter((file) => supportedReferenceImageTypes.has(file.type));
+    if (validFiles.length !== files.length) toast.error('参考图仅支持 JPG、PNG、WEBP');
+    const sizeValidFiles = validFiles.filter((file) => file.size <= maxReferenceImageBytes);
+    if (sizeValidFiles.length !== validFiles.length) toast.error('单张参考图不能超过 20MB');
+    if (sizeValidFiles.length > available) toast.error('最多上传 4 张参考图');
+
+    let totalBytes = referenceImages.reduce((sum, item) => sum + item.file.size, 0);
+    const accepted: File[] = [];
+    for (const file of sizeValidFiles.slice(0, available)) {
+      if (totalBytes + file.size > maxReferenceImagesTotalBytes) {
+        toast.error('参考图总大小不能超过 75MB');
+        break;
+      }
+      totalBytes += file.size;
+      accepted.push(file);
+    }
+    if (accepted.length === 0) return;
+    setReferenceImages((current) => [
+      ...current,
+      ...accepted.map((file) => ({
+        id: `reference-${++referenceImageIDRef.current}`,
+        file,
+        previewUrl: URL.createObjectURL(file),
+      })),
+    ]);
+  };
+
+  const handleReferenceInput = (event: React.ChangeEvent<HTMLInputElement>) => {
+    addReferenceFiles(Array.from(event.target.files || []));
+    event.target.value = '';
+  };
+
+  const removeReferenceImage = (id: string) => {
+    setReferenceImages((current) => {
+      const removed = current.find((item) => item.id === id);
+      if (removed) URL.revokeObjectURL(removed.previewUrl);
+      return current.filter((item) => item.id !== id);
+    });
+  };
+
   const generate = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const cleanedPrompt = prompt.trim();
@@ -278,7 +346,7 @@ export default function PlaygroundPage() {
         size_tier: sizeTier,
         aspect_ratio: aspectRatio,
         output_format: outputFormat,
-      });
+      }, referenceImages.map((item) => item.file));
       const urls = (response.data || []).map((item) => item.url).filter(Boolean);
       if (urls.length === 0) throw new Error('生成完成，但服务端没有返回图片');
       setResults(urls);
@@ -330,7 +398,7 @@ export default function PlaygroundPage() {
 
   return (
     <div className="page-stack generation-page">
-      <PageHeader title="生图台" description="文本生成图片 · OpenAI Images API">
+      <PageHeader title="生图台" description="文本与参考图生成 · OpenAI Images API">
         <Link href="/api-keys" className="btn"><KeyRound size={14} />管理 Key</Link>
         <button className="btn" type="button" onClick={() => void loadKeys()} disabled={loadingKeys || generating}>
           <RefreshCw size={14} className={loadingKeys ? 'animate-spin' : ''} />刷新
@@ -400,6 +468,50 @@ export default function PlaygroundPage() {
                 />
               </div>
 
+              <div className="field generation-reference-field">
+                <div className="generation-label-row">
+                  <label htmlFor="generation-reference-input">参考图</label>
+                  <span>{referenceImages.length}/{maxReferenceImages}</span>
+                </div>
+                <input
+                  ref={referenceInputRef}
+                  id="generation-reference-input"
+                  type="file"
+                  accept="image/jpeg,image/png,image/webp"
+                  multiple
+                  hidden
+                  disabled={generating || referenceImages.length >= maxReferenceImages}
+                  onChange={handleReferenceInput}
+                />
+                <div
+                  className={`generation-reference-tray ${referenceImages.length === 0 ? 'is-empty' : ''} ${referenceDragActive ? 'is-dragging' : ''}`}
+                  onDragEnter={(event) => { event.preventDefault(); if (!generating) setReferenceDragActive(true); }}
+                  onDragOver={(event) => event.preventDefault()}
+                  onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setReferenceDragActive(false); }}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setReferenceDragActive(false);
+                    addReferenceFiles(Array.from(event.dataTransfer.files || []));
+                  }}
+                >
+                  {referenceImages.map((item, index) => (
+                    <div className="generation-reference-item" key={item.id} title={item.file.name}>
+                      <img src={item.previewUrl} alt={`参考图 ${index + 1}`} />
+                      <span>{index + 1}</span>
+                      <button type="button" onClick={() => removeReferenceImage(item.id)} disabled={generating} title={`删除参考图 ${index + 1}`} aria-label={`删除参考图 ${index + 1}`}>
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  {referenceImages.length < maxReferenceImages && (
+                    <button className="generation-reference-upload" type="button" onClick={() => referenceInputRef.current?.click()} disabled={generating}>
+                      <ImagePlus size={18} />
+                      <span>{referenceImages.length === 0 ? '上传参考图' : '继续添加'}</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+
               <div className="generation-parameter-grid">
                 <div className="field">
                   <label htmlFor="generation-size">清晰度</label>
@@ -424,6 +536,7 @@ export default function PlaygroundPage() {
                 <span>{aspectRatio}</span>
                 <span>{quantity} 张</span>
                 <span>{outputFormat.toUpperCase()}</span>
+                {referenceImages.length > 0 && <span>参考图 {referenceImages.length}</span>}
               </div>
 
               <button className="btn primary generation-submit" type="submit" disabled={!canGenerate}>
@@ -455,7 +568,7 @@ export default function PlaygroundPage() {
                 <div className="generation-result-state">
                   <span className="generation-state-icon is-loading"><LoaderCircle size={26} className="animate-spin" /></span>
                   <strong>图片生成中</strong>
-                  <small>{selectedModel} · {sizeTier.toUpperCase()} · {aspectRatio}</small>
+                  <small>{selectedModel} · {sizeTier.toUpperCase()} · {aspectRatio}{referenceImages.length > 0 ? ` · ${referenceImages.length} 张参考图` : ''}</small>
                 </div>
               ) : generationError ? (
                 <div className="generation-result-state is-error">

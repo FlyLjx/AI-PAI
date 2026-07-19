@@ -146,6 +146,17 @@ func TestDecodeCompatImageInputSupportsMultipartImageArrayFields(t *testing.T) {
 	}
 }
 
+func TestCompatRequestReferenceURLsLimitsUniqueImages(t *testing.T) {
+	input := compatImageInput{ReferenceURLs: []string{"one", "two", "three", "four", "four"}}
+	if count := len(compatRequestReferenceURLs(input, true)); count != 4 {
+		t.Fatalf("unique reference count=%d, want 4", count)
+	}
+	input.ReferenceURLs = append(input.ReferenceURLs, "five")
+	if count := len(compatRequestReferenceURLs(input, true)); count <= maxCompatReferenceImages {
+		t.Fatalf("reference count=%d, want more than %d", count, maxCompatReferenceImages)
+	}
+}
+
 func testPNGBytes(t *testing.T) []byte {
 	t.Helper()
 	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=")

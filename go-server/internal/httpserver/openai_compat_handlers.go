@@ -60,6 +60,7 @@ const (
 const (
 	compatTaskClientWaitTimeout = 8 * time.Minute
 	compatTaskLogWaitTimeout    = 30 * time.Minute
+	maxCompatReferenceImages    = 4
 )
 
 type compatTaskResult struct {
@@ -146,6 +147,11 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 	var input compatImageInput
 	if err := decodeCompatImageInput(req, &input, isEdit); err != nil {
 		writeOpenAIError(w, http.StatusBadRequest, "请求参数不正确", "invalid_request_error")
+		return
+	}
+	referenceURLs := compatRequestReferenceURLs(input, isEdit)
+	if len(referenceURLs) > maxCompatReferenceImages {
+		writeOpenAIError(w, http.StatusBadRequest, "参考图最多上传 4 张", "invalid_request_error")
 		return
 	}
 	r.compatImageRequestWithInput(w, req, auth, input, isEdit, compatImageResponseOpenAI)
@@ -805,26 +811,9 @@ func compatReferencePayload(req *http.Request, urls []string) *string {
 }
 
 func compatEditReferencePayload(req *http.Request, input compatImageInput) *string {
-	items := []string{}
-	for _, source := range []any{
-		input.ImageURL,
-		input.ImageURLs,
-		input.Image,
-		input.Images,
-		input.ReferenceItems,
-		input.ReferenceImage,
-		input.ReferenceImages,
-		input.InputImage,
-		input.InputImages,
-	} {
-		items = append(items, extractCompatImageURLs(source)...)
-	}
-	if len(input.ReferenceURLs) > 0 {
-		items = append(items, input.ReferenceURLs...)
-	}
 	mask := firstCompatImageURL(input.Mask)
 	cleaned := []string{}
-	for _, item := range items {
+	for _, item := range compatRequestReferenceURLs(input, true) {
 		item = strings.TrimSpace(item)
 		if item != "" {
 			cleaned = appendUniqueReferencePayload(cleaned, compatReferenceValue(req, item))
@@ -839,6 +828,33 @@ func compatEditReferencePayload(req *http.Request, input compatImageInput) *stri
 	bytes, _ := json.Marshal(cleaned)
 	value := string(bytes)
 	return &value
+}
+
+func compatRequestReferenceURLs(input compatImageInput, isEdit bool) []string {
+	items := []string{}
+	if isEdit {
+		for _, source := range []any{
+			input.ImageURL,
+			input.ImageURLs,
+			input.Image,
+			input.Images,
+			input.ReferenceItems,
+			input.ReferenceImage,
+			input.ReferenceImages,
+			input.InputImage,
+			input.InputImages,
+		} {
+			items = append(items, extractCompatImageURLs(source)...)
+		}
+	} else {
+		items = append(items, compatInputReferenceURLs(input)...)
+	}
+	items = append(items, input.ReferenceURLs...)
+	cleaned := []string{}
+	for _, item := range items {
+		cleaned = appendUniqueReferencePayload(cleaned, item)
+	}
+	return cleaned
 }
 
 func compatInputReferenceURLs(input compatImageInput) []string {
