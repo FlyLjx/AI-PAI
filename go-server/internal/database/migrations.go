@@ -118,6 +118,9 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "api_access_keys", "billing_mode", "VARCHAR(16) NULL", "concurrency_limit"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "api_access_logs", "request_params", JSONTextType()+" NULL", "response_format"); err != nil {
+		return err
+	}
 	if err := normalizeAPIAccessKeyConcurrencyDefaults(ctx, db); err != nil {
 		return err
 	}
@@ -768,6 +771,7 @@ func schemaBootstrapStatements() []string {
 				quantity INTEGER NOT NULL DEFAULT 1,
 				image_count INTEGER NOT NULL DEFAULT 0,
 				response_format VARCHAR(30) NOT NULL DEFAULT 'url',
+				request_params JSONB NULL,
 				status VARCHAR(16) NOT NULL DEFAULT 'queued',
 				error_message TEXT NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -880,6 +884,7 @@ func schemaBootstrapStatements() []string {
 			quantity INTEGER NOT NULL DEFAULT 1,
 			image_count INTEGER NOT NULL DEFAULT 0,
 			response_format VARCHAR(30) NOT NULL DEFAULT 'url',
+			request_params JSON NULL,
 			status VARCHAR(16) NOT NULL DEFAULT 'queued',
 			error_message TEXT NULL,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

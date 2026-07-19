@@ -3,6 +3,7 @@ package apiaccess
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -270,17 +271,32 @@ func (r *Repository) CreateLogWithTx(ctx context.Context, tx *database.Tx, log U
 }
 
 func (r *Repository) createLog(ctx context.Context, store accessStore, log UsageLog) (*UsageLog, error) {
-	_, err := store.ExecContext(ctx, `
+	requestParams, err := encodeRequestParams(log.RequestParams)
+	if err != nil {
+		return nil, err
+	}
+	_, err = store.ExecContext(ctx, `
 		INSERT INTO api_access_logs
-			(id, user_id, api_key_id, task_id, endpoint, model, prompt, size, quality, quantity, image_count, response_format, status, error_message, finished_at)
+			(id, user_id, api_key_id, task_id, endpoint, model, prompt, size, quality, quantity, image_count, response_format, request_params, status, error_message, finished_at)
 		VALUES
-			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, log.ID, log.UserID, log.APIKeyID, log.TaskID, log.Endpoint, log.Model, log.Prompt, log.Size, log.Quality, log.Quantity, log.ImageCount, log.ResponseFormat, log.Status, log.ErrorMessage, log.FinishedAt)
+			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, log.ID, log.UserID, log.APIKeyID, log.TaskID, log.Endpoint, log.Model, log.Prompt, log.Size, log.Quality, log.Quantity, log.ImageCount, log.ResponseFormat, requestParams, log.Status, log.ErrorMessage, log.FinishedAt)
 	if err != nil {
 		return nil, err
 	}
 	row := store.QueryRowContext(ctx, usageLogSelect()+` WHERE api_access_logs.id = ? LIMIT 1`, log.ID)
 	return scanUsageLog(row)
+}
+
+func encodeRequestParams(value map[string]any) (any, error) {
+	if len(value) == 0 {
+		return nil, nil
+	}
+	body, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	return string(body), nil
 }
 
 func (r *Repository) MarkLogsProcessingForTask(ctx context.Context, taskID string) error {
@@ -508,6 +524,7 @@ func usageLogSelect() string {
 			api_access_logs.quantity,
 			api_access_logs.image_count,
 			api_access_logs.response_format,
+			api_access_logs.request_params,
 			api_access_logs.status,
 			api_access_logs.error_message,
 			COALESCE(generation_tasks.duration_seconds, 0),
@@ -850,7 +867,7 @@ type usageLogScanner interface {
 
 func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	var item UsageLog
-	var userEmail, keyName, keyPrefix, taskID, errorMessage sql.NullString
+	var userEmail, keyName, keyPrefix, taskID, requestParams, errorMessage sql.NullString
 	var finishedAt sql.NullTime
 	if err := row.Scan(
 		&item.ID,
@@ -868,6 +885,7 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 		&item.Quantity,
 		&item.ImageCount,
 		&item.ResponseFormat,
+		&requestParams,
 		&item.Status,
 		&errorMessage,
 		&item.DurationSeconds,
@@ -887,6 +905,11 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	}
 	if taskID.Valid {
 		item.TaskID = &taskID.String
+	}
+	if requestParams.Valid && strings.TrimSpace(requestParams.String) != "" {
+		if err := json.Unmarshal([]byte(requestParams.String), &item.RequestParams); err != nil {
+			return nil, err
+		}
 	}
 	if errorMessage.Valid && strings.TrimSpace(errorMessage.String) != "" {
 		item.ErrorMessage = &errorMessage.String

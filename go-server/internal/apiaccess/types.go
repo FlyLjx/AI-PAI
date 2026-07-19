@@ -93,6 +93,7 @@ type UsageLog struct {
 	Quantity        int
 	ImageCount      int
 	ResponseFormat  string
+	RequestParams   map[string]any
 	Status          string
 	ErrorMessage    *string
 	DurationSeconds float64
@@ -126,26 +127,27 @@ type PublicAccessKey struct {
 }
 
 type PublicUsageLog struct {
-	ID              string  `json:"id"`
-	UserID          string  `json:"userId"`
-	UserEmail       *string `json:"userEmail,omitempty"`
-	APIKeyID        string  `json:"apiKeyId"`
-	KeyName         *string `json:"keyName,omitempty"`
-	KeyPrefix       *string `json:"keyPrefix,omitempty"`
-	TaskID          *string `json:"taskId,omitempty"`
-	Endpoint        string  `json:"endpoint"`
-	Model           string  `json:"model"`
-	Prompt          string  `json:"prompt"`
-	Size            string  `json:"size"`
-	Quality         string  `json:"quality"`
-	Quantity        int     `json:"quantity"`
-	ImageCount      int     `json:"imageCount"`
-	ResponseFormat  string  `json:"responseFormat"`
-	Status          string  `json:"status"`
-	ErrorMessage    *string `json:"errorMessage,omitempty"`
-	DurationSeconds float64 `json:"durationSeconds"`
-	CreatedAt       string  `json:"createdAt"`
-	FinishedAt      *string `json:"finishedAt"`
+	ID              string         `json:"id"`
+	UserID          string         `json:"userId"`
+	UserEmail       *string        `json:"userEmail,omitempty"`
+	APIKeyID        string         `json:"apiKeyId"`
+	KeyName         *string        `json:"keyName,omitempty"`
+	KeyPrefix       *string        `json:"keyPrefix,omitempty"`
+	TaskID          *string        `json:"taskId,omitempty"`
+	Endpoint        string         `json:"endpoint"`
+	Model           string         `json:"model"`
+	Prompt          string         `json:"prompt"`
+	Size            string         `json:"size"`
+	Quality         string         `json:"quality"`
+	Quantity        int            `json:"quantity"`
+	ImageCount      int            `json:"imageCount"`
+	ResponseFormat  string         `json:"responseFormat"`
+	RequestParams   map[string]any `json:"requestParameters,omitempty"`
+	Status          string         `json:"status"`
+	ErrorMessage    *string        `json:"errorMessage,omitempty"`
+	DurationSeconds float64        `json:"durationSeconds"`
+	CreatedAt       string         `json:"createdAt"`
+	FinishedAt      *string        `json:"finishedAt"`
 }
 
 type ListLogsInput struct {
@@ -298,6 +300,7 @@ func ToPublicLog(log UsageLog) PublicUsageLog {
 		Quantity:        log.Quantity,
 		ImageCount:      log.ImageCount,
 		ResponseFormat:  log.ResponseFormat,
+		RequestParams:   log.RequestParams,
 		Status:          log.Status,
 		ErrorMessage:    log.ErrorMessage,
 		DurationSeconds: log.DurationSeconds,

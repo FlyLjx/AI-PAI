@@ -87,6 +87,9 @@ export type UsageLog = {
   quality: string;
   quantity: number;
   imageCount: number;
+  requestParameters?: Record<string, unknown>;
+  prompt?: string;
+  responseFormat?: string;
   status: string;
   errorMessage?: string;
   durationSeconds: number;

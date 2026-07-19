@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Check, CircleStop, KeyRound, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { Activity, Check, CircleStop, Clipboard, Eye, KeyRound, Loader2, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
@@ -14,8 +14,6 @@ import { formatDate } from '@/lib/common/utils';
 
 type DetailedUsageLog = UsageLog & {
   apiKeyId?: string;
-  prompt?: string;
-  responseFormat?: string;
 };
 
 const logPageSize = 30;
@@ -89,6 +87,18 @@ function BillingModeBadge({ mode }: { mode?: APIKeyBillingMode | null }) {
   return <span className={`inline-flex h-6 items-center whitespace-nowrap rounded border px-2 text-[11px] font-semibold ${meta.className}`}>{meta.label}</span>;
 }
 
+function requestParameters(log: DetailedUsageLog): Record<string, unknown> {
+  if (log.requestParameters && Object.keys(log.requestParameters).length > 0) return log.requestParameters;
+  return {
+    model: log.model,
+    prompt: log.prompt || '',
+    size: log.size,
+    quality: log.quality,
+    n: log.quantity,
+    response_format: log.responseFormat || 'url',
+  };
+}
+
 export default function AdminAPIAccessPage() {
   const [tab, setTab] = useState<'keys' | 'logs'>('keys');
   const [keys, setKeys] = useState<APIKey[]>([]);
@@ -109,6 +119,7 @@ export default function AdminAPIAccessPage() {
   const [deleteCandidate, setDeleteCandidate] = useState<APIKey | null>(null);
   const [cancelCandidate, setCancelCandidate] = useState<DetailedUsageLog | null>(null);
   const [cancelingTaskId, setCancelingTaskId] = useState('');
+  const [detailLog, setDetailLog] = useState<DetailedUsageLog | null>(null);
 
   const loadKeys = useCallback(async () => {
     setKeysLoading(true);
@@ -149,6 +160,20 @@ export default function AdminAPIAccessPage() {
     const timer = window.setTimeout(() => void Promise.all([loadKeys(), loadLogs(1)]), 0);
     return () => window.clearTimeout(timer);
   }, [loadKeys, loadLogs]);
+
+  useEffect(() => {
+    if (!detailLog) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDetailLog(null);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [detailLog]);
 
   const filteredKeys = useMemo(() => {
     const keyword = keySearch.trim().toLowerCase();
@@ -223,6 +248,16 @@ export default function AdminAPIAccessPage() {
   };
 
   const canCancelTask = (log: DetailedUsageLog) => Boolean(log.taskId && ['queued', 'pending', 'processing'].includes(log.status));
+
+  const copyRequestParameters = async () => {
+    if (!detailLog) return;
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(requestParameters(detailLog), null, 2));
+      toast.success('请求参数已复制');
+    } catch {
+      toast.error('复制失败，请手动选择内容');
+    }
+  };
 
   const keyActions = (key: APIKey) => (
     <div className="flex items-center justify-end gap-1">
@@ -333,7 +368,7 @@ export default function AdminAPIAccessPage() {
               <td className="px-4 py-3"><GenerationDurationBadge log={log} /></td>
               <td className="px-4 py-3"><StatusBadge status={status.badge} customLabel={status.label} /></td>
               <td className="max-w-[220px] truncate px-4 py-3 text-[11px] text-red-600" title={log.errorMessage || log.prompt || ''}>{log.errorMessage || '-'}</td>
-              <td className="px-4 py-3 text-right">{canCancelTask(log) && <button type="button" onClick={() => setCancelCandidate(log)} disabled={cancelingTaskId === log.taskId} className="inline-flex h-7 items-center gap-1 rounded border border-red-200 bg-red-50 px-2 text-[11px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-40"><CircleStop className="h-3.5 w-3.5" />取消</button>}</td>
+              <td className="px-4 py-3 text-right"><div className="flex items-center justify-end gap-1"><button type="button" onClick={() => setDetailLog(log)} title="查看请求参数" className="grid h-7 w-7 place-items-center rounded border border-[#DCE4DF] bg-white text-zinc-600 hover:border-[#86EFAC] hover:text-[#047857]"><Eye className="h-3.5 w-3.5" /></button>{canCancelTask(log) && <button type="button" onClick={() => setCancelCandidate(log)} disabled={cancelingTaskId === log.taskId} className="inline-flex h-7 items-center gap-1 rounded border border-red-200 bg-red-50 px-2 text-[11px] font-semibold text-red-700 hover:bg-red-100 disabled:opacity-40"><CircleStop className="h-3.5 w-3.5" />取消</button>}</div></td>
             </tr>
           ); }}
           renderMobileItem={(log) => { const status = logStatus(log.status); return (
@@ -343,11 +378,30 @@ export default function AdminAPIAccessPage() {
               <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-400"><span>{log.size || '-'} · {log.imageCount || log.quantity || 0} 张</span><span>{formatDate(log.createdAt)}</span></div>
               <div className="mt-2 flex items-center justify-between border-t border-[#EEF1EF] pt-2 text-[10px] text-zinc-400"><span>生图时间</span><GenerationDurationBadge log={log} /></div>
               {log.errorMessage && <p className="mt-2 line-clamp-2 text-[11px] text-red-600">{log.errorMessage}</p>}
-              {canCancelTask(log) && <div className="mt-2 flex justify-end"><button type="button" onClick={() => setCancelCandidate(log)} disabled={cancelingTaskId === log.taskId} className="inline-flex h-7 items-center gap-1 rounded border border-red-200 bg-red-50 px-2 text-[11px] font-semibold text-red-700 disabled:opacity-40"><CircleStop className="h-3.5 w-3.5" />取消任务</button></div>}
+              <div className="mt-2 flex justify-end gap-1.5"><button type="button" onClick={() => setDetailLog(log)} className="inline-flex h-7 items-center gap-1 rounded border border-[#DCE4DF] bg-white px-2 text-[11px] font-semibold text-zinc-600"><Eye className="h-3.5 w-3.5" />请求参数</button>{canCancelTask(log) && <button type="button" onClick={() => setCancelCandidate(log)} disabled={cancelingTaskId === log.taskId} className="inline-flex h-7 items-center gap-1 rounded border border-red-200 bg-red-50 px-2 text-[11px] font-semibold text-red-700 disabled:opacity-40"><CircleStop className="h-3.5 w-3.5" />取消任务</button>}</div>
             </article>
           ); }}
         />
       ))}
+
+      {detailLog && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 sm:grid sm:place-items-center" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailLog(null); }}>
+          <section className="w-full max-w-3xl overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl" role="dialog" aria-modal="true" aria-labelledby="request-parameters-title">
+            <header className="flex items-start justify-between gap-4 border-b border-[#DCE4DF] px-5 py-4">
+              <div className="min-w-0"><h2 id="request-parameters-title" className="text-sm font-semibold">API 请求参数</h2><p className="mt-1 truncate text-[11px] text-zinc-500">{detailLog.userEmail || detailLog.userId} · {detailLog.endpoint}</p></div>
+              <button type="button" onClick={() => setDetailLog(null)} title="关闭" className="grid h-7 w-7 shrink-0 place-items-center rounded text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button>
+            </header>
+            <div className="grid grid-cols-2 border-b border-[#EDF0EE] bg-[#FAFBFA] sm:grid-cols-4">
+              <div className="border-b border-r border-[#EDF0EE] px-4 py-3 sm:border-b-0"><span className="block text-[10px] text-zinc-400">请求时间</span><strong className="mt-1 block whitespace-nowrap text-[11px] font-medium">{formatDate(detailLog.createdAt)}</strong></div>
+              <div className="border-b border-[#EDF0EE] px-4 py-3 sm:border-b-0 sm:border-r"><span className="block text-[10px] text-zinc-400">模型</span><strong className="mt-1 block truncate text-[11px] font-medium" title={detailLog.model}>{detailLog.model || '-'}</strong></div>
+              <div className="border-r border-[#EDF0EE] px-4 py-3"><span className="block text-[10px] text-zinc-400">API Key</span><strong className="mt-1 block truncate font-mono text-[11px] font-medium">{detailLog.keyName || detailLog.keyPrefix || '-'}</strong></div>
+              <div className="px-4 py-3"><span className="block text-[10px] text-zinc-400">日志 ID</span><strong className="mt-1 block truncate font-mono text-[11px] font-medium" title={detailLog.id}>{detailLog.id}</strong></div>
+            </div>
+            <div className="p-4 sm:p-5"><pre className="max-h-[55vh] overflow-auto rounded-md border border-[#DCE4DF] bg-[#111814] p-4 font-mono text-[11px] leading-5 text-[#DDF5E6]">{JSON.stringify(requestParameters(detailLog), null, 2)}</pre></div>
+            <footer className="flex items-center justify-end gap-2 border-t border-[#DCE4DF] bg-[#F6F8F6] px-5 py-3.5"><button type="button" onClick={() => void copyRequestParameters()} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#BDE8CC] bg-white px-3 text-xs font-semibold text-[#047857] hover:bg-[#F0FDF4]"><Clipboard className="h-3.5 w-3.5" />复制 JSON</button></footer>
+          </section>
+        </div>
+      )}
 
       <ConfirmDialog isOpen={Boolean(deleteCandidate)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void deleteKey()} title="删除 API Key" description={`确定删除 ${deleteCandidate?.name || '该 Key'} 吗？删除后对应客户端将立即失去调用权限。`} confirmText="删除" type="danger" />
       <ConfirmDialog isOpen={Boolean(cancelCandidate)} onClose={() => setCancelCandidate(null)} onConfirm={() => void cancelTask()} title="取消生成任务" description="确定取消该任务吗？正在进行的上游请求会被中断，任务不会扣除余额或订阅额度。" confirmText="确认取消" type="warning" />

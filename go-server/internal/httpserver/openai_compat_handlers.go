@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,22 +23,29 @@ import (
 )
 
 type compatImageInput struct {
-	Model          string   `json:"model"`
-	Prompt         string   `json:"prompt"`
-	N              int      `json:"n"`
-	Size           string   `json:"size"`
-	AspectRatio    string   `json:"aspect_ratio"`
-	Ratio          string   `json:"ratio"`
-	SizeTier       string   `json:"size_tier"`
-	Resolution     string   `json:"resolution"`
-	Quality        string   `json:"quality"`
-	ResponseFormat string   `json:"response_format"`
-	Background     string   `json:"background"`
-	OutputFormat   string   `json:"output_format"`
-	ReferenceURLs  []string `json:"referenceImages"`
-	Image          any      `json:"image"`
-	ImageURL       any      `json:"image_url"`
-	Mask           any      `json:"mask"`
+	Model           string   `json:"model"`
+	Prompt          string   `json:"prompt"`
+	N               int      `json:"n"`
+	Size            string   `json:"size"`
+	AspectRatio     string   `json:"aspect_ratio"`
+	Ratio           string   `json:"ratio"`
+	SizeTier        string   `json:"size_tier"`
+	Resolution      string   `json:"resolution"`
+	Quality         string   `json:"quality"`
+	ResponseFormat  string   `json:"response_format"`
+	Background      string   `json:"background"`
+	OutputFormat    string   `json:"output_format"`
+	ReferenceURLs   []string `json:"-"`
+	ReferenceItems  any      `json:"referenceImages"`
+	ReferenceImage  any      `json:"reference_image"`
+	ReferenceImages any      `json:"reference_images"`
+	Image           any      `json:"image"`
+	Images          any      `json:"images"`
+	ImageURL        any      `json:"image_url"`
+	ImageURLs       any      `json:"image_urls"`
+	InputImage      any      `json:"input_image"`
+	InputImages     any      `json:"input_images"`
+	Mask            any      `json:"mask"`
 }
 
 const (
@@ -144,6 +152,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		writeOpenAIError(w, http.StatusBadRequest, "生成数量必须在 1 到 10 之间", "invalid_request_error")
 		return
 	}
+	requestParams := compatRequestParams(req, input)
 
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
@@ -163,7 +172,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 	}
 	outputFormat := normalizeOutputFormat(input.OutputFormat)
 	transparent := strings.EqualFold(input.Background, "transparent") || outputFormat == "png"
-	referencePayload := compatReferencePayload(req, input.ReferenceURLs)
+	referencePayload := compatReferencePayload(req, compatInputReferenceURLs(input))
 	if isEdit {
 		referencePayload = compatEditReferencePayload(req, input)
 		if referencePayload == nil {
@@ -216,6 +225,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 			Quantity:       input.N,
 			ImageCount:     0,
 			ResponseFormat: defaultString(input.ResponseFormat, "url"),
+			RequestParams:  requestParams,
 			Status:         "queued",
 		})
 		return err
@@ -242,6 +252,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 					Quantity:       input.N,
 					ImageCount:     0,
 					ResponseFormat: defaultString(input.ResponseFormat, "url"),
+					RequestParams:  requestParams,
 					Status:         "failed",
 					ErrorMessage:   &errorMessage,
 				})
@@ -294,6 +305,127 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		"created": time.Now().Unix(),
 		"data":    data,
 	})
+}
+
+func compatRequestParams(req *http.Request, input compatImageInput) map[string]any {
+	params := map[string]any{
+		"model":  input.Model,
+		"prompt": input.Prompt,
+		"n":      input.N,
+	}
+	addCompatRequestString(params, "size", input.Size)
+	addCompatRequestString(params, "aspect_ratio", input.AspectRatio)
+	addCompatRequestString(params, "ratio", input.Ratio)
+	addCompatRequestString(params, "size_tier", input.SizeTier)
+	addCompatRequestString(params, "resolution", input.Resolution)
+	addCompatRequestString(params, "quality", input.Quality)
+	addCompatRequestString(params, "response_format", defaultString(input.ResponseFormat, "url"))
+	addCompatRequestString(params, "background", input.Background)
+	addCompatRequestString(params, "output_format", input.OutputFormat)
+
+	if input.Image != nil {
+		params["image"] = summarizeCompatRequestValue(input.Image)
+	}
+	if input.Images != nil {
+		params["images"] = summarizeCompatRequestValue(input.Images)
+	}
+	if input.ImageURL != nil {
+		params["image_url"] = summarizeCompatRequestValue(input.ImageURL)
+	}
+	if input.ImageURLs != nil {
+		params["image_urls"] = summarizeCompatRequestValue(input.ImageURLs)
+	}
+	if input.ReferenceItems != nil {
+		params["referenceImages"] = summarizeCompatRequestValue(input.ReferenceItems)
+	}
+	if input.ReferenceImage != nil {
+		params["reference_image"] = summarizeCompatRequestValue(input.ReferenceImage)
+	}
+	if input.ReferenceImages != nil {
+		params["reference_images"] = summarizeCompatRequestValue(input.ReferenceImages)
+	}
+	if input.InputImage != nil {
+		params["input_image"] = summarizeCompatRequestValue(input.InputImage)
+	}
+	if input.InputImages != nil {
+		params["input_images"] = summarizeCompatRequestValue(input.InputImages)
+	}
+	if input.Mask != nil {
+		params["mask"] = summarizeCompatRequestValue(input.Mask)
+	}
+	if len(input.ReferenceURLs) > 0 {
+		params["referenceImages"] = summarizeCompatRequestValue(input.ReferenceURLs)
+	}
+	if req.MultipartForm != nil {
+		for field, headers := range req.MultipartForm.File {
+			files := make([]map[string]any, 0, len(headers))
+			for _, header := range headers {
+				files = append(files, map[string]any{
+					"fileName":    safeCompatFileName(header.Filename),
+					"contentType": strings.TrimSpace(strings.Split(header.Header.Get("Content-Type"), ";")[0]),
+					"sizeBytes":   header.Size,
+				})
+			}
+			if len(files) == 1 {
+				params[field] = files[0]
+			} else if len(files) > 1 {
+				params[field] = files
+			}
+		}
+	}
+	return params
+}
+
+func addCompatRequestString(params map[string]any, key string, value string) {
+	if value = strings.TrimSpace(value); value != "" {
+		params[key] = value
+	}
+}
+
+func summarizeCompatRequestValue(value any) any {
+	switch item := value.(type) {
+	case string:
+		text := strings.TrimSpace(item)
+		if strings.HasPrefix(strings.ToLower(text), "data:image/") {
+			mediaType := strings.TrimPrefix(strings.SplitN(text, ";", 2)[0], "data:")
+			return map[string]any{"type": "inline_image", "mediaType": mediaType, "encodedCharacters": len(text)}
+		}
+		if len(text) > 4096 && looksLikeBase64Image(text) {
+			return map[string]any{"type": "inline_image", "mediaType": "image/*", "encodedCharacters": len(text)}
+		}
+		if len(text) > 4096 {
+			return map[string]any{"type": "large_value", "characters": len(text)}
+		}
+		return text
+	case []string:
+		result := make([]any, 0, len(item))
+		for _, child := range item {
+			result = append(result, summarizeCompatRequestValue(child))
+		}
+		return result
+	case []any:
+		result := make([]any, 0, len(item))
+		for _, child := range item {
+			result = append(result, summarizeCompatRequestValue(child))
+		}
+		return result
+	case map[string]any:
+		result := make(map[string]any, len(item))
+		for key, child := range item {
+			result[key] = summarizeCompatRequestValue(child)
+		}
+		return result
+	default:
+		return value
+	}
+}
+
+func safeCompatFileName(value string) string {
+	value = strings.ReplaceAll(strings.TrimSpace(value), "\\", "/")
+	if index := strings.LastIndex(value, "/"); index >= 0 {
+		value = value[index+1:]
+	}
+	return value
 }
 
 func (r *Router) dynamicAPIKeyConcurrencyLimit(key apiaccess.AccessKey) int {
@@ -566,9 +698,19 @@ func compatReferencePayload(req *http.Request, urls []string) *string {
 }
 
 func compatEditReferencePayload(req *http.Request, input compatImageInput) *string {
-	items := extractCompatImageURLs(input.ImageURL)
-	if len(items) == 0 {
-		items = extractCompatImageURLs(input.Image)
+	items := []string{}
+	for _, source := range []any{
+		input.ImageURL,
+		input.ImageURLs,
+		input.Image,
+		input.Images,
+		input.ReferenceItems,
+		input.ReferenceImage,
+		input.ReferenceImages,
+		input.InputImage,
+		input.InputImages,
+	} {
+		items = append(items, extractCompatImageURLs(source)...)
 	}
 	if len(input.ReferenceURLs) > 0 {
 		items = append(items, input.ReferenceURLs...)
@@ -592,6 +734,15 @@ func compatEditReferencePayload(req *http.Request, input compatImageInput) *stri
 	return &value
 }
 
+func compatInputReferenceURLs(input compatImageInput) []string {
+	items := []string{}
+	for _, source := range []any{input.ReferenceItems, input.ReferenceImage, input.ReferenceImages} {
+		items = append(items, extractCompatImageURLs(source)...)
+	}
+	items = append(items, input.ReferenceURLs...)
+	return items
+}
+
 func extractCompatImageURLs(value any) []string {
 	if value == nil {
 		return nil
@@ -602,20 +753,40 @@ func extractCompatImageURLs(value any) []string {
 			return nil
 		}
 		return []string{strings.TrimSpace(item)}
+	case []string:
+		result := []string{}
+		for _, child := range item {
+			result = append(result, extractCompatImageURLs(child)...)
+		}
+		return result
 	case []any:
 		result := []string{}
 		for _, child := range item {
 			result = append(result, extractCompatImageURLs(child)...)
 		}
 		return result
+	case map[string]string:
+		result := mapStringCompatImageURLs(item)
+		if len(result) > 0 {
+			return result
+		}
 	case map[string]any:
-		for _, key := range []string{"url", "image_url", "imageUrl", "b64_json", "base64"} {
+		for _, key := range []string{"url", "image_url", "imageUrl", "image_urls", "imageUrls", "input_image", "inputImage", "reference_image", "referenceImage", "reference_images", "referenceImages", "b64_json", "base64"} {
 			if result := extractCompatImageURLs(item[key]); len(result) > 0 {
 				return result
 			}
 		}
 		if nested, ok := item["image_url"].(map[string]any); ok {
 			return extractCompatImageURLs(nested["url"])
+		}
+	}
+	return nil
+}
+
+func mapStringCompatImageURLs(item map[string]string) []string {
+	for _, key := range []string{"url", "image_url", "imageUrl", "b64_json", "base64"} {
+		if value := strings.TrimSpace(item[key]); value != "" {
+			return []string{value}
 		}
 	}
 	return nil
@@ -652,7 +823,7 @@ func decodeCompatImageInput(req *http.Request, target *compatImageInput, isEdit 
 	if !isEdit || req.MultipartForm == nil {
 		return nil
 	}
-	for _, field := range []string{"image", "images"} {
+	for _, field := range compatMultipartEditImageFields(req.MultipartForm.File) {
 		for _, header := range req.MultipartForm.File[field] {
 			dataURL, err := multipartImageDataURL(header)
 			if err != nil {
@@ -669,6 +840,88 @@ func decodeCompatImageInput(req *http.Request, target *compatImageInput, isEdit 
 		target.Mask = dataURL
 	}
 	return nil
+}
+
+func compatMultipartEditImageFields(files map[string][]*multipart.FileHeader) []string {
+	fields := []string{}
+	for field := range files {
+		if isCompatEditImageField(field) {
+			fields = append(fields, field)
+		}
+	}
+	sort.SliceStable(fields, func(i, j int) bool {
+		leftRank, leftIndex := compatEditImageFieldOrder(fields[i])
+		rightRank, rightIndex := compatEditImageFieldOrder(fields[j])
+		if leftRank != rightRank {
+			return leftRank < rightRank
+		}
+		if leftIndex != rightIndex {
+			return leftIndex < rightIndex
+		}
+		return fields[i] < fields[j]
+	})
+	return fields
+}
+
+func isCompatEditImageField(field string) bool {
+	field = strings.TrimSpace(field)
+	switch field {
+	case "image", "images", "image[]", "images[]", "reference_image", "reference_images", "reference_image[]", "reference_images[]":
+		return true
+	}
+	return strings.HasPrefix(field, "image[") ||
+		strings.HasPrefix(field, "images[") ||
+		strings.HasPrefix(field, "reference_image[") ||
+		strings.HasPrefix(field, "reference_images[")
+}
+
+func compatEditImageFieldOrder(field string) (int, int) {
+	switch field {
+	case "image":
+		return 0, 0
+	case "images":
+		return 1, 0
+	case "image[]":
+		return 2, 0
+	case "images[]":
+		return 3, 0
+	case "reference_image":
+		return 6, 0
+	case "reference_images":
+		return 7, 0
+	case "reference_image[]":
+		return 8, 0
+	case "reference_images[]":
+		return 9, 0
+	}
+	if index, ok := compatBracketIndex(field, "image"); ok {
+		return 4, index
+	}
+	if index, ok := compatBracketIndex(field, "images"); ok {
+		return 5, index
+	}
+	if index, ok := compatBracketIndex(field, "reference_image"); ok {
+		return 10, index
+	}
+	if index, ok := compatBracketIndex(field, "reference_images"); ok {
+		return 11, index
+	}
+	return 99, 0
+}
+
+func compatBracketIndex(field string, prefix string) (int, bool) {
+	if !strings.HasPrefix(field, prefix+"[") || !strings.HasSuffix(field, "]") {
+		return 0, false
+	}
+	raw := strings.TrimSuffix(strings.TrimPrefix(field, prefix+"["), "]")
+	if raw == "" {
+		return 0, true
+	}
+	index, err := strconv.Atoi(raw)
+	if err != nil {
+		return 0, true
+	}
+	return index, true
 }
 
 func compatFormInt(value string, fallback int) int {
