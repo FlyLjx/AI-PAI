@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"aipi-go/internal/appclock"
 	"aipi-go/internal/settings"
 )
 
@@ -85,11 +86,11 @@ func (r *Router) registrationChallenge(w http.ResponseWriter, req *http.Request)
 		writeError(w, err)
 		return
 	}
-	now := time.Now()
+	now := appclock.DatabaseTime(time.Now())
 	if _, err := r.db.ExecContext(ctx, `
-		INSERT INTO registration_challenges (token_hash, ip_hash, expires_at)
-		VALUES (?, ?, ?)
-	`, hashRegistrationValue(token), fingerprint.IPHash, now.Add(registrationChallengeTTL)); err != nil {
+		INSERT INTO registration_challenges (token_hash, ip_hash, expires_at, created_at)
+		VALUES (?, ?, ?, ?)
+	`, hashRegistrationValue(token), fingerprint.IPHash, now.Add(registrationChallengeTTL), now); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -131,7 +132,9 @@ func (r *Router) validateRegistrationRisk(ctx context.Context, req *http.Request
 	if err != nil {
 		return fingerprint, err
 	}
-	now := time.Now()
+	createdAt = appclock.DatabaseTime(createdAt)
+	expiresAt = appclock.DatabaseTime(expiresAt)
+	now := appclock.DatabaseTime(time.Now())
 	if usedAt.Valid || expiresAt.Before(now) || ipHash != fingerprint.IPHash {
 		return fingerprint, newAppError(http.StatusTooManyRequests, "注册安全校验已失效，请刷新页面后重试")
 	}
