@@ -40,7 +40,84 @@ func (r *Router) compatChatCompletions(w http.ResponseWriter, req *http.Request)
 		writeOpenAIError(w, http.StatusBadRequest, "缺少 messages", "invalid_request_error")
 		return
 	}
-	r.forwardOpenAIText(w, req, auth, body, "chat/completions")
+	prompt := compatChatPrompt(body["messages"])
+	if prompt == "" {
+		writeOpenAIError(w, http.StatusBadRequest, "messages 中缺少用户提示词", "invalid_request_error")
+		return
+	}
+	r.compatImageRequestWithInput(w, req, auth, compatImageInput{
+		Model:          strings.TrimSpace(stringValue(body["model"])),
+		Prompt:         prompt,
+		N:              compatChatImageCount(body["n"]),
+		Stream:         boolValue(body["stream"]),
+		Size:           defaultString(stringValue(body["size"]), "1024x1024"),
+		Quality:        stringValue(body["quality"]),
+		ResponseFormat: defaultString(stringValue(body["response_format"]), "url"),
+		Background:     stringValue(body["background"]),
+		OutputFormat:   stringValue(body["output_format"]),
+		RequestParams:  body,
+	}, false, compatImageResponseChatCompletion)
+}
+
+func compatChatPrompt(value any) string {
+	messages, ok := value.([]any)
+	if !ok {
+		return ""
+	}
+	for index := len(messages) - 1; index >= 0; index-- {
+		message, ok := messages[index].(map[string]any)
+		if !ok || !strings.EqualFold(strings.TrimSpace(stringValue(message["role"])), "user") {
+			continue
+		}
+		if content := compatChatContentText(message["content"]); content != "" {
+			return content
+		}
+	}
+	for index := len(messages) - 1; index >= 0; index-- {
+		if message, ok := messages[index].(map[string]any); ok {
+			if content := compatChatContentText(message["content"]); content != "" {
+				return content
+			}
+		}
+	}
+	return ""
+}
+
+func compatChatContentText(value any) string {
+	switch item := value.(type) {
+	case string:
+		return strings.TrimSpace(item)
+	case []any:
+		parts := make([]string, 0, len(item))
+		for _, child := range item {
+			if text := compatChatContentText(child); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "\n")
+	case map[string]any:
+		if text := strings.TrimSpace(stringValue(item["text"])); text != "" {
+			return text
+		}
+		return compatChatContentText(item["content"])
+	default:
+		return ""
+	}
+}
+
+func compatChatImageCount(value any) int {
+	switch item := value.(type) {
+	case float64:
+		integer := int(item)
+		if item >= 1 && item <= 10 && float64(integer) == item {
+			return integer
+		}
+	case int:
+		if item >= 1 && item <= 10 {
+			return item
+		}
+	}
+	return 1
 }
 
 func (r *Router) compatResponses(w http.ResponseWriter, req *http.Request) {

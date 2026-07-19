@@ -95,6 +95,7 @@ func (r *Repository) ListCreditLogs(ctx context.Context, userID string, logType 
 		if err := rows.Scan(&item.ID, &item.UserID, &item.Type, &item.Amount, &item.BalanceAfter, &item.Remark, &item.CreatedAt); err != nil {
 			return nil, 0, err
 		}
+		item.CreatedAt = appclock.DatabaseTime(item.CreatedAt)
 		items = append(items, item)
 	}
 	return items, total, rows.Err()

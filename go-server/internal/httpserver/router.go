@@ -1,9 +1,12 @@
 package httpserver
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -19,20 +22,22 @@ import (
 	"aipi-go/internal/config"
 	"aipi-go/internal/database"
 	"aipi-go/internal/generation"
+	"aipi-go/internal/requestmonitor"
 	"aipi-go/internal/tasks"
 	"aipi-go/internal/users"
 )
 
 type Router struct {
-	cfg           config.Config
-	db            *database.DB
-	logger        *slog.Logger
-	mux           *http.ServeMux
-	tokens        auth.TokenManager
-	queue         *generation.Queue
-	taskHub       *tasks.Hub
-	userHub       *users.Hub
-	notifications *serviceNotificationManager
+	cfg            config.Config
+	db             *database.DB
+	logger         *slog.Logger
+	mux            *http.ServeMux
+	tokens         auth.TokenManager
+	queue          *generation.Queue
+	taskHub        *tasks.Hub
+	userHub        *users.Hub
+	notifications  *serviceNotificationManager
+	requestMonitor *requestmonitor.Recorder
 
 	updateMu      sync.Mutex
 	updateCache   systemUpdateVersion
@@ -55,6 +60,7 @@ func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Han
 	router.taskHub = tasks.NewHub()
 	router.userHub = users.NewHub()
 	router.queue = generation.NewQueue(db, logger, 0, router.taskHub, router.userHub)
+	router.requestMonitor = requestmonitor.NewRecorder(db, logger)
 	router.queue.Start()
 	router.routes()
 	return router.withMiddleware(router.mux)
@@ -92,6 +98,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/admin/api-access/logs", r.adminAPIAccessLogs)
 	r.mux.HandleFunc("/api/admin/api-access/operations", r.adminAPIAccessOperations)
 	r.mux.HandleFunc("/api/admin/mail-logs", r.adminMailLogs)
+	r.mux.HandleFunc("/api/admin/request-monitor", r.adminRequestMonitor)
 	r.mux.HandleFunc("/api/admin/system-update", r.systemUpdate)
 	r.mux.HandleFunc("/api/subscriptions/public/plans", r.plans)
 	r.mux.HandleFunc("/api/subscriptions/public/current", r.currentSubscription)
@@ -119,6 +126,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/account-pool/accounts", r.accountPoolAccounts)
 	r.mux.HandleFunc("/v1/models", r.compatModels)
 	r.mux.HandleFunc("/v1/balance", r.compatBalance)
+	r.mux.HandleFunc("/v1/chat/completions", r.compatChatCompletions)
 	r.mux.HandleFunc("/v1/images/generations", r.compatImageGenerations)
 	r.mux.HandleFunc("/v1/images/edits", r.compatImageEdits)
 
@@ -222,6 +230,16 @@ func setStaticNoStoreHeaders(w http.ResponseWriter, requestPath string) {
 func (r *Router) withMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		startedAt := time.Now()
+		if r.cfg.RequestBodyLimit > 0 {
+			req.Body = http.MaxBytesReader(w, req.Body, r.cfg.RequestBodyLimit)
+		}
+		shouldRecord := r.requestMonitor != nil && requestmonitor.ShouldRecord(req)
+		var captured requestmonitor.CapturedRequest
+		responseWriter := &trackedResponseWriter{ResponseWriter: w}
+		if shouldRecord {
+			captured = requestmonitor.Capture(req)
+			w = responseWriter
+		}
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				r.logger.Error("http panic",
@@ -233,10 +251,22 @@ func (r *Router) withMiddleware(next http.Handler) http.Handler {
 				)
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"message": "服务器内部错误"})
 			}
+			duration := time.Since(startedAt)
+			if shouldRecord {
+				statusCode := responseWriter.statusCode
+				if statusCode == 0 {
+					statusCode = http.StatusOK
+				}
+				r.requestMonitor.Submit(requestmonitor.Record{
+					Method: req.Method, Path: req.URL.Path,
+					QueryParams: captured.QueryParams, BodyParams: captured.BodyParams,
+					SourceIP: captured.SourceIP, SourceHost: captured.SourceHost,
+					Origin: captured.Origin, Referer: captured.Referer, UserAgent: captured.UserAgent,
+					StatusCode: statusCode, DurationMS: duration.Milliseconds(), ResponseBytes: responseWriter.responseBytes,
+					CreatedAt: startedAt,
+				})
+			}
 		}()
-		if r.cfg.RequestBodyLimit > 0 {
-			req.Body = http.MaxBytesReader(w, req.Body, r.cfg.RequestBodyLimit)
-		}
 		r.applyCORS(w, req)
 		if req.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -250,6 +280,60 @@ func (r *Router) withMiddleware(next http.Handler) http.Handler {
 			"remoteAddr", req.RemoteAddr,
 		)
 	})
+}
+
+type trackedResponseWriter struct {
+	http.ResponseWriter
+	statusCode    int
+	responseBytes int64
+}
+
+func (writer *trackedResponseWriter) WriteHeader(statusCode int) {
+	if writer.statusCode != 0 {
+		return
+	}
+	writer.statusCode = statusCode
+	writer.ResponseWriter.WriteHeader(statusCode)
+}
+
+func (writer *trackedResponseWriter) Write(value []byte) (int, error) {
+	if writer.statusCode == 0 {
+		writer.WriteHeader(http.StatusOK)
+	}
+	written, err := writer.ResponseWriter.Write(value)
+	writer.responseBytes += int64(written)
+	return written, err
+}
+
+func (writer *trackedResponseWriter) ReadFrom(reader io.Reader) (int64, error) {
+	if writer.statusCode == 0 {
+		writer.WriteHeader(http.StatusOK)
+	}
+	written, err := io.Copy(writer.ResponseWriter, reader)
+	writer.responseBytes += written
+	return written, err
+}
+
+func (writer *trackedResponseWriter) Flush() {
+	if writer.statusCode == 0 {
+		writer.WriteHeader(http.StatusOK)
+	}
+	_ = http.NewResponseController(writer.ResponseWriter).Flush()
+}
+
+func (writer *trackedResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return http.NewResponseController(writer.ResponseWriter).Hijack()
+}
+
+func (writer *trackedResponseWriter) Push(target string, options *http.PushOptions) error {
+	if pusher, ok := writer.ResponseWriter.(http.Pusher); ok {
+		return pusher.Push(target, options)
+	}
+	return http.ErrNotSupported
+}
+
+func (writer *trackedResponseWriter) Unwrap() http.ResponseWriter {
+	return writer.ResponseWriter
 }
 
 func (r *Router) applyCORS(w http.ResponseWriter, req *http.Request) {

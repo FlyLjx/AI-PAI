@@ -334,6 +334,77 @@ func (r *Repository) FinishFailed(ctx context.Context, id string, message string
 	return r.FindByID(ctx, id)
 }
 
+func (r *Repository) FailTimedOut(ctx context.Context, cutoff time.Time, now time.Time, message string, limit int) ([]string, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	cutoff = appclock.DatabaseTime(cutoff)
+	now = appclock.DatabaseTime(now)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT id, created_at
+		FROM generation_tasks
+		WHERE status IN ('queued', 'pending', 'processing')
+			AND created_at <= ?
+		ORDER BY created_at ASC, id ASC
+		LIMIT ?
+	`, cutoff, limit)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct {
+		id        string
+		createdAt time.Time
+	}
+	candidates := make([]candidate, 0)
+	for rows.Next() {
+		var item candidate
+		if err := rows.Scan(&item.id, &item.createdAt); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		candidates = append(candidates, item)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	failedIDs := make([]string, 0, len(candidates))
+	for _, item := range candidates {
+		createdAt := appclock.DatabaseTime(item.createdAt)
+		durationSeconds := now.Sub(createdAt).Seconds()
+		if durationSeconds < 0 {
+			durationSeconds = 0
+		}
+		result, err := r.db.ExecContext(ctx, `
+			UPDATE generation_tasks
+			SET status = 'failed',
+				error_message = ?,
+				duration_seconds = ?,
+				updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+				AND status IN ('queued', 'pending', 'processing')
+				AND created_at <= ?
+		`, message, durationSeconds, item.id, cutoff)
+		if err != nil {
+			return failedIDs, err
+		}
+		affected, err := result.RowsAffected()
+		if err != nil {
+			return failedIDs, err
+		}
+		if affected == 1 {
+			failedIDs = append(failedIDs, item.id)
+		}
+	}
+	return failedIDs, nil
+}
+
 func (r *Repository) Cancel(ctx context.Context, id string) (*Task, error) {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE generation_tasks

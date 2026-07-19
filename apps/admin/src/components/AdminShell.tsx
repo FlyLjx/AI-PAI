@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   Activity, Cable, ChevronRight, CircleDollarSign, CreditCard, Database, Gift,
-  Gauge, LogOut, Mail, Menu, Package, Radio, ReceiptText, ShieldCheck, Users, X,
+  Gauge, LogOut, Mail, Menu, Package, Radio, ReceiptText, ScanSearch, ShieldCheck, Users, X,
 } from 'lucide-react';
 import { ADMIN_BASE_PATH } from '../../admin-path';
 import { adminAuth, type AdminIdentity } from '@/lib/admin-api';
@@ -16,6 +16,7 @@ const adminNav = [
   { label: '实时运营', href: '/api-operations', icon: Radio },
   { label: '用户管理', href: '/users', icon: Users },
   { label: 'API 调用', href: '/api-access', icon: Activity },
+  { label: '请求监控', href: '/request-monitor', icon: ScanSearch },
   { label: '上游接口', href: '/upstream-apis', icon: Cable },
   { label: '模型价格', href: '/prices', icon: CircleDollarSign },
   { label: '订阅套餐', href: '/packages', icon: Package },

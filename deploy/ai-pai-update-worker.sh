@@ -7,8 +7,6 @@ ROOT=${AI_PAI_ROOT:-/opt/ai-pai}
 COMPOSE_FILE=${AI_PAI_COMPOSE_FILE:-$ROOT/docker-compose.yml}
 ENV_FILE=${AI_PAI_ENV_FILE:-$ROOT/.env}
 UPDATE_DIR=${AI_PAI_UPDATE_DIR:-$ROOT/update}
-BACKUP_ROOT=${AI_PAI_BACKUP_ROOT:-$ROOT/backups/manual-updates}
-BACKUP_RETENTION=${AI_PAI_BACKUP_RETENTION:-3}
 REPOSITORY=${AI_PAI_GITHUB_REPOSITORY:-FlyLjx/AI-PAI}
 WORKFLOW=${AI_PAI_GITHUB_WORKFLOW:-build.yml}
 REGISTRY=${AI_PAI_REGISTRY:-ghcr.io/flyljx}
@@ -22,15 +20,13 @@ log() {
   logger -t ai-pai-update-worker -- "$*" 2>/dev/null || true
 }
 
-for command in curl python3 docker flock sha256sum; do
+for command in curl python3 docker flock; do
   command -v "$command" >/dev/null 2>&1 || { log "missing command: $command"; exit 1; }
 done
 [[ -f "$COMPOSE_FILE" ]] || { log "compose file does not exist"; exit 1; }
 [[ -f "$ENV_FILE" ]] || { log "environment file does not exist"; exit 1; }
-[[ "$BACKUP_RETENTION" =~ ^[1-9][0-9]*$ ]] || { log "invalid backup retention"; exit 1; }
-
-mkdir -p "$UPDATE_DIR" "$BACKUP_ROOT"
-chmod 700 "$UPDATE_DIR" "$BACKUP_ROOT"
+mkdir -p "$UPDATE_DIR"
+chmod 700 "$UPDATE_DIR"
 exec 9>"$LOCK_FILE"
 flock -n 9 || { log "another update is already running"; exit 0; }
 [[ -f "$REQUEST_FILE" ]] || exit 0
@@ -52,7 +48,6 @@ read -r run_id run_number version commit current_version <<<"$request_values"
 rm -f "$REQUEST_FILE"
 
 started_at=$(date --iso-8601=seconds)
-backup_dir=""
 write_status() {
   STATUS_VALUE=$1 \
   MESSAGE_VALUE=$2 \
@@ -61,7 +56,6 @@ write_status() {
   TARGET_COMMIT=$commit \
   STARTED_AT=$started_at \
   FINISHED_AT=${3:-} \
-  BACKUP_DIRECTORY=$backup_dir \
   python3 - "$STATUS_FILE" <<'PY'
 import json, os, sys, tempfile
 path = sys.argv[1]
@@ -75,8 +69,6 @@ payload = {
 }
 if os.environ.get("FINISHED_AT"):
     payload["finishedAt"] = os.environ["FINISHED_AT"]
-if os.environ.get("BACKUP_DIRECTORY"):
-    payload["backupDirectory"] = os.environ["BACKUP_DIRECTORY"]
 directory = os.path.dirname(path)
 fd, temporary = tempfile.mkstemp(prefix=".status-", suffix=".tmp", dir=directory)
 try:
@@ -126,10 +118,10 @@ handle_failure() {
     export WEB_IMAGE="$previous_web"
     export ADMIN_IMAGE="$previous_admin"
     export API_IMAGE="$previous_api"
-    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-build \
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps --no-build \
       --force-recreate --wait --wait-timeout 240 api admin ai-pai
   fi
-  write_status failed "Update failed. Previous application images were restored; the database backup was retained." "$(date --iso-8601=seconds)"
+  write_status failed "Update failed. Previous application images were restored; the database container was not changed." "$(date --iso-8601=seconds)"
   exit "$status"
 }
 trap handle_failure ERR
@@ -179,24 +171,10 @@ set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
-DB_USER=${DB_USER:-ai_pai}
-DB_NAME=${DB_NAME:-ai_pai}
 PUBLIC_ORIGIN=${APP_PUBLIC_ORIGIN:-}
 previous_web=$(docker inspect ai-pai --format '{{.Config.Image}}')
 previous_admin=$(docker inspect ai-pai-admin --format '{{.Config.Image}}')
 previous_api=$(docker inspect ai-pai-api --format '{{.Config.Image}}')
-
-timestamp=$(date +%Y%m%d-%H%M%S)
-backup_dir="$BACKUP_ROOT/$version-$timestamp"
-mkdir -p "$backup_dir"
-cp -a "$COMPOSE_FILE" "$backup_dir/docker-compose.before.yml"
-cp -a "$ENV_FILE" "$backup_dir/env.before"
-docker inspect ai-pai ai-pai-admin ai-pai-api ai-pai-postgres > "$backup_dir/containers.before.json"
-
-write_status backing_up "Creating and validating a PostgreSQL backup before the update."
-docker exec ai-pai-postgres pg_dump -U "$DB_USER" -d "$DB_NAME" -Fc > "$backup_dir/ai_pai.dump"
-docker exec -i ai-pai-postgres pg_restore -l < "$backup_dir/ai_pai.dump" > "$backup_dir/ai_pai.dump.list"
-sha256sum "$backup_dir/ai_pai.dump" "$backup_dir/docker-compose.before.yml" "$backup_dir/env.before" > "$backup_dir/SHA256SUMS"
 
 rollback_needed=true
 set_env_value WEB_IMAGE "$web_image"
@@ -206,8 +184,8 @@ export WEB_IMAGE="$web_image"
 export ADMIN_IMAGE="$admin_image"
 export API_IMAGE="$api_image"
 
-write_status updating "Backup completed. Replacing application containers with $version."
-docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-build \
+write_status updating "Replacing application containers with $version; PostgreSQL will not be changed."
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d --no-deps --no-build \
   --force-recreate --wait --wait-timeout 240 api admin ai-pai
 
 if [[ -n "$PUBLIC_ORIGIN" ]]; then
@@ -218,18 +196,6 @@ fi
 
 rollback_needed=false
 trap - ERR
-docker inspect ai-pai ai-pai-admin ai-pai-api ai-pai-postgres > "$backup_dir/containers.after.json"
 write_status success "$version was deployed successfully." "$(date --iso-8601=seconds)"
-
-mapfile -t old_backups < <(
-  find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'build-*' -printf '%T@ %p\n' \
-    | sort -nr | cut -d' ' -f2-
-)
-for ((index = BACKUP_RETENTION; index < ${#old_backups[@]}; index++)); do
-  old_backup=${old_backups[$index]}
-  if [[ "$old_backup" == "$BACKUP_ROOT"/build-* ]]; then
-    rm -rf -- "$old_backup"
-  fi
-done
 
 log "$version deployed successfully (previous version: $current_version)"

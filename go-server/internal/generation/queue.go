@@ -12,6 +12,14 @@ import (
 	"aipi-go/internal/users"
 )
 
+const (
+	taskProcessingTimeout      = 5 * time.Minute
+	taskTimeoutSweepInterval   = 30 * time.Second
+	taskTimeoutSweepBatchSize  = 500
+	taskTimeoutSweepMaxBatches = 10
+	taskTimeoutMessage         = "任务处理超时（超过 5 分钟）"
+)
+
 type Queue struct {
 	jobs      chan Job
 	workers   int
@@ -60,6 +68,7 @@ func (q *Queue) Start() {
 		return
 	}
 	q.started = true
+	go q.watchTimedOutTasks()
 	if q.unlimited {
 		return
 	}
@@ -112,13 +121,46 @@ func (q *Queue) process(job Job, workerID any) {
 	release := q.acquireScope(job.ConcurrencyScope, job.ConcurrencyLimit)
 	defer release()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), taskProcessingTimeout)
 	q.registerActiveTask(job.TaskID, cancel)
 	defer q.unregisterActiveTask(job.TaskID)
 	err := q.service.Process(ctx, job.TaskID)
 	cancel()
 	if err != nil {
 		q.logger.Error("generation worker failed", "worker", workerID, "taskId", job.TaskID, "error", err)
+	}
+}
+
+func (q *Queue) watchTimedOutTasks() {
+	q.sweepTimedOutTasks()
+	ticker := time.NewTicker(taskTimeoutSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-q.shutdown:
+			return
+		case <-ticker.C:
+			q.sweepTimedOutTasks()
+		}
+	}
+}
+
+func (q *Queue) sweepTimedOutTasks() {
+	for batch := 0; batch < taskTimeoutSweepMaxBatches; batch++ {
+		now := time.Now()
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		ids, err := q.service.FailTimedOut(ctx, now.Add(-taskProcessingTimeout), now, taskTimeoutSweepBatchSize)
+		cancel()
+		for _, id := range ids {
+			q.Cancel(id)
+		}
+		if err != nil {
+			q.logger.Error("generation timeout sweep failed", "error", err)
+			return
+		}
+		if len(ids) < taskTimeoutSweepBatchSize {
+			return
+		}
 	}
 }
 

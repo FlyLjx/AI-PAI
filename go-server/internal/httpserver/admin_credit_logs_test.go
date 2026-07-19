@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,7 @@ func TestAdminCanListUserCreditLogs(t *testing.T) {
 			Type         string  `json:"type"`
 			Amount       float64 `json:"amount"`
 			BalanceAfter float64 `json:"balanceAfter"`
+			CreatedAt    string  `json:"createdAt"`
 		} `json:"data"`
 		Pagination struct {
 			Total    int `json:"total"`
@@ -67,6 +69,9 @@ func TestAdminCanListUserCreditLogs(t *testing.T) {
 	}
 	if len(response.Data) != 1 || response.Data[0].ID != "log-1" || response.Data[0].Type != "deduct" || response.Data[0].Amount != 1.5 || response.Data[0].BalanceAfter != 8.5 {
 		t.Fatalf("unexpected data: %+v", response.Data)
+	}
+	if !strings.HasSuffix(response.Data[0].CreatedAt, "+08:00") {
+		t.Fatalf("credit log timezone = %q, want +08:00", response.Data[0].CreatedAt)
 	}
 	if response.Pagination.Total != 1 || response.Pagination.Page != 1 || response.Pagination.PageSize != 10 {
 		t.Fatalf("unexpected pagination: %+v", response.Pagination)

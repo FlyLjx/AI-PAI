@@ -88,6 +88,7 @@ export type UsageLog = {
   quantity: number;
   imageCount: number;
   requestParameters?: Record<string, unknown>;
+  responseParameters?: Record<string, unknown>;
   prompt?: string;
   responseFormat?: string;
   status: string;
@@ -225,6 +226,49 @@ export type MailDeliverySummary = {
 export type MailDeliveryLogPage = {
   items: MailDeliveryLog[];
   summary: MailDeliverySummary;
+};
+
+export type RequestMonitorRange = '1h' | '24h' | '7d' | '30d';
+
+export type RequestMonitorLog = {
+  id: string;
+  method: string;
+  path: string;
+  queryParams: unknown;
+  bodyParams: unknown;
+  sourceIp: string;
+  sourceHost: string;
+  origin: string;
+  referer: string;
+  userAgent: string;
+  statusCode: number;
+  durationMs: number;
+  responseBytes: number;
+  createdAt: string;
+};
+
+export type RequestMonitorFrequency = {
+  name: string;
+  count: number;
+  errors: number;
+  averageDurationMs: number;
+};
+
+export type RequestMonitorSnapshot = {
+  range: RequestMonitorRange;
+  summary: {
+    total: number;
+    successful: number;
+    clientErrors: number;
+    serverErrors: number;
+    errorRate: number;
+    averageDurationMs: number;
+    uniqueSources: number;
+  };
+  trend: Array<{ time: string; total: number; successful: number; errors: number }>;
+  topEndpoints: RequestMonitorFrequency[];
+  topSources: RequestMonitorFrequency[];
+  items: RequestMonitorLog[];
 };
 
 export type ProviderModel = {
@@ -403,6 +447,7 @@ export const portalApi = {
   adminUsage: (page = 1) => api<UsageLog[]>(`/api/admin/api-access/logs${query({ page, pageSize: 30 })}`),
   adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
   adminMailLogs: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; category?: string } = {}) => api<MailDeliveryLogPage>(`/api/admin/mail-logs${query(input)}`),
+  requestMonitor: (input: { range?: RequestMonitorRange; page?: number; pageSize?: number; keyword?: string; method?: string; status?: string } = {}) => api<RequestMonitorSnapshot>(`/api/admin/request-monitor${query(input)}`),
   adminInvites: (page = 1, pageSize = 30) => api<AdminInviteRecord[]>(`/api/invites${query({ page, pageSize })}`),
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),
   settings: () => api<Record<string, unknown>>('/api/settings'),

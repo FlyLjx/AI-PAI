@@ -1,6 +1,10 @@
 package apiaccess
 
-import "time"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 const (
 	BillingModeAuto         = "auto"
@@ -143,6 +147,7 @@ type PublicUsageLog struct {
 	ImageCount      int            `json:"imageCount"`
 	ResponseFormat  string         `json:"responseFormat"`
 	RequestParams   map[string]any `json:"requestParameters,omitempty"`
+	ResponseParams  map[string]any `json:"responseParameters,omitempty"`
 	Status          string         `json:"status"`
 	ErrorMessage    *string        `json:"errorMessage,omitempty"`
 	DurationSeconds float64        `json:"durationSeconds"`
@@ -301,11 +306,90 @@ func ToPublicLog(log UsageLog) PublicUsageLog {
 		ImageCount:      log.ImageCount,
 		ResponseFormat:  log.ResponseFormat,
 		RequestParams:   log.RequestParams,
+		ResponseParams:  usageLogResponseParams(log),
 		Status:          log.Status,
 		ErrorMessage:    log.ErrorMessage,
 		DurationSeconds: log.DurationSeconds,
 		CreatedAt:       log.CreatedAt.Format(time.RFC3339),
 		FinishedAt:      formatTime(log.FinishedAt),
+	}
+}
+
+func usageLogResponseParams(log UsageLog) map[string]any {
+	status := strings.ToLower(strings.TrimSpace(log.Status))
+	switch status {
+	case "success", "succeeded":
+		if log.TaskID == nil || strings.TrimSpace(*log.TaskID) == "" {
+			return nil
+		}
+		imageCount := log.ImageCount
+		if imageCount < 1 {
+			imageCount = log.Quantity
+		}
+		if imageCount < 0 {
+			imageCount = 0
+		}
+		data := make([]map[string]string, 0, imageCount)
+		for index := 0; index < imageCount; index++ {
+			data = append(data, map[string]string{
+				"url": "/api/tasks/" + strings.TrimSpace(*log.TaskID) + "/images/" + strconv.Itoa(index),
+			})
+		}
+		createdAt := log.CreatedAt
+		if log.FinishedAt != nil {
+			createdAt = *log.FinishedAt
+		}
+		if strings.HasSuffix(strings.TrimRight(strings.ToLower(strings.TrimSpace(log.Endpoint)), "/"), "/chat/completions") {
+			links := make([]string, 0, len(data))
+			for _, item := range data {
+				links = append(links, "![image]("+item["url"]+")")
+			}
+			return map[string]any{
+				"id":      "chatcmpl-" + strings.ReplaceAll(strings.TrimSpace(log.ID), "-", ""),
+				"object":  "chat.completion",
+				"created": createdAt.Unix(),
+				"model":   log.Model,
+				"choices": []map[string]any{{
+					"index": 0,
+					"message": map[string]any{
+						"role":    "assistant",
+						"content": strings.Join(links, "\n"),
+					},
+					"finish_reason": "stop",
+				}},
+				"usage": map[string]int{
+					"prompt_tokens":     0,
+					"completion_tokens": 0,
+					"total_tokens":      0,
+				},
+			}
+		}
+		return map[string]any{
+			"created": createdAt.Unix(),
+			"data":    data,
+		}
+	case "failed", "canceled", "cancelled":
+		message := "图片生成失败"
+		if status == "canceled" || status == "cancelled" {
+			message = "任务已取消"
+		}
+		if log.ErrorMessage != nil && strings.TrimSpace(*log.ErrorMessage) != "" {
+			message = strings.TrimSpace(*log.ErrorMessage)
+		}
+		errorType := "api_error"
+		if strings.Contains(message, "用户余额不足") {
+			errorType = "insufficient_quota"
+		}
+		return map[string]any{
+			"error": map[string]any{
+				"message": message,
+				"type":    errorType,
+				"param":   nil,
+				"code":    nil,
+			},
+		}
+	default:
+		return nil
 	}
 }
 

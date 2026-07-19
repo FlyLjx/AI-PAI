@@ -40,6 +40,12 @@ export async function requestGo(request: Request, path: string, token?: string):
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
+  const clientIP = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
+    || request.headers.get('x-real-ip')?.trim();
+  if (clientIP) {
+    headers.set('x-forwarded-for', clientIP);
+    headers.set('x-real-ip', clientIP);
+  }
   if (token) headers.set('authorization', `Bearer ${token}`);
   headers.set('x-forwarded-host', incoming.host);
   headers.set('x-forwarded-proto', incoming.protocol.replace(':', ''));

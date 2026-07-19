@@ -28,11 +28,11 @@ const statusContent: Record<SystemUpdateState['status'], { label: string; descri
   queued: { label: '已提交', description: '更新请求已进入服务器队列', tone: 'bg-cyan-50 text-cyan-700' },
   checking: { label: '校验版本', description: '正在核对 GitHub Actions 构建信息', tone: 'bg-cyan-50 text-cyan-700' },
   pulling: { label: '拉取镜像', description: '正在下载同版本的前台、后台和 API 镜像', tone: 'bg-cyan-50 text-cyan-700' },
-  backing_up: { label: '备份数据库', description: '正在创建并校验 PostgreSQL 备份', tone: 'bg-amber-50 text-amber-700' },
+  backing_up: { label: '准备更新', description: '旧版更新流程正在完成准备工作', tone: 'bg-amber-50 text-amber-700' },
   updating: { label: '更新服务', description: '正在替换应用容器并执行健康检查', tone: 'bg-amber-50 text-amber-700' },
   rolling_back: { label: '正在回退', description: '健康检查未通过，正在恢复上一版本', tone: 'bg-red-50 text-red-700' },
   success: { label: '更新成功', description: '新版本已通过全部健康检查', tone: 'bg-emerald-50 text-emerald-700' },
-  failed: { label: '更新失败', description: '应用已恢复上一版本，数据库备份仍保留', tone: 'bg-red-50 text-red-700' },
+  failed: { label: '更新失败', description: '应用已恢复上一版本，数据库容器未变更', tone: 'bg-red-50 text-red-700' },
 };
 
 function formatDate(value?: string) {
@@ -161,7 +161,7 @@ export function SystemUpdatePanel() {
                 <span className={`mt-0.5 inline-flex min-h-6 shrink-0 items-center rounded-full px-2 text-[10px] font-bold ${stateMeta.tone}`}>{stateMeta.label}</span>
                 <span className="min-w-0">
                   <strong className="block text-[11px] text-[#3F4943]">{info.checkError || stateMeta.description}</strong>
-                  <small className="mt-0.5 block truncate text-[10px] text-zinc-400">{state.backupDirectory ? `备份：${state.backupDirectory}` : `上次检查：${formatDate(info.checkedAt)}`}</small>
+                  <small className="mt-0.5 block truncate text-[10px] text-zinc-400">上次检查：{formatDate(info.checkedAt)}</small>
                 </span>
               </div>
               <button type="button" onClick={() => setConfirmOpen(true)} disabled={!info.canUpdate || submitting || active} className="btn primary shrink-0">
@@ -170,7 +170,7 @@ export function SystemUpdatePanel() {
               </button>
             </div>
             {!info.configured && <div className="flex items-center gap-2 border-t border-amber-200 bg-amber-50 px-5 py-3 text-[11px] text-amber-800"><CircleAlert className="h-4 w-4 shrink-0" />宿主机更新服务尚未安装，版本检测可用，但更新按钮暂不可用。</div>}
-            {info.configured && info.updateAvailable && !active && <div className="flex items-center gap-2 border-t border-emerald-100 bg-emerald-50/70 px-5 py-3 text-[11px] text-emerald-800"><ShieldCheck className="h-4 w-4 shrink-0" />更新前会自动备份数据库；健康检查失败时恢复上一版本应用镜像。</div>}
+            {info.configured && info.updateAvailable && !active && <div className="flex items-center gap-2 border-t border-emerald-100 bg-emerald-50/70 px-5 py-3 text-[11px] text-emerald-800"><ShieldCheck className="h-4 w-4 shrink-0" />仅替换应用容器，不备份或重建 PostgreSQL；健康检查失败时恢复上一版本应用镜像。</div>}
           </>
         ) : (
           <div className="empty-row">版本信息暂不可用</div>
@@ -182,7 +182,7 @@ export function SystemUpdatePanel() {
         onClose={() => setConfirmOpen(false)}
         onConfirm={() => void startUpdate()}
         title={`更新到 ${info?.latest.version || '最新版本'}`}
-        description="服务器将先备份并校验 PostgreSQL 数据，再依次更新 API、管理后台和客户前台。期间可能出现短暂连接中断；健康检查失败会自动恢复上一版本应用镜像。"
+        description="服务器将直接更新 API、管理后台和客户前台，不备份或重建 PostgreSQL。期间可能出现短暂连接中断；健康检查失败会自动恢复上一版本应用镜像。"
         confirmText="开始更新"
         type="warning"
       />

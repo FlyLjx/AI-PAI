@@ -19,7 +19,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { APIError, getSession, portalApi } from '@/lib/portal-api';
 
 type Language = 'curl' | 'javascript' | 'python';
-type Endpoint = 'models' | 'balance' | 'generations' | 'edits';
+type Endpoint = 'models' | 'balance' | 'generations' | 'edits' | 'chat';
 type APIParameter = {
   name: string;
   type: string;
@@ -62,6 +62,13 @@ const endpointMeta: Record<Endpoint, {
     description: '上传参考图并根据提示词进行编辑，使用 multipart/form-data。',
     icon: FileImage,
   },
+  chat: {
+    label: '聊天兼容生图',
+    method: 'POST',
+    path: '/v1/chat/completions',
+    description: '兼容 new-api 等默认通过 Chat Completions 测试图片模型的程序，实际任务仍按生图接口计费。',
+    icon: ImagePlus,
+  },
 };
 
 const requestParameters: Record<Endpoint, APIParameter[]> = {
@@ -97,6 +104,15 @@ const requestParameters: Record<Endpoint, APIParameter[]> = {
     { name: 'background', type: 'string', required: '否', description: 'transparent 表示透明背景，并自动使用 PNG' },
     { name: 'response_format', type: 'string', required: '否', description: '当前使用 url，返回站内图片地址' },
   ],
+  chat: [
+    { name: 'model', type: 'string', required: '是', description: '模型列表返回的图片模型 ID' },
+    { name: 'messages', type: 'array', required: '是', description: '提取最后一条 user 消息作为真实生图提示词' },
+    { name: 'stream', type: 'boolean', required: '否', description: '是否使用 Chat Completions SSE 流式响应，默认 false' },
+    { name: 'n', type: 'integer', required: '否', description: '输出数量，范围 1-10，默认 1' },
+    { name: 'size', type: 'string', required: '否', description: '像素尺寸，默认 1024x1024' },
+    { name: 'quality', type: 'string', required: '否', description: '清晰度兼容参数' },
+    { name: 'output_format', type: 'string', required: '否', description: 'jpeg、png、webp，默认 jpeg' },
+  ],
 };
 
 const responseParameters: Record<Endpoint, APIParameter[]> = {
@@ -124,6 +140,13 @@ const responseParameters: Record<Endpoint, APIParameter[]> = {
     { name: 'created', type: 'integer', required: '-', description: '响应创建时间，Unix 秒级时间戳' },
     { name: 'data[].url', type: 'string', required: '-', description: '编辑结果的站内下载地址' },
   ],
+  chat: [
+    { name: 'id', type: 'string', required: '-', description: 'Chat Completions 响应 ID' },
+    { name: 'object', type: 'string', required: '-', description: '固定为 chat.completion' },
+    { name: 'choices[0].message.content', type: 'string', required: '-', description: '包含站内图片地址的 Markdown 图片内容' },
+    { name: 'choices[0].finish_reason', type: 'string', required: '-', description: '固定为 stop' },
+    { name: 'usage', type: 'object', required: '-', description: '兼容 new-api 响应解析的用量对象' },
+  ],
 };
 
 const successResponses: Record<Endpoint, string> = {
@@ -150,6 +173,21 @@ const successResponses: Record<Endpoint, string> = {
   edits: `{
   "created": 1710000000,
   "data": [{ "url": "https://.../edited-image.png" }]
+}`,
+  chat: `{
+  "id": "chatcmpl-...",
+  "object": "chat.completion",
+  "created": 1710000000,
+  "model": "MODEL_ID",
+  "choices": [{
+    "index": 0,
+    "message": {
+      "role": "assistant",
+      "content": "![image](https://.../image.png)"
+    },
+    "finish_reason": "stop"
+  }],
+  "usage": { "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0 }
 }`,
 };
 
@@ -291,6 +329,39 @@ with open('input.png', 'rb') as image:
 response.raise_for_status()
 print(response.json()['data'])`,
     },
+    chat: {
+      curl: `curl -X POST '${baseUrl}/chat/completions' -H 'Authorization: Bearer YOUR_API_KEY' -H 'Content-Type: application/json' -d '{"model":"MODEL_ID","messages":[{"role":"user","content":"a cute cat"}],"stream":false}'`,
+      javascript: `const response = await fetch('${baseUrl}/chat/completions', {
+  method: 'POST',
+  headers: {
+    Authorization: 'Bearer YOUR_API_KEY',
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    model: 'MODEL_ID',
+    messages: [{ role: 'user', content: 'a cute cat' }],
+    stream: false,
+  }),
+});
+
+const result = await response.json();
+if (!response.ok) throw new Error(result.error?.message);
+console.log(result.choices[0].message.content);`,
+      python: `import requests
+
+response = requests.post(
+    '${baseUrl}/chat/completions',
+    headers={'Authorization': 'Bearer YOUR_API_KEY'},
+    json={
+        'model': 'MODEL_ID',
+        'messages': [{'role': 'user', 'content': 'a cute cat'}],
+        'stream': False,
+    },
+    timeout=600,
+)
+response.raise_for_status()
+print(response.json()['choices'][0]['message']['content'])`,
+    },
   }), [baseUrl]);
 
   const copy = async (value: string, id: string) => {
@@ -309,7 +380,7 @@ print(response.json()['data'])`,
 
   return (
     <div className="page-stack">
-      <PageHeader title="API 文档" description="API Key 鉴权、余额查询、模型查询、图片生成与图片编辑接口">
+      <PageHeader title="API 文档" description="API Key 鉴权、余额与模型查询、图片生成、图片编辑及 new-api 兼容接口">
         <Link href="/api-keys" className="btn"><KeyRound size={14} />管理 Key</Link>
       </PageHeader>
 

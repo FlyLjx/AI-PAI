@@ -32,6 +32,15 @@ func TestQueueAcquireScopeSerializesSameScope(t *testing.T) {
 	}
 }
 
+func TestGenerationTaskTimeoutIsFiveMinutes(t *testing.T) {
+	if taskProcessingTimeout != 5*time.Minute {
+		t.Fatalf("task processing timeout = %s, want 5m", taskProcessingTimeout)
+	}
+	if normalizeTaskProcessingError(context.DeadlineExceeded) != ErrTaskTimedOut {
+		t.Fatal("deadline exceeded should use the task timeout error")
+	}
+}
+
 func TestQueueCancelStopsActiveTask(t *testing.T) {
 	queue := &Queue{}
 	ctx, cancel := context.WithCancel(context.Background())

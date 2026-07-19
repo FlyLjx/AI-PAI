@@ -14,6 +14,8 @@ import (
 
 const upstreamDuplicateGuardAttempts = 3
 
+var ErrTaskTimedOut = errors.New(taskTimeoutMessage)
+
 func (s *Service) Process(ctx context.Context, taskID string) error {
 	startedAt := time.Now()
 	claimed, err := s.tasks.ClaimForProcessing(ctx, taskID)
@@ -43,6 +45,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 
 	model, provider, err := modelAndProvider(ctx, s.db, task)
 	if err != nil {
+		err = normalizeTaskProcessingError(err)
 		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
@@ -137,6 +140,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		}
 	}
 	if lastErr != nil {
+		lastErr = normalizeTaskProcessingError(lastErr)
 		if errors.Is(lastErr, context.Canceled) {
 			if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil && finalTask.Status == tasks.StatusCanceled {
 				s.syncAPIAccessLogForTask(finalTask)
@@ -183,6 +187,36 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		"imageCount", actualQuantity,
 	)
 	return nil
+}
+
+func normalizeTaskProcessingError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return ErrTaskTimedOut
+	}
+	return err
+}
+
+func (s *Service) FailTimedOut(ctx context.Context, cutoff time.Time, now time.Time, limit int) ([]string, error) {
+	ids, err := s.tasks.FailTimedOut(ctx, cutoff, now, taskTimeoutMessage, limit)
+	if err != nil {
+		return ids, err
+	}
+	logRepository := apiaccess.NewRepository(s.db)
+	var syncErr error
+	for _, id := range ids {
+		if err := logRepository.FinishLogsForTask(ctx, id, "failed", 0, taskTimeoutMessage); err != nil {
+			syncErr = errors.Join(syncErr, err)
+		}
+		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
+			if s.hub != nil {
+				s.hub.PublishTask(*task)
+			}
+		}
+		if s.logger != nil {
+			s.logger.Warn("generation task timed out", "taskId", id, "timeout", taskProcessingTimeout.String())
+		}
+	}
+	return ids, syncErr
 }
 
 func (s *Service) callImageGenerationWithGuards(ctx context.Context, expectedQuantity int, request ImageRequest) (any, int, error) {

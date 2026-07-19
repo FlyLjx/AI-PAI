@@ -23,30 +23,39 @@ import (
 )
 
 type compatImageInput struct {
-	Model           string   `json:"model"`
-	Prompt          string   `json:"prompt"`
-	N               int      `json:"n"`
-	Size            string   `json:"size"`
-	AspectRatio     string   `json:"aspect_ratio"`
-	Ratio           string   `json:"ratio"`
-	SizeTier        string   `json:"size_tier"`
-	Resolution      string   `json:"resolution"`
-	Quality         string   `json:"quality"`
-	ResponseFormat  string   `json:"response_format"`
-	Background      string   `json:"background"`
-	OutputFormat    string   `json:"output_format"`
-	ReferenceURLs   []string `json:"-"`
-	ReferenceItems  any      `json:"referenceImages"`
-	ReferenceImage  any      `json:"reference_image"`
-	ReferenceImages any      `json:"reference_images"`
-	Image           any      `json:"image"`
-	Images          any      `json:"images"`
-	ImageURL        any      `json:"image_url"`
-	ImageURLs       any      `json:"image_urls"`
-	InputImage      any      `json:"input_image"`
-	InputImages     any      `json:"input_images"`
-	Mask            any      `json:"mask"`
+	Model           string         `json:"model"`
+	Prompt          string         `json:"prompt"`
+	N               int            `json:"n"`
+	Stream          bool           `json:"stream"`
+	Size            string         `json:"size"`
+	AspectRatio     string         `json:"aspect_ratio"`
+	Ratio           string         `json:"ratio"`
+	SizeTier        string         `json:"size_tier"`
+	Resolution      string         `json:"resolution"`
+	Quality         string         `json:"quality"`
+	ResponseFormat  string         `json:"response_format"`
+	Background      string         `json:"background"`
+	OutputFormat    string         `json:"output_format"`
+	ReferenceURLs   []string       `json:"-"`
+	ReferenceItems  any            `json:"referenceImages"`
+	ReferenceImage  any            `json:"reference_image"`
+	ReferenceImages any            `json:"reference_images"`
+	Image           any            `json:"image"`
+	Images          any            `json:"images"`
+	ImageURL        any            `json:"image_url"`
+	ImageURLs       any            `json:"image_urls"`
+	InputImage      any            `json:"input_image"`
+	InputImages     any            `json:"input_images"`
+	Mask            any            `json:"mask"`
+	RequestParams   map[string]any `json:"-"`
 }
+
+type compatImageResponseMode int
+
+const (
+	compatImageResponseOpenAI compatImageResponseMode = iota
+	compatImageResponseChatCompletion
+)
 
 const (
 	compatTaskClientWaitTimeout = 8 * time.Minute
@@ -139,6 +148,10 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		writeOpenAIError(w, http.StatusBadRequest, "请求参数不正确", "invalid_request_error")
 		return
 	}
+	r.compatImageRequestWithInput(w, req, auth, input, isEdit, compatImageResponseOpenAI)
+}
+
+func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Request, auth *apiaccess.Authenticated, input compatImageInput, isEdit bool, responseMode compatImageResponseMode) {
 	input.Model = strings.TrimSpace(input.Model)
 	input.Prompt = strings.TrimSpace(input.Prompt)
 	if input.N == 0 {
@@ -294,20 +307,15 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 		return
 	}
 
-	data := make([]map[string]string, 0, len(result.urls))
-	for _, url := range result.urls {
-		if strings.HasPrefix(url, "/") {
-			url = absoluteURL(req, url)
-		}
-		data = append(data, map[string]string{"url": url})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"created": time.Now().Unix(),
-		"data":    data,
-	})
+	writeCompatImageSuccess(w, req, input, result.urls, responseMode, accessLogID)
 }
 
 func compatRequestParams(req *http.Request, input compatImageInput) map[string]any {
+	if len(input.RequestParams) > 0 {
+		if params, ok := summarizeCompatRequestValue(input.RequestParams).(map[string]any); ok {
+			return params
+		}
+	}
 	params := map[string]any{
 		"model":  input.Model,
 		"prompt": input.Prompt,
@@ -374,6 +382,105 @@ func compatRequestParams(req *http.Request, input compatImageInput) map[string]a
 		}
 	}
 	return params
+}
+
+func writeCompatImageSuccess(w http.ResponseWriter, req *http.Request, input compatImageInput, urls []string, responseMode compatImageResponseMode, accessLogID string) {
+	data := make([]map[string]string, 0, len(urls))
+	for _, url := range urls {
+		if strings.HasPrefix(url, "/") {
+			url = absoluteURL(req, url)
+		}
+		data = append(data, map[string]string{"url": url})
+	}
+	created := time.Now().Unix()
+	if responseMode == compatImageResponseChatCompletion {
+		writeCompatImageChatCompletion(w, input, data, created, compatChatCompletionID(accessLogID))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"created": created,
+		"data":    data,
+	})
+}
+
+func writeCompatImageChatCompletion(w http.ResponseWriter, input compatImageInput, data []map[string]string, created int64, responseID string) {
+	links := make([]string, 0, len(data))
+	for _, item := range data {
+		if url := strings.TrimSpace(item["url"]); url != "" {
+			links = append(links, "![image]("+url+")")
+		}
+	}
+	content := strings.Join(links, "\n")
+	if strings.TrimSpace(responseID) == "" {
+		responseID = compatChatCompletionID(newID())
+	}
+	usage := map[string]int{
+		"prompt_tokens":     0,
+		"completion_tokens": 0,
+		"total_tokens":      0,
+	}
+	if input.Stream {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache, no-transform")
+		w.Header().Set("Connection", "keep-alive")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+		writeCompatSSEData(w, map[string]any{
+			"id":      responseID,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   input.Model,
+			"choices": []map[string]any{{
+				"index":         0,
+				"delta":         map[string]any{"role": "assistant", "content": content},
+				"finish_reason": nil,
+			}},
+		})
+		writeCompatSSEData(w, map[string]any{
+			"id":      responseID,
+			"object":  "chat.completion.chunk",
+			"created": created,
+			"model":   input.Model,
+			"choices": []map[string]any{{
+				"index":         0,
+				"delta":         map[string]any{},
+				"finish_reason": "stop",
+			}},
+			"usage": usage,
+		})
+		_, _ = io.WriteString(w, "data: [DONE]\n\n")
+		if flusher, ok := w.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":      responseID,
+		"object":  "chat.completion",
+		"created": created,
+		"model":   input.Model,
+		"choices": []map[string]any{{
+			"index": 0,
+			"message": map[string]any{
+				"role":    "assistant",
+				"content": content,
+			},
+			"finish_reason": "stop",
+		}},
+		"usage": usage,
+	})
+}
+
+func compatChatCompletionID(value string) string {
+	return "chatcmpl-" + strings.ReplaceAll(strings.TrimSpace(value), "-", "")
+}
+
+func writeCompatSSEData(w io.Writer, value any) {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return
+	}
+	_, _ = io.WriteString(w, "data: "+string(payload)+"\n\n")
 }
 
 func addCompatRequestString(params map[string]any, key string, value string) {
