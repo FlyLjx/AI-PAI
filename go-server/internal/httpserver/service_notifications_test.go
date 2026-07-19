@@ -27,6 +27,30 @@ func TestServiceNotificationReserveHonorsCooldown(t *testing.T) {
 	}
 }
 
+func TestNotificationActionURLUsesDeploymentOriginForLegacyLocalSetting(t *testing.T) {
+	t.Setenv("APP_PUBLIC_ORIGIN", "https://ai.yccc.me/")
+	got := notificationActionURL("http://localhost:5173", "/sys-admins/upstream-apis")
+	if got != "https://ai.yccc.me/sys-admins/upstream-apis" {
+		t.Fatalf("notificationActionURL() = %q", got)
+	}
+}
+
+func TestNotificationActionURLKeepsExplicitPublicOrigin(t *testing.T) {
+	t.Setenv("APP_PUBLIC_ORIGIN", "https://environment.example.com")
+	got := notificationActionURL("https://portal.example.com/", "/recharge")
+	if got != "https://portal.example.com/recharge" {
+		t.Fatalf("notificationActionURL() = %q", got)
+	}
+}
+
+func TestNotificationActionURLDoesNotReturnLegacyViteOrigin(t *testing.T) {
+	t.Setenv("APP_PUBLIC_ORIGIN", "")
+	got := notificationActionURL("http://localhost:5173", "/subscriptions")
+	if got != "http://127.0.0.1:3000/subscriptions" {
+		t.Fatalf("notificationActionURL() = %q", got)
+	}
+}
+
 func TestReminderAlreadySentReadsPersistentState(t *testing.T) {
 	rawDB, mock, err := sqlmock.New()
 	if err != nil {

@@ -44,6 +44,7 @@ services:
       SYSTEM_UPDATE_DIR: /app/update
       GITHUB_UPDATE_REPOSITORY: ${GITHUB_UPDATE_REPOSITORY:-FlyLjx/AI-PAI}
       GITHUB_UPDATE_WORKFLOW: ${GITHUB_UPDATE_WORKFLOW:-build.yml}
+      APP_PUBLIC_ORIGIN: ${APP_PUBLIC_ORIGIN:-http://127.0.0.1:6985}
       PORT: 3001
     depends_on:
       postgres:

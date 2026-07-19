@@ -228,6 +228,19 @@ export type MailDeliveryLogPage = {
   summary: MailDeliverySummary;
 };
 
+export type Announcement = {
+  id: string;
+  title: string;
+  content: string;
+  displayMode: 'popup' | 'banner';
+  targetType: 'all' | 'users';
+  status: 'active' | 'disabled';
+  sortOrder: number;
+  userIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type RequestMonitorRange = '1h' | '24h' | '7d' | '30d';
 
 export type RequestMonitorLog = {
@@ -447,6 +460,10 @@ export const portalApi = {
   adminUsage: (page = 1) => api<UsageLog[]>(`/api/admin/api-access/logs${query({ page, pageSize: 30 })}`),
   adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
   adminMailLogs: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; category?: string } = {}) => api<MailDeliveryLogPage>(`/api/admin/mail-logs${query(input)}`),
+  announcements: () => api<Announcement[]>('/api/announcements'),
+  createAnnouncement: (input: Omit<Announcement, 'id' | 'createdAt' | 'updatedAt'>) => api<Announcement>('/api/announcements', { method: 'POST', body: JSON.stringify(input) }),
+  updateAnnouncement: (id: string, input: Omit<Announcement, 'id' | 'createdAt' | 'updatedAt'>) => api<Announcement>(`/api/announcements/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  deleteAnnouncement: (id: string) => api(`/api/announcements/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   requestMonitor: (input: { range?: RequestMonitorRange; page?: number; pageSize?: number; keyword?: string; method?: string; status?: string } = {}) => api<RequestMonitorSnapshot>(`/api/admin/request-monitor${query(input)}`),
   adminInvites: (page = 1, pageSize = 30) => api<AdminInviteRecord[]>(`/api/invites${query({ page, pageSize })}`),
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),

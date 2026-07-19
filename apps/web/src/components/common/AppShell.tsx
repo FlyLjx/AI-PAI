@@ -5,12 +5,12 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   Activity, BadgeDollarSign, BookOpen, ChevronRight, HeartPulse, KeyRound, LayoutDashboard,
-  Gift, Images, LoaderCircle, LogOut, MailWarning, Menu, Send, Settings, WalletCards, X,
+  BellRing, Gift, Images, LoaderCircle, LogOut, MailWarning, Megaphone, Menu, Send, Settings, WalletCards, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BillingRail } from './BillingRail';
 import { WEB_BUILD_COMMIT, WEB_BUILD_VERSION, reloadForBuild } from '@/lib/build-version';
-import { APIError, clearSession, getSession, portalApi, refreshSession, type PortalUser } from '@/lib/portal-api';
+import { APIError, clearSession, getSession, portalApi, refreshSession, type Announcement, type PortalUser } from '@/lib/portal-api';
 
 type NavItem = { label: string; href: string; icon: React.ComponentType<{ size?: number; className?: string }> };
 
@@ -52,6 +52,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [verificationSending, setVerificationSending] = useState(false);
   const [verificationCooldown, setVerificationCooldown] = useState(0);
+  const [announcements, setAnnouncements] = useState<Announcement[]>([]);
+  const [signingAnnouncementId, setSigningAnnouncementId] = useState('');
+  const userId = user?.id;
+  const userToken = user?.token;
 
   useEffect(() => {
     let active = true;
@@ -86,6 +90,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     window.addEventListener('aipai:session', syncSession);
     return () => window.removeEventListener('aipai:session', syncSession);
   }, []);
+
+  useEffect(() => {
+    if (!ready || !userId || !userToken) return;
+    let active = true;
+    const current = getSession();
+    if (!current || current.id !== userId) return;
+    void portalApi.announcements(current)
+      .then((response) => {
+        if (active) setAnnouncements(response.data || []);
+      })
+      .catch((requestError) => {
+        if (requestError instanceof APIError && (requestError.status === 401 || requestError.status === 403)) return;
+        if (active) toast.error(requestError instanceof Error ? requestError.message : '公告加载失败');
+      });
+    return () => { active = false; };
+  }, [ready, userId, userToken]);
 
   useEffect(() => {
     let active = true;
@@ -176,6 +196,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       setVerificationSending(false);
     }
   };
+  const bannerAnnouncements = announcements.filter((item) => item.displayMode === 'banner');
+  const popupAnnouncements = announcements.filter((item) => item.displayMode === 'popup');
+  const activePopup = popupAnnouncements[0] || null;
+  const signAnnouncement = async () => {
+    if (!activePopup || signingAnnouncementId) return;
+    setSigningAnnouncementId(activePopup.id);
+    try {
+      await portalApi.signAnnouncement(user, activePopup.id);
+      setAnnouncements((current) => current.filter((item) => item.id !== activePopup.id));
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '公告确认失败');
+    } finally {
+      setSigningAnnouncementId('');
+    }
+  };
 
   return (
     <div className="app-frame">
@@ -203,6 +238,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       {mobileOpen && <div className="mobile-drawer"><Navigation items={USER_NAV_ITEMS} pathname={pathname} mobile onNavigate={() => setMobileOpen(false)} /><button className="mobile-logout" onClick={logout}><LogOut size={16} />退出登录</button></div>}
 
       <main className="app-main">
+        {bannerAnnouncements.length > 0 && (
+          <div className="mb-4 space-y-2" aria-label="站内公告">
+            {bannerAnnouncements.map((item) => (
+              <section key={item.id} className="flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-blue-950">
+                <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-md bg-white text-blue-700"><Megaphone size={15} /></span>
+                <div className="min-w-0 flex-1"><strong className="block text-xs">{item.title}</strong><p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-blue-800">{item.content}</p></div>
+              </section>
+            ))}
+          </div>
+        )}
         {!user.emailVerifiedAt && (
           <section className="mb-4 flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 sm:flex-row sm:items-center" aria-label="邮箱验证提醒">
             <MailWarning size={18} className="shrink-0 text-amber-700" />
@@ -218,6 +263,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <nav className="bottom-nav">
         {mobileNav.map(({ label, href, icon: Icon }) => <Link key={href} href={href} className={pathname === href ? 'is-active' : ''}><Icon size={18} /><span>{label}</span></Link>)}
       </nav>
+      {activePopup && (
+        <div className="modal-backdrop" role="presentation">
+          <section className="modal-panel max-w-[460px] overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="announcement-dialog-title" aria-describedby="announcement-dialog-content">
+            <div className="border-b border-[#EDF0EE] bg-[#FAFBFA] px-5 py-4">
+              <div className="flex items-center gap-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-amber-50 text-amber-700"><BellRing size={18} /></span>
+                <div className="min-w-0"><small className="block text-[10px] font-semibold text-amber-700">站内公告{popupAnnouncements.length > 1 ? ` · 1/${popupAnnouncements.length}` : ''}</small><strong id="announcement-dialog-title" className="mt-0.5 block break-words text-sm">{activePopup.title}</strong></div>
+              </div>
+            </div>
+            <div className="px-5 py-5">
+              <p id="announcement-dialog-content" className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-6 text-zinc-700">{activePopup.content}</p>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-[#EDF0EE] bg-[#FAFBFA] px-5 py-3">
+              <small className="text-[10px] text-zinc-400">确认后不再重复显示</small>
+              <button type="button" onClick={() => void signAnnouncement()} disabled={Boolean(signingAnnouncementId)} className="btn primary min-w-24 justify-center disabled:opacity-60">
+                {signingAnnouncementId && <LoaderCircle size={14} className="animate-spin" />}
+                {signingAnnouncementId ? '确认中' : '我知道了'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

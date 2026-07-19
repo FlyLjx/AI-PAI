@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -305,10 +307,31 @@ func (m *serviceNotificationManager) release(key string) {
 
 func notificationActionURL(frontendURL string, path string) string {
 	frontendURL = strings.TrimRight(strings.TrimSpace(frontendURL), "/")
-	if frontendURL == "" {
-		frontendURL = "http://localhost:3000"
+	publicOrigin := strings.TrimRight(strings.TrimSpace(os.Getenv("APP_PUBLIC_ORIGIN")), "/")
+	if publicOrigin != "" && (frontendURL == "" || isLocalDevelopmentOrigin(frontendURL)) {
+		frontendURL = publicOrigin
+	}
+	if frontendURL == "" || isLegacyViteOrigin(frontendURL) {
+		frontendURL = "http://127.0.0.1:3000"
 	}
 	return frontendURL + "/" + strings.TrimLeft(path, "/")
+}
+
+func isLocalDevelopmentOrigin(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	return host == "localhost" || host == "127.0.0.1" || host == "::1"
+}
+
+func isLegacyViteOrigin(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil {
+		return false
+	}
+	return (strings.EqualFold(parsed.Hostname(), "localhost") || parsed.Hostname() == "127.0.0.1") && parsed.Port() == "5173"
 }
 
 func formatNotificationCredits(value float64) string {

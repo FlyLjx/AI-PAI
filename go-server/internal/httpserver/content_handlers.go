@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -14,15 +15,24 @@ func (r *Router) publicAnnouncements(w http.ResponseWriter, req *http.Request) {
 		writeMethodNotAllowed(w)
 		return
 	}
+	userID := strings.TrimSpace(req.URL.Query().Get("userId"))
+	if userID != "" {
+		var err error
+		userID, err = r.requireFrontUser(req, userID)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	includeSigned := req.URL.Query().Get("includeSigned") == "1" || req.URL.Query().Get("includeSigned") == "true"
-	items, err := content.NewRepository(r.db).FindAnnouncements(ctx, true, strings.TrimSpace(req.URL.Query().Get("userId")), includeSigned)
+	items, err := content.NewRepository(r.db).FindAnnouncements(ctx, true, userID, includeSigned)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	if strings.TrimSpace(req.URL.Query().Get("userId")) == "" {
+	if userID == "" {
 		w.Header().Set("Cache-Control", "public, max-age=15")
 	} else {
 		w.Header().Set("Cache-Control", "private, max-age=10")
@@ -50,6 +60,10 @@ func (r *Router) announcements(w http.ResponseWriter, req *http.Request) {
 		var input content.Announcement
 		if err := decodeCompatJSON(req, &input); err != nil {
 			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
+			return
+		}
+		if err := normalizeAnnouncementInput(&input); err != nil {
+			writeError(w, err)
 			return
 		}
 		input.ID = defaultString(strings.TrimSpace(input.ID), newID())
@@ -87,6 +101,10 @@ func (r *Router) announcementByID(w http.ResponseWriter, req *http.Request) {
 		var input content.Announcement
 		if err := decodeCompatJSON(req, &input); err != nil {
 			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
+			return
+		}
+		if err := normalizeAnnouncementInput(&input); err != nil {
+			writeError(w, err)
 			return
 		}
 		input.ID = id
@@ -128,15 +146,82 @@ func (r *Router) signAnnouncement(w http.ResponseWriter, req *http.Request, id s
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
 		return
 	}
-	if strings.TrimSpace(input.UserID) == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "缺少用户信息"))
+	userID, err := r.requireFrontUser(req, input.UserID)
+	if err != nil {
+		writeError(w, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	if err := content.NewRepository(r.db).SignAnnouncement(ctx, strings.Trim(id, "/"), strings.TrimSpace(input.UserID)); err != nil {
+	announcementID := strings.Trim(id, "/")
+	if announcementID == "" || strings.Contains(announcementID, "/") {
+		writeError(w, newAppError(http.StatusNotFound, "公告不存在"))
+		return
+	}
+	repo := content.NewRepository(r.db)
+	items, err := repo.FindAnnouncements(ctx, true, userID, true)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	allowed := slices.ContainsFunc(items, func(item content.Announcement) bool {
+		return item.ID == announcementID && item.DisplayMode == "popup"
+	})
+	if !allowed {
+		writeError(w, newAppError(http.StatusNotFound, "公告不存在或无需确认"))
+		return
+	}
+	if err := repo.SignAnnouncement(ctx, announcementID, userID); err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"signed": true}})
+}
+
+func normalizeAnnouncementInput(input *content.Announcement) error {
+	input.Title = strings.TrimSpace(input.Title)
+	input.Content = strings.TrimSpace(input.Content)
+	input.DisplayMode = defaultString(strings.TrimSpace(input.DisplayMode), "popup")
+	input.TargetType = defaultString(strings.TrimSpace(input.TargetType), "all")
+	input.Status = defaultString(strings.TrimSpace(input.Status), "active")
+
+	if input.Title == "" {
+		return newAppError(http.StatusBadRequest, "请输入公告标题")
+	}
+	if len([]rune(input.Title)) > 120 {
+		return newAppError(http.StatusBadRequest, "公告标题不能超过 120 个字符")
+	}
+	if input.Content == "" {
+		return newAppError(http.StatusBadRequest, "请输入公告内容")
+	}
+	if input.DisplayMode != "popup" && input.DisplayMode != "banner" {
+		return newAppError(http.StatusBadRequest, "公告展示方式不正确")
+	}
+	if input.TargetType != "all" && input.TargetType != "users" {
+		return newAppError(http.StatusBadRequest, "公告接收范围不正确")
+	}
+	if input.Status != "active" && input.Status != "disabled" {
+		return newAppError(http.StatusBadRequest, "公告状态不正确")
+	}
+
+	seen := make(map[string]struct{}, len(input.UserIDs))
+	userIDs := make([]string, 0, len(input.UserIDs))
+	for _, userID := range input.UserIDs {
+		userID = strings.TrimSpace(userID)
+		if userID == "" {
+			continue
+		}
+		if _, exists := seen[userID]; exists {
+			continue
+		}
+		seen[userID] = struct{}{}
+		userIDs = append(userIDs, userID)
+	}
+	input.UserIDs = userIDs
+	if input.TargetType == "all" {
+		input.UserIDs = []string{}
+	} else if len(input.UserIDs) == 0 {
+		return newAppError(http.StatusBadRequest, "请选择至少一个接收用户")
+	}
+	return nil
 }

@@ -317,6 +317,19 @@ export type RechargeOrder = {
   updatedAt?: string;
 };
 
+export type Announcement = {
+  id: string;
+  title: string;
+  content: string;
+  displayMode: 'popup' | 'banner';
+  targetType: 'all' | 'users';
+  status: 'active' | 'disabled';
+  sortOrder: number;
+  userIds: string[];
+  createdAt: string;
+  updatedAt: string;
+};
+
 type Envelope<T> = {
   data: T;
   pagination?: { total: number; page: number; pageSize: number };
@@ -461,6 +474,8 @@ async function openAIRequest<T>(path: string, apiKey: string, options: RequestIn
 export const portalApi = {
   publicSettings: () => api<Record<string, unknown>>('/api/settings/public'),
   pricingModels: () => api<PricingModel[]>('/api/models/pricing'),
+  announcements: (user: PortalUser) => api<Announcement[]>(`/api/announcements/public${query({ userId: user.id })}`, {}, user.token),
+  signAnnouncement: (user: PortalUser, id: string) => api<{ signed: boolean }>(`/api/announcements/${encodeURIComponent(id)}/sign`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }, user.token),
   listKeys: (user: PortalUser) => api<APIKey[]>(`/api/api-access/keys${query({ userId: user.id })}`, {}, user.token),
   createKey: (user: PortalUser, name: string, billingMode: SelectableAPIKeyBillingMode) => api<APIKey>('/api/api-access/keys', { method: 'POST', body: JSON.stringify({ userId: user.id, name, billingMode }) }, user.token),
   revealKey: (user: PortalUser, id: string) => api<{ key: string }>(`/api/api-access/keys/${encodeURIComponent(id)}/reveal`, { method: 'POST' }, user.token),
