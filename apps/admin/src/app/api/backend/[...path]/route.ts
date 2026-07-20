@@ -27,6 +27,7 @@ const ADMIN_ROUTES: Rule[] = [
   { pattern: /^\/api\/admin\/api-access\/keys\/[^/]+$/, methods: ['PATCH', 'DELETE'] },
   { pattern: /^\/api\/admin\/api-access\/logs$/, methods: ['GET'] },
   { pattern: /^\/api\/admin\/api-access\/operations$/, methods: ['GET'] },
+  { pattern: /^\/api\/admin\/mail-broadcast$/, methods: ['POST'] },
   { pattern: /^\/api\/admin\/mail-logs$/, methods: ['GET'] },
   { pattern: /^\/api\/admin\/request-monitor$/, methods: ['GET'] },
   { pattern: /^\/api\/admin\/system-update$/, methods: ['GET', 'POST'] },

@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  BellRing, Check, Eye, EyeOff, Loader2, Megaphone, Pencil, Plus, RefreshCw,
+  BellRing, Check, Eye, EyeOff, Loader2, Mail, Megaphone, Pencil, Plus, RefreshCw,
   Search, Trash2, Users, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -69,6 +69,7 @@ export default function AnnouncementsPage() {
   const [deleteCandidate, setDeleteCandidate] = useState<Announcement | null>(null);
   const [draft, setDraft] = useState<AnnouncementDraft>(emptyDraft);
   const [userSearch, setUserSearch] = useState('');
+  const [sendEmail, setSendEmail] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -117,6 +118,7 @@ export default function AnnouncementsPage() {
     setEditing(null);
     setDraft({ ...emptyDraft, userIds: [] });
     setUserSearch('');
+    setSendEmail(false);
     setEditorOpen(true);
   };
 
@@ -124,6 +126,7 @@ export default function AnnouncementsPage() {
     setEditing(item);
     setDraft(toDraft(item));
     setUserSearch('');
+    setSendEmail(false);
     setEditorOpen(true);
   };
 
@@ -148,10 +151,20 @@ export default function AnnouncementsPage() {
     }
     setSaving(true);
     try {
-      const input = { ...draft, userIds: draft.targetType === 'all' ? [] : draft.userIds };
-      if (editing) await portalApi.updateAnnouncement(editing.id, input);
-      else await portalApi.createAnnouncement(input);
-      toast.success(editing ? '公告已更新' : '公告已创建');
+      const input = { ...draft, userIds: draft.targetType === 'all' ? [] : draft.userIds, sendEmail };
+      const response = editing
+        ? await portalApi.updateAnnouncement(editing.id, input)
+        : await portalApi.createAnnouncement(input);
+      const actionLabel = editing ? '公告已更新' : '公告已创建';
+      if (!sendEmail) {
+        toast.success(actionLabel);
+      } else if (!response.mailDelivery?.accepted) {
+        toast.error(`${actionLabel}，邮件发送失败：${response.mailDelivery?.message || '邮件服务不可用'}`);
+      } else if (response.mailDelivery.failed > 0) {
+        toast.warning(`${actionLabel}，邮件成功 ${response.mailDelivery.success} 封，失败 ${response.mailDelivery.failed} 封`);
+      } else {
+        toast.success(`${actionLabel}，已同步发送 ${response.mailDelivery.success} 封邮件`);
+      }
       setEditorOpen(false);
       await load();
     } catch (saveError) {
@@ -267,7 +280,7 @@ export default function AnnouncementsPage() {
               <label className="block"><span className="mb-1 flex items-center justify-between text-[11px] font-semibold text-zinc-500"><span>公告内容</span><small className="font-normal text-zinc-400">支持换行</small></span><textarea required rows={6} value={draft.content} onChange={(event) => updateDraft('content', event.target.value)} placeholder="输入需要通知用户的具体内容" className="w-full resize-y rounded-md border border-[#DCE4DF] px-3 py-2 text-xs leading-6 outline-none focus:border-[#12B76A]" /></label>
               <div className="grid grid-cols-1 gap-4 border-t border-[#EDF0EE] pt-4 sm:grid-cols-3">
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">展示方式</span><AppSelect value={draft.displayMode} onValueChange={(value) => updateDraft('displayMode', value as Announcement['displayMode'])} ariaLabel="公告展示方式" options={MODE_OPTIONS.slice(1)} /></label>
-                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">公告状态</span><AppSelect value={draft.status} onValueChange={(value) => updateDraft('status', value as Announcement['status'])} ariaLabel="公告状态" options={STATUS_OPTIONS.slice(1)} /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">公告状态</span><AppSelect value={draft.status} onValueChange={(value) => { const nextStatus = value as Announcement['status']; updateDraft('status', nextStatus); if (nextStatus !== 'active') setSendEmail(false); }} ariaLabel="公告状态" options={STATUS_OPTIONS.slice(1)} /></label>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">排序值</span><input type="number" value={draft.sortOrder} onChange={(event) => updateDraft('sortOrder', Number(event.target.value))} className="h-9 w-full rounded-md border border-[#DCE4DF] px-3 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
               </div>
               <section className="border-t border-[#EDF0EE] pt-4">
@@ -289,6 +302,10 @@ export default function AnnouncementsPage() {
                   </div>
                 )}
               </section>
+              <label className={`flex items-start gap-3 rounded-md border px-3.5 py-3 ${draft.status === 'active' ? 'border-[#CFE7D9] bg-[#F5FBF7]' : 'border-[#E3E7E4] bg-[#F8F9F8] opacity-60'}`}>
+                <input type="checkbox" checked={sendEmail} disabled={draft.status !== 'active'} onChange={(event) => setSendEmail(event.target.checked)} className="mt-0.5 h-4 w-4 accent-[#047857]" />
+                <span className="min-w-0"><span className="flex items-center gap-1.5 text-[11px] font-semibold text-zinc-700"><Mail className="h-3.5 w-3.5 text-[#047857]" />同步发送邮件</span><small className="mt-1 block text-[10px] leading-4 text-zinc-500">本次保存后，按上方接收范围发送同标题、同正文的邮件；以后编辑不会自动重复发送。</small></span>
+              </label>
             </div>
             <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setEditorOpen(false)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{editing ? '保存修改' : '发布公告'}</button></div>
           </form>

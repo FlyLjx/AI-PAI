@@ -319,9 +319,18 @@ func (r *Repository) FinishLog(ctx context.Context, id string, status string, im
 	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE api_access_logs
-		SET status = ?, image_count = ?, error_message = ?, finished_at = CURRENT_TIMESTAMP
+		SET status = ?, image_count = ?, error_message = ?,
+			charged_credits = CASE WHEN ? IN ('success', 'succeeded') THEN COALESCE((
+				SELECT generation_tasks.cost_credits FROM generation_tasks
+				WHERE generation_tasks.id = api_access_logs.task_id LIMIT 1
+			), 0) ELSE 0 END,
+			model_cost_credits = CASE WHEN ? IN ('success', 'succeeded') THEN COALESCE((
+				SELECT generation_tasks.model_cost_credits FROM generation_tasks
+				WHERE generation_tasks.id = api_access_logs.task_id LIMIT 1
+			), 0) ELSE 0 END,
+			finished_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, status, imageCount, errorMessage, id)
+	`, status, imageCount, errorMessage, status, status, id)
 	return err
 }
 
@@ -336,13 +345,22 @@ func (r *Repository) FinishLogsForTask(ctx context.Context, taskID string, statu
 	}
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE api_access_logs
-		SET status = ?, image_count = ?, error_message = ?, finished_at = CURRENT_TIMESTAMP
+		SET status = ?, image_count = ?, error_message = ?,
+			charged_credits = CASE WHEN ? IN ('success', 'succeeded') THEN COALESCE((
+				SELECT generation_tasks.cost_credits FROM generation_tasks
+				WHERE generation_tasks.id = api_access_logs.task_id LIMIT 1
+			), 0) ELSE 0 END,
+			model_cost_credits = CASE WHEN ? IN ('success', 'succeeded') THEN COALESCE((
+				SELECT generation_tasks.model_cost_credits FROM generation_tasks
+				WHERE generation_tasks.id = api_access_logs.task_id LIMIT 1
+			), 0) ELSE 0 END,
+			finished_at = CURRENT_TIMESTAMP
 		WHERE task_id = ?
 			AND (
 				status IN ('queued', 'processing')
 				OR (status = 'failed' AND error_message = 'context canceled')
 			)
-	`, status, imageCount, errorMessage, taskID)
+	`, status, imageCount, errorMessage, status, status, taskID)
 	return err
 }
 
@@ -527,6 +545,8 @@ func usageLogSelect() string {
 			api_access_logs.request_params,
 			api_access_logs.status,
 			api_access_logs.error_message,
+			COALESCE(api_access_logs.charged_credits, 0),
+			COALESCE(api_access_logs.model_cost_credits, 0),
 			COALESCE(generation_tasks.duration_seconds, 0),
 			api_access_logs.created_at,
 			api_access_logs.finished_at
@@ -888,6 +908,8 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 		&requestParams,
 		&item.Status,
 		&errorMessage,
+		&item.ChargedCredits,
+		&item.ModelCostCredits,
 		&item.DurationSeconds,
 		&item.CreatedAt,
 		&finishedAt,

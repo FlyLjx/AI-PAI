@@ -234,6 +234,19 @@ func (s Service) ListLogs(ctx context.Context, input ListLogsInput) ([]PublicUsa
 	return result, total, nil
 }
 
+func (s Service) ListAdminLogs(ctx context.Context, input ListLogsInput) ([]AdminPublicUsageLog, int, error) {
+	_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
+	items, total, err := s.keys.ListLogs(ctx, input)
+	if err != nil {
+		return nil, 0, err
+	}
+	result := make([]AdminPublicUsageLog, 0, len(items))
+	for _, item := range items {
+		result = append(result, ToAdminPublicLog(item))
+	}
+	return result, total, nil
+}
+
 func (s Service) ListLogStats(ctx context.Context, input ListLogsInput) (UsageStats, error) {
 	return s.keys.LogStats(ctx, input)
 }

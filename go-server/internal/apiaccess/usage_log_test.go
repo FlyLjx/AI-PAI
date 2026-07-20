@@ -1,8 +1,15 @@
 package apiaccess
 
 import (
+	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
+
+	"aipi-go/internal/database"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 func TestToPublicLogIncludesRequestAndSuccessResponseParameters(t *testing.T) {
@@ -93,5 +100,54 @@ func TestToPublicLogOmitsResponseParametersBeforeCompletion(t *testing.T) {
 	publicLog := ToPublicLog(UsageLog{Status: "processing", CreatedAt: time.Now()})
 	if publicLog.ResponseParams != nil {
 		t.Fatalf("expected no response parameters while processing, got %#v", publicLog.ResponseParams)
+	}
+}
+
+func TestToAdminPublicLogIncludesChargeAndModelCost(t *testing.T) {
+	adminLog := ToAdminPublicLog(UsageLog{
+		Status:           "success",
+		ChargedCredits:   0,
+		ModelCostCredits: 0.125,
+		CreatedAt:        time.Now(),
+	})
+	if adminLog.ChargedCredits != 0 {
+		t.Fatalf("chargedCredits = %v, want 0", adminLog.ChargedCredits)
+	}
+	if adminLog.ModelCostCredits != 0.125 {
+		t.Fatalf("modelCostCredits = %v, want 0.125", adminLog.ModelCostCredits)
+	}
+}
+
+func TestToPublicLogExposesChargeButNotModelCost(t *testing.T) {
+	payload, err := json.Marshal(ToPublicLog(UsageLog{
+		ChargedCredits: 1, ModelCostCredits: 0.5, CreatedAt: time.Now(),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(payload)
+	if !strings.Contains(body, `"chargedCredits":1`) {
+		t.Fatalf("public usage log omitted user charge: %s", body)
+	}
+	if strings.Contains(body, "modelCostCredits") {
+		t.Fatalf("public usage log exposed internal billing data: %s", body)
+	}
+}
+
+func TestFinishLogSnapshotsChargeAndModelCost(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+
+	mock.ExpectExec(`UPDATE api_access_logs SET status = \?, image_count = \?, error_message = \?, charged_credits = CASE`).
+		WithArgs("success", 1, nil, "success", "success", "log-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	if err := NewRepository(database.Wrap(rawDB)).FinishLog(context.Background(), "log-1", "success", 1, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
 	}
 }

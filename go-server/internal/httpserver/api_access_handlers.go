@@ -361,7 +361,7 @@ func (r *Router) adminAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	items, total, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).ListLogs(ctx, apiaccess.ListLogsInput{
+	items, total, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).ListAdminLogs(ctx, apiaccess.ListLogsInput{
 		UserID:   req.URL.Query().Get("userId"),
 		APIKeyID: req.URL.Query().Get("apiKeyId"),
 		Status:   req.URL.Query().Get("status"),

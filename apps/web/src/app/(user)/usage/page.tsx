@@ -136,6 +136,7 @@ export default function UsagePage() {
     { key: 'prompt', label: '提示词' },
     { key: 'spec', label: '规格' },
     { key: 'quantity', label: '请求 / 输出' },
+    { key: 'chargedCredits', label: '扣费金额' },
     { key: 'durationSeconds', label: '响应时间' },
     { key: 'createdAt', label: '请求时间' },
   ];
@@ -213,6 +214,7 @@ export default function UsagePage() {
                 </td>
                 <td className="px-4 py-3 mono">{log.size || '-'}{log.quality ? ` · ${log.quality}` : ''}</td>
                 <td className="px-4 py-3 mono">{Number(log.quantity || 0)} / {Number(log.imageCount || 0)}</td>
+                <td className="px-4 py-3 mono text-[#047857]">{Number(log.chargedCredits || 0).toFixed(4)}</td>
                 <td className="px-4 py-3"><span className={`status-pill mono min-w-[58px] justify-center ${duration.className}`}>{duration.label}</span></td>
                 <td className="px-4 py-3 mono text-zinc-500">{formatDate(log.createdAt)}</td>
               </tr>
@@ -239,6 +241,7 @@ export default function UsagePage() {
                   <div><dt className="text-zinc-400">API Key</dt><dd className="mt-0.5 truncate">{log.keyName || log.keyPrefix || '-'}</dd></div>
                   <div><dt className="text-zinc-400">规格</dt><dd className="mono mt-0.5">{log.size || '-'} · {log.quality || '-'}</dd></div>
                   <div><dt className="text-zinc-400">请求 / 输出</dt><dd className="mono mt-0.5">{Number(log.quantity || 0)} / {Number(log.imageCount || 0)}</dd></div>
+                  <div><dt className="text-zinc-400">扣费金额</dt><dd className="mono mt-0.5 text-[#047857]">{Number(log.chargedCredits || 0).toFixed(4)}</dd></div>
                   <div><dt className="text-zinc-400">响应时间</dt><dd className="mt-1"><span className={`status-pill mono min-w-[58px] justify-center ${duration.className}`}>{duration.label}</span></dd></div>
                   <div><dt className="text-zinc-400">时间</dt><dd className="mono mt-0.5">{formatDate(log.createdAt)}</dd></div>
                 </dl>

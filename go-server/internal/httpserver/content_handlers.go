@@ -10,6 +10,11 @@ import (
 	"aipi-go/internal/content"
 )
 
+type announcementMutationInput struct {
+	content.Announcement
+	SendEmail bool `json:"sendEmail"`
+}
+
 func (r *Router) publicAnnouncements(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
 		writeMethodNotAllowed(w)
@@ -57,13 +62,18 @@ func (r *Router) announcements(w http.ResponseWriter, req *http.Request) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": items})
 	case http.MethodPost:
-		var input content.Announcement
-		if err := decodeCompatJSON(req, &input); err != nil {
+		var requestInput announcementMutationInput
+		if err := decodeCompatJSON(req, &requestInput); err != nil {
 			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
 			return
 		}
+		input := requestInput.Announcement
 		if err := normalizeAnnouncementInput(&input); err != nil {
 			writeError(w, err)
+			return
+		}
+		if requestInput.SendEmail && input.Status != "active" {
+			writeError(w, newAppError(http.StatusBadRequest, "停用状态的公告不能同步发送邮件"))
 			return
 		}
 		input.ID = defaultString(strings.TrimSpace(input.ID), newID())
@@ -72,7 +82,11 @@ func (r *Router) announcements(w http.ResponseWriter, req *http.Request) {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusCreated, map[string]any{"data": item})
+		response := map[string]any{"data": item}
+		if requestInput.SendEmail {
+			response["mailDelivery"] = r.sendAnnouncementMail(req.Context(), *item)
+		}
+		writeJSON(w, http.StatusCreated, response)
 	default:
 		writeMethodNotAllowed(w)
 	}
@@ -98,13 +112,18 @@ func (r *Router) announcementByID(w http.ResponseWriter, req *http.Request) {
 			writeError(w, err)
 			return
 		}
-		var input content.Announcement
-		if err := decodeCompatJSON(req, &input); err != nil {
+		var requestInput announcementMutationInput
+		if err := decodeCompatJSON(req, &requestInput); err != nil {
 			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
 			return
 		}
+		input := requestInput.Announcement
 		if err := normalizeAnnouncementInput(&input); err != nil {
 			writeError(w, err)
+			return
+		}
+		if requestInput.SendEmail && input.Status != "active" {
+			writeError(w, newAppError(http.StatusBadRequest, "停用状态的公告不能同步发送邮件"))
 			return
 		}
 		input.ID = id
@@ -113,7 +132,11 @@ func (r *Router) announcementByID(w http.ResponseWriter, req *http.Request) {
 			writeError(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": item})
+		response := map[string]any{"data": item}
+		if requestInput.SendEmail {
+			response["mailDelivery"] = r.sendAnnouncementMail(req.Context(), *item)
+		}
+		writeJSON(w, http.StatusOK, response)
 	case http.MethodDelete:
 		if _, err := r.requireAdmin(req); err != nil {
 			writeError(w, err)
@@ -131,6 +154,38 @@ func (r *Router) announcementByID(w http.ResponseWriter, req *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": true}})
 	default:
 		writeMethodNotAllowed(w)
+	}
+}
+
+func (r *Router) sendAnnouncementMail(parent context.Context, item content.Announcement) mailBroadcastResult {
+	input := announcementMailBroadcastInput(item)
+	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	defer cancel()
+	result, err := r.sendMailBroadcast(ctx, input)
+	if err != nil {
+		return mailBroadcastResult{
+			Accepted: false,
+			Failures: []map[string]string{},
+			Subject:  item.Title,
+			Message:  err.Error(),
+		}
+	}
+	return result
+}
+
+func announcementMailBroadcastInput(item content.Announcement) mailBroadcastInput {
+	targetType := "all"
+	if item.TargetType == "users" {
+		targetType = "specific"
+	}
+	return mailBroadcastInput{
+		Subject:    item.Title,
+		Content:    item.Content,
+		ActionText: "查看公告",
+		ActionPath: "/dashboard",
+		TargetType: targetType,
+		UserIDs:    item.UserIDs,
+		Category:   "announcement",
 	}
 }
 

@@ -82,27 +82,29 @@ type AccessKey struct {
 }
 
 type UsageLog struct {
-	ID              string
-	UserID          string
-	UserEmail       *string
-	APIKeyID        string
-	KeyName         *string
-	KeyPrefix       *string
-	TaskID          *string
-	Endpoint        string
-	Model           string
-	Prompt          string
-	Size            string
-	Quality         string
-	Quantity        int
-	ImageCount      int
-	ResponseFormat  string
-	RequestParams   map[string]any
-	Status          string
-	ErrorMessage    *string
-	DurationSeconds float64
-	CreatedAt       time.Time
-	FinishedAt      *time.Time
+	ID               string
+	UserID           string
+	UserEmail        *string
+	APIKeyID         string
+	KeyName          *string
+	KeyPrefix        *string
+	TaskID           *string
+	Endpoint         string
+	Model            string
+	Prompt           string
+	Size             string
+	Quality          string
+	Quantity         int
+	ImageCount       int
+	ResponseFormat   string
+	RequestParams    map[string]any
+	Status           string
+	ErrorMessage     *string
+	ChargedCredits   float64
+	ModelCostCredits float64
+	DurationSeconds  float64
+	CreatedAt        time.Time
+	FinishedAt       *time.Time
 }
 
 type PublicAccessKey struct {
@@ -150,9 +152,15 @@ type PublicUsageLog struct {
 	ResponseParams  map[string]any `json:"responseParameters,omitempty"`
 	Status          string         `json:"status"`
 	ErrorMessage    *string        `json:"errorMessage,omitempty"`
+	ChargedCredits  float64        `json:"chargedCredits"`
 	DurationSeconds float64        `json:"durationSeconds"`
 	CreatedAt       string         `json:"createdAt"`
 	FinishedAt      *string        `json:"finishedAt"`
+}
+
+type AdminPublicUsageLog struct {
+	PublicUsageLog
+	ModelCostCredits float64 `json:"modelCostCredits"`
 }
 
 type ListLogsInput struct {
@@ -309,9 +317,17 @@ func ToPublicLog(log UsageLog) PublicUsageLog {
 		ResponseParams:  usageLogResponseParams(log),
 		Status:          log.Status,
 		ErrorMessage:    log.ErrorMessage,
+		ChargedCredits:  log.ChargedCredits,
 		DurationSeconds: log.DurationSeconds,
 		CreatedAt:       log.CreatedAt.Format(time.RFC3339),
 		FinishedAt:      formatTime(log.FinishedAt),
+	}
+}
+
+func ToAdminPublicLog(log UsageLog) AdminPublicUsageLog {
+	return AdminPublicUsageLog{
+		PublicUsageLog:   ToPublicLog(log),
+		ModelCostCredits: log.ModelCostCredits,
 	}
 }
 

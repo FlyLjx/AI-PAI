@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -13,6 +14,28 @@ import (
 )
 
 const upstreamStabilityEndpoint = "https://free-api.yccc.me/health/stability"
+
+type mailBroadcastInput struct {
+	Subject    string   `json:"subject"`
+	Content    string   `json:"content"`
+	ActionText string   `json:"actionText"`
+	ActionURL  string   `json:"actionUrl"`
+	Target     string   `json:"target"`
+	TargetType string   `json:"targetType"`
+	UserIDs    []string `json:"userIds"`
+	Category   string   `json:"-"`
+	ActionPath string   `json:"-"`
+}
+
+type mailBroadcastResult struct {
+	Accepted bool                `json:"accepted"`
+	Total    int                 `json:"total"`
+	Success  int                 `json:"success"`
+	Failed   int                 `json:"failed"`
+	Failures []map[string]string `json:"failures"`
+	Subject  string              `json:"subject"`
+	Message  string              `json:"message"`
+}
 
 func (r *Router) upstreamStability(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
@@ -146,82 +169,141 @@ func (r *Router) mailBroadcast(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	var input struct {
-		Subject    string   `json:"subject"`
-		Content    string   `json:"content"`
-		ActionText string   `json:"actionText"`
-		ActionURL  string   `json:"actionUrl"`
-		Target     string   `json:"target"`
-		TargetType string   `json:"targetType"`
-		UserIDs    []string `json:"userIds"`
-	}
+	var input mailBroadcastInput
 	if err := decodeCompatJSON(req, &input); err != nil {
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-		return
-	}
-	input.Subject = strings.TrimSpace(input.Subject)
-	input.Content = strings.TrimSpace(input.Content)
-	if input.Subject == "" || input.Content == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "请填写邮件标题和正文"))
-		return
-	}
-	targetType := strings.TrimSpace(input.TargetType)
-	if targetType == "" {
-		targetType = strings.TrimSpace(input.Target)
-	}
-	if targetType == "" {
-		targetType = "all"
-	}
-	if targetType != "all" && targetType != "active" && targetType != "specific" {
-		writeError(w, newAppError(http.StatusBadRequest, "收件范围不正确"))
-		return
-	}
-	if targetType == "specific" && len(input.UserIDs) == 0 {
-		writeError(w, newAppError(http.StatusBadRequest, "请选择收件用户"))
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
 	defer cancel()
-	settingValues, err := settings.NewRepository(r.db).Get(ctx)
+	result, err := r.sendMailBroadcast(ctx, input)
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
+}
+
+func (r *Router) sendMailBroadcast(ctx context.Context, input mailBroadcastInput) (mailBroadcastResult, error) {
+	input, err := normalizeMailBroadcastInput(input)
+	if err != nil {
+		return mailBroadcastResult{}, err
+	}
+	settingValues, err := settings.NewRepository(r.db).Get(ctx)
+	if err != nil {
+		return mailBroadcastResult{}, err
+	}
+	if input.ActionURL == "" && input.ActionPath != "" {
+		input.ActionURL = notificationActionURL(anyString(settingValues["frontendUrl"]), input.ActionPath)
+	}
+	if err := validateMailAction(input.ActionText, input.ActionURL); err != nil {
+		return mailBroadcastResult{}, err
+	}
+	category := defaultString(strings.TrimSpace(input.Category), "broadcast")
+	if err := validateMailAudience(category, input.Content, []mailAction{{Text: input.ActionText, URL: input.ActionURL}}); err != nil {
+		return mailBroadcastResult{}, err
 	}
 	smtpConfig := smtpSettingsFromMap(settingValues)
 	if err := smtpConfig.validate(); err != nil {
-		writeError(w, err)
-		return
+		return mailBroadcastResult{}, err
 	}
-	recipients, err := r.mailRecipients(ctx, targetType, input.UserIDs)
+	recipients, err := r.mailRecipients(ctx, input.TargetType, input.UserIDs)
 	if err != nil {
-		writeError(w, err)
-		return
+		return mailBroadcastResult{}, err
 	}
 	if len(recipients) == 0 {
-		writeError(w, newAppError(http.StatusBadRequest, "没有可发送的收件邮箱"))
-		return
+		return mailBroadcastResult{}, newAppError(http.StatusBadRequest, "没有可发送的收件邮箱")
 	}
 
 	success := 0
 	failures := []map[string]string{}
 	for _, email := range recipients {
-		if err := r.deliverMail(ctx, "broadcast", smtpConfig, email, input.Subject, input.Content, mailAction{Text: input.ActionText, URL: input.ActionURL}); err != nil {
+		if err := r.deliverMail(ctx, category, smtpConfig, email, input.Subject, input.Content, mailAction{Text: input.ActionText, URL: input.ActionURL}); err != nil {
 			failures = append(failures, formatMailFailure(email, err))
 			continue
 		}
 		success++
 	}
 	failed := len(failures)
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-		"accepted": true,
-		"total":    len(recipients),
-		"success":  success,
-		"failed":   failed,
-		"failures": failures,
-		"subject":  input.Subject,
-		"message":  smtpSummary(len(recipients), success, failed),
-	}})
+	return mailBroadcastResult{
+		Accepted: true,
+		Total:    len(recipients),
+		Success:  success,
+		Failed:   failed,
+		Failures: failures,
+		Subject:  input.Subject,
+		Message:  smtpSummary(len(recipients), success, failed),
+	}, nil
+}
+
+func normalizeMailBroadcastInput(input mailBroadcastInput) (mailBroadcastInput, error) {
+	input.Subject = strings.TrimSpace(input.Subject)
+	input.Content = strings.TrimSpace(input.Content)
+	input.ActionText = strings.TrimSpace(input.ActionText)
+	input.ActionURL = strings.TrimSpace(input.ActionURL)
+	input.ActionPath = strings.TrimSpace(input.ActionPath)
+	input.Category = strings.TrimSpace(input.Category)
+	if input.Subject == "" || input.Content == "" {
+		return input, newAppError(http.StatusBadRequest, "请填写邮件标题和正文")
+	}
+	if len([]rune(input.Subject)) > 255 {
+		return input, newAppError(http.StatusBadRequest, "邮件标题不能超过 255 个字符")
+	}
+	if len([]rune(input.Content)) > 50000 {
+		return input, newAppError(http.StatusBadRequest, "邮件正文不能超过 50000 个字符")
+	}
+	input.TargetType = strings.TrimSpace(input.TargetType)
+	if input.TargetType == "" {
+		input.TargetType = strings.TrimSpace(input.Target)
+	}
+	if input.TargetType == "" {
+		input.TargetType = "all"
+	}
+	if input.TargetType != "all" && input.TargetType != "active" && input.TargetType != "specific" {
+		return input, newAppError(http.StatusBadRequest, "收件范围不正确")
+	}
+	seen := map[string]bool{}
+	userIDs := make([]string, 0, len(input.UserIDs))
+	for _, userID := range input.UserIDs {
+		userID = strings.TrimSpace(userID)
+		if userID == "" || seen[userID] {
+			continue
+		}
+		seen[userID] = true
+		userIDs = append(userIDs, userID)
+	}
+	input.UserIDs = userIDs
+	if input.TargetType == "specific" && len(input.UserIDs) == 0 {
+		return input, newAppError(http.StatusBadRequest, "请选择收件用户")
+	}
+	if input.TargetType != "specific" {
+		input.UserIDs = []string{}
+	}
+	if input.ActionPath == "" {
+		if err := validateMailAction(input.ActionText, input.ActionURL); err != nil {
+			return input, err
+		}
+	} else if input.ActionText == "" {
+		return input, newAppError(http.StatusBadRequest, "请填写邮件按钮文字")
+	}
+	return input, nil
+}
+
+func validateMailAction(actionText string, actionURL string) error {
+	actionText = strings.TrimSpace(actionText)
+	actionURL = strings.TrimSpace(actionURL)
+	if actionText == "" && actionURL == "" {
+		return nil
+	}
+	if actionText == "" || actionURL == "" {
+		return newAppError(http.StatusBadRequest, "邮件按钮文字和链接需要同时填写")
+	}
+	parsed, err := url.ParseRequestURI(actionURL)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return newAppError(http.StatusBadRequest, "邮件按钮链接必须是完整的 HTTP 或 HTTPS 地址")
+	}
+	return nil
 }
 
 func (r *Router) mailRecipients(ctx context.Context, targetType string, selectedIDs []string) ([]string, error) {
@@ -229,6 +311,10 @@ func (r *Router) mailRecipients(ctx context.Context, targetType string, selected
 	if err != nil {
 		return nil, err
 	}
+	return selectMailRecipients(items, targetType, selectedIDs), nil
+}
+
+func selectMailRecipients(items []users.User, targetType string, selectedIDs []string) []string {
 	selected := map[string]bool{}
 	for _, id := range selectedIDs {
 		id = strings.TrimSpace(id)
@@ -239,6 +325,9 @@ func (r *Router) mailRecipients(ctx context.Context, targetType string, selected
 	seen := map[string]bool{}
 	recipients := []string{}
 	for _, user := range items {
+		if user.Role != "user" {
+			continue
+		}
 		email := strings.TrimSpace(user.Email)
 		if email == "" {
 			continue
@@ -260,7 +349,7 @@ func (r *Router) mailRecipients(ctx context.Context, targetType string, selected
 		seen[key] = true
 		recipients = append(recipients, email)
 	}
-	return recipients, nil
+	return recipients
 }
 
 func anyString(value any) string {

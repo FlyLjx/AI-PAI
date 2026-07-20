@@ -3,22 +3,35 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import {
   CalendarClock,
+  Check,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Clock3,
   ExternalLink,
+  Link2,
   Loader2,
   Mail,
+  MailPlus,
   RefreshCw,
   Search,
   Send,
+  UserCheck,
+  Users,
+  X,
   XCircle,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import { formatDate } from '@/lib/common/utils';
-import { portalApi, type MailDeliveryLog, type MailDeliverySummary } from '@/lib/admin-api';
+import {
+  portalApi,
+  type MailBroadcastInput,
+  type MailDeliveryLog,
+  type MailDeliverySummary,
+  type PortalUser,
+} from '@/lib/admin-api';
 
 const PAGE_SIZE = 30;
 
@@ -39,11 +52,21 @@ const CATEGORY_OPTIONS = [
   { value: 'password_reset', label: '密码重置' },
   { value: 'balance_reminder', label: '余额提醒' },
   { value: 'subscription_expiry', label: '订阅到期' },
+  { value: 'announcement', label: '公告邮件' },
   { value: 'broadcast', label: '群发邮件' },
   { value: 'smtp_test', label: 'SMTP 测试' },
 ];
 
 const emptySummary: MailDeliverySummary = { total: 0, sent: 0, failed: 0, sending: 0, today: 0 };
+
+const emptyBroadcast: MailBroadcastInput = {
+  subject: '',
+  content: '',
+  actionText: '',
+  actionUrl: '',
+  targetType: 'active',
+  userIds: [],
+};
 
 function statusView(status: string) {
   if (status === 'sent') return { label: '成功', icon: CheckCircle2, className: 'border-emerald-200 bg-emerald-50 text-emerald-700' };
@@ -67,6 +90,12 @@ export default function AdminMailLogsPage() {
   const [selectedId, setSelectedId] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [users, setUsers] = useState<PortalUser[]>([]);
+  const [broadcast, setBroadcast] = useState<MailBroadcastInput>(emptyBroadcast);
+  const [userSearch, setUserSearch] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -98,11 +127,82 @@ export default function AdminMailLogsPage() {
 
   const selected = useMemo(() => items.find((item) => item.id === selectedId) || null, [items, selectedId]);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const visibleUsers = useMemo(() => {
+    const query = userSearch.trim().toLowerCase();
+    return users.filter((user) => !query || `${user.email} ${user.id}`.toLowerCase().includes(query));
+  }, [userSearch, users]);
+  const recipientCount = broadcast.targetType === 'specific'
+    ? broadcast.userIds.length
+    : broadcast.targetType === 'active'
+      ? users.filter((user) => user.status === 'active').length
+      : users.length;
 
   const submitSearch = (event: FormEvent) => {
     event.preventDefault();
     setPage(1);
     setKeyword(searchInput.trim());
+  };
+
+  const openComposer = async () => {
+    setBroadcast({ ...emptyBroadcast, userIds: [] });
+    setUserSearch('');
+    setComposerOpen(true);
+    if (users.length > 0) return;
+    setUsersLoading(true);
+    try {
+      const response = await portalApi.users();
+      setUsers((response.data || []).filter((user) => user.role === 'user'));
+    } catch (loadError) {
+      toast.error(loadError instanceof Error ? loadError.message : '用户列表加载失败');
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  const updateBroadcast = <K extends keyof MailBroadcastInput>(key: K, value: MailBroadcastInput[K]) => {
+    setBroadcast((current) => ({ ...current, [key]: value }));
+  };
+
+  const toggleRecipient = (userId: string) => {
+    setBroadcast((current) => ({
+      ...current,
+      userIds: current.userIds.includes(userId)
+        ? current.userIds.filter((id) => id !== userId)
+        : [...current.userIds, userId],
+    }));
+  };
+
+  const sendBroadcast = async (event: FormEvent) => {
+    event.preventDefault();
+    if (broadcast.targetType === 'specific' && broadcast.userIds.length === 0) {
+      toast.error('请选择至少一个收件用户');
+      return;
+    }
+    if (Boolean(broadcast.actionText?.trim()) !== Boolean(broadcast.actionUrl?.trim())) {
+      toast.error('邮件按钮文字和链接需要同时填写');
+      return;
+    }
+    setSending(true);
+    try {
+      const response = await portalApi.sendMailBroadcast({
+        ...broadcast,
+        subject: broadcast.subject.trim(),
+        content: broadcast.content.trim(),
+        actionText: broadcast.actionText?.trim(),
+        actionUrl: broadcast.actionUrl?.trim(),
+        userIds: broadcast.targetType === 'specific' ? broadcast.userIds : [],
+      });
+      const result = response.data;
+      if (result.failed > 0) toast.warning(`邮件成功 ${result.success} 封，失败 ${result.failed} 封`);
+      else toast.success(`已发送 ${result.success} 封邮件`);
+      setComposerOpen(false);
+      setPage(1);
+      await load();
+    } catch (sendError) {
+      toast.error(sendError instanceof Error ? sendError.message : '邮件发送失败');
+    } finally {
+      setSending(false);
+    }
   };
 
   const metrics = [
@@ -118,6 +218,7 @@ export default function AdminMailLogsPage() {
         <button type="button" onClick={() => void load()} disabled={loading} title="刷新邮件记录" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50">
           <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
         </button>
+        <button type="button" onClick={() => void openComposer()} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#047857] px-3 text-xs font-semibold text-white hover:bg-[#036B4F]"><MailPlus className="h-4 w-4" />发送邮件</button>
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -214,6 +315,56 @@ export default function AdminMailLogsPage() {
           </div>
         )}
       </section>
+
+      {composerOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 sm:grid sm:place-items-center">
+          <form onSubmit={sendBroadcast} className="mx-auto w-full max-w-3xl overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5">
+              <div><h2 className="flex items-center gap-2 text-sm font-semibold"><MailPlus className="h-4 w-4 text-[#047857]" />发送邮件</h2><p className="mt-0.5 text-[11px] text-zinc-500">邮件会使用系统设置中的 SMTP 服务。</p></div>
+              <button type="button" onClick={() => setComposerOpen(false)} disabled={sending} title="关闭" className="rounded p-1 text-zinc-500 hover:bg-zinc-100 disabled:opacity-40"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="space-y-4 p-5">
+              <section>
+                <span className="mb-2 block text-[11px] font-semibold text-zinc-500">收件范围</span>
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {([
+                    { value: 'active', label: '启用用户', note: '仅账户状态正常', icon: UserCheck },
+                    { value: 'all', label: '全部用户', note: '包含停用账户', icon: Users },
+                    { value: 'specific', label: '指定用户', note: '从用户列表选择', icon: CheckCircle2 },
+                  ] as const).map((option) => {
+                    const Icon = option.icon;
+                    const active = broadcast.targetType === option.value;
+                    return <button key={option.value} type="button" onClick={() => updateBroadcast('targetType', option.value)} className={`flex items-center gap-2.5 rounded-md border px-3 py-2.5 text-left ${active ? 'border-emerald-300 bg-emerald-50 text-emerald-800' : 'border-[#DCE4DF] text-zinc-600 hover:bg-[#FAFBFA]'}`}><span className="grid h-7 w-7 shrink-0 place-items-center rounded bg-white"><Icon className="h-3.5 w-3.5" /></span><span><strong className="block text-[11px]">{option.label}</strong><small className="text-[9px] opacity-70">{option.note}</small></span></button>;
+                  })}
+                </div>
+                <div className="mt-2 text-right text-[10px] text-zinc-400">预计收件人 {recipientCount} 位</div>
+              </section>
+
+              {broadcast.targetType === 'specific' && (
+                <section className="overflow-hidden rounded-md border border-[#DCE4DF]">
+                  <label className="relative block border-b border-[#EDF0EE] bg-[#FAFBFA] p-2"><Search className="absolute left-4 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" /><input value={userSearch} onChange={(event) => setUserSearch(event.target.value)} placeholder="搜索用户邮箱或 ID" className="h-8 w-full rounded-md border border-[#DCE4DF] bg-white pl-8 pr-3 text-[11px] outline-none focus:border-[#12B76A]" /></label>
+                  <div className="flex items-center justify-between border-b border-[#EDF0EE] px-3 py-2 text-[10px] text-zinc-400"><span>已选择 {broadcast.userIds.length} 位用户</span>{broadcast.userIds.length > 0 && <button type="button" onClick={() => updateBroadcast('userIds', [])} className="font-semibold text-[#047857]">清空选择</button>}</div>
+                  <div className="max-h-44 overflow-y-auto p-2">
+                    {usersLoading ? <div className="grid h-24 place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[#12B76A]" /></div> : visibleUsers.map((user) => {
+                      const selected = broadcast.userIds.includes(user.id);
+                      return <button key={user.id} type="button" onClick={() => toggleRecipient(user.id)} className={`grid w-full grid-cols-[24px_minmax(0,1fr)_auto] items-center gap-2 rounded px-2 py-2 text-left hover:bg-[#F6F8F6] ${selected ? 'bg-emerald-50' : ''}`}><span className={`grid h-5 w-5 place-items-center rounded border ${selected ? 'border-emerald-500 bg-emerald-600 text-white' : 'border-[#CBD5CF] bg-white text-transparent'}`}><Check className="h-3 w-3" /></span><span className="min-w-0"><strong className="block truncate text-[11px] font-medium">{user.email}</strong><small className="block truncate font-mono text-[9px] text-zinc-400">{user.id}</small></span><span className={`rounded border px-1.5 py-0.5 text-[9px] ${user.status === 'active' ? 'border-emerald-200 text-emerald-700' : 'border-zinc-200 text-zinc-500'}`}>{user.status === 'active' ? '启用' : '停用'}</span></button>;
+                    })}
+                    {!usersLoading && !visibleUsers.length && <p className="py-8 text-center text-[11px] text-zinc-400">没有匹配的用户</p>}
+                  </div>
+                </section>
+              )}
+
+              <label className="block"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">邮件标题</span><input required maxLength={255} value={broadcast.subject} onChange={(event) => updateBroadcast('subject', event.target.value)} placeholder="输入邮件标题" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
+              <label className="block"><span className="mb-1 flex items-center justify-between text-[11px] font-semibold text-zinc-500"><span>邮件正文</span><small className="font-normal text-zinc-400">支持换行</small></span><textarea required maxLength={50000} rows={7} value={broadcast.content} onChange={(event) => updateBroadcast('content', event.target.value)} placeholder="输入邮件正文" className="w-full resize-y rounded-md border border-[#DCE4DF] px-3 py-2 text-xs leading-6 outline-none focus:border-[#12B76A]" /></label>
+              <section className="grid grid-cols-1 gap-3 border-t border-[#EDF0EE] pt-4 sm:grid-cols-[180px_minmax(0,1fr)]">
+                <label><span className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold text-zinc-500"><Link2 className="h-3.5 w-3.5" />按钮文字</span><input value={broadcast.actionText} onChange={(event) => updateBroadcast('actionText', event.target.value)} placeholder="例如：查看详情" className="h-9 w-full rounded-md border border-[#DCE4DF] px-3 text-xs outline-none focus:border-[#12B76A]" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">按钮链接</span><input type="url" value={broadcast.actionUrl} onChange={(event) => updateBroadcast('actionUrl', event.target.value)} placeholder="https://ai.yccc.me/dashboard" className="h-9 w-full rounded-md border border-[#DCE4DF] px-3 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
+              </section>
+            </div>
+            <div className="flex items-center justify-between gap-3 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><span className="text-[10px] text-zinc-400">发送结果将写入邮件记录</span><div className="flex gap-2"><button type="button" onClick={() => setComposerOpen(false)} disabled={sending} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold disabled:opacity-50">取消</button><button type="submit" disabled={sending || usersLoading || recipientCount === 0} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}{sending ? '发送中' : '确认发送'}</button></div></div>
+          </form>
+        </div>
+      )}
     </div>
   );
 }

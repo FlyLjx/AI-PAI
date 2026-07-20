@@ -72,6 +72,42 @@ func TestFinishSuccessWithBillingUsesReservedTaskCost(t *testing.T) {
 	}
 }
 
+func TestFinishSuccessWithBillingRecordsModelCostWhenUserChargeIsZero(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+	service := &Service{db: database.Wrap(rawDB)}
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT user_id, status, cost_credits FROM generation_tasks WHERE id = \? FOR UPDATE`).
+		WithArgs("task-free").
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "status", "cost_credits"}).AddRow("user-1", "processing", 0.0))
+	mock.ExpectQuery(`SELECT credits FROM users WHERE id = \? FOR UPDATE`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"credits"}).AddRow(0.0))
+	mock.ExpectExec(`UPDATE generation_tasks SET status = 'success'`).
+		WithArgs(1, 0.0, 0.125, 0.0, 2.0, `{"data":[]}`, "task-free").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err = service.finishSuccessWithBilling(context.Background(), BillingSuccessInput{
+		TaskID:           "task-free",
+		Quantity:         1,
+		ModelCostCredits: 0.125,
+		DurationSeconds:  2,
+		Remark:           "API 调用：免费模型",
+		Result:           map[string]any{"data": []any{}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFinishSuccessWithBillingIsIdempotentForSuccessfulTask(t *testing.T) {
 	rawDB, mock, err := sqlmock.New()
 	if err != nil {

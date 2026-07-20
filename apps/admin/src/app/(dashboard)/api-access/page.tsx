@@ -378,6 +378,7 @@ export default function AdminAPIAccessPage() {
             { key: 'endpoint', label: '接口' },
             { key: 'model', label: '模型' },
             { key: 'params', label: '参数' },
+            { key: 'billing', label: '扣费 / 成本' },
             { key: 'duration', label: '生图时间' },
             { key: 'status', label: '状态' },
             { key: 'error', label: '错误信息' },
@@ -399,6 +400,7 @@ export default function AdminAPIAccessPage() {
               <td className="max-w-[150px] truncate px-4 py-3 font-mono text-[11px]">{log.endpoint}</td>
               <td className="max-w-[160px] truncate px-4 py-3">{log.model || '-'}</td>
               <td className="px-4 py-3 text-[11px] text-zinc-500">{log.size || '-'} · {log.quality || '-'} · {log.imageCount || log.quantity || 0} 张</td>
+              <td className="whitespace-nowrap px-4 py-3"><span className="block font-mono text-[11px] text-blue-700">{Number(log.chargedCredits || 0).toFixed(4)}</span><small className="mt-0.5 block font-mono text-[9px] text-zinc-400">成本 {Number(log.modelCostCredits || 0).toFixed(4)}</small></td>
               <td className="px-4 py-3"><GenerationDurationBadge log={log} /></td>
               <td className="px-4 py-3"><StatusBadge status={status.badge} customLabel={status.label} /></td>
               <td className="max-w-[220px] truncate px-4 py-3 text-[11px] text-red-600" title={log.errorMessage || log.prompt || ''}>{log.errorMessage || '-'}</td>
@@ -410,6 +412,7 @@ export default function AdminAPIAccessPage() {
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{log.model || log.endpoint}</strong><small className="block truncate text-[10px] text-zinc-400">{log.userEmail || log.userId} · {log.keyName || log.keyPrefix || '-'}</small></div><StatusBadge status={status.badge} customLabel={status.label} /></div>
               <p className="mt-3 truncate rounded bg-[#F6F8F6] px-2 py-1.5 font-mono text-[11px]">{log.endpoint}</p>
               <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-400"><span>{log.size || '-'} · {log.imageCount || log.quantity || 0} 张</span><span>{formatDate(log.createdAt)}</span></div>
+              <div className="mt-2 flex items-center justify-between border-t border-[#EEF1EF] pt-2 text-[10px] text-zinc-400"><span>扣费 / 成本</span><span className="font-mono text-zinc-600">{Number(log.chargedCredits || 0).toFixed(4)} / {Number(log.modelCostCredits || 0).toFixed(4)}</span></div>
               <div className="mt-2 flex items-center justify-between border-t border-[#EEF1EF] pt-2 text-[10px] text-zinc-400"><span>生图时间</span><GenerationDurationBadge log={log} /></div>
               {log.errorMessage && <p className="mt-2 line-clamp-2 text-[11px] text-red-600">{log.errorMessage}</p>}
               <div className="mt-2 flex justify-end gap-1.5"><button type="button" onClick={() => openLogDetail(log)} className="inline-flex h-7 items-center gap-1 rounded border border-[#DCE4DF] bg-white px-2 text-[11px] font-semibold text-zinc-600"><Eye className="h-3.5 w-3.5" />调用详情</button>{canCancelTask(log) && <button type="button" onClick={() => setCancelCandidate(log)} disabled={cancelingTaskId === log.taskId} className="inline-flex h-7 items-center gap-1 rounded border border-red-200 bg-red-50 px-2 text-[11px] font-semibold text-red-700 disabled:opacity-40"><CircleStop className="h-3.5 w-3.5" />取消任务</button>}</div>

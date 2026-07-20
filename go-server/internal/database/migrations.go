@@ -121,6 +121,15 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "api_access_logs", "request_params", JSONTextType()+" NULL", "response_format"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "api_access_logs", "charged_credits", "NUMERIC(12,4) NOT NULL DEFAULT 0", "request_params"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "api_access_logs", "model_cost_credits", "NUMERIC(12,4) NOT NULL DEFAULT 0", "charged_credits"); err != nil {
+		return err
+	}
+	if err := backfillAPIAccessLogBilling(ctx, db); err != nil {
+		return err
+	}
 	if err := normalizeAPIAccessKeyConcurrencyDefaults(ctx, db); err != nil {
 		return err
 	}
@@ -169,6 +178,29 @@ func EnsureSchema(db *sql.DB) error {
 		}
 	}
 	return nil
+}
+
+func backfillAPIAccessLogBilling(ctx context.Context, db *sql.DB) error {
+	_, err := db.ExecContext(ctx, Rebind(`
+		UPDATE api_access_logs
+		SET charged_credits = COALESCE((
+				SELECT generation_tasks.cost_credits
+				FROM generation_tasks
+				WHERE generation_tasks.id = api_access_logs.task_id
+				LIMIT 1
+			), 0),
+			model_cost_credits = COALESCE((
+				SELECT generation_tasks.model_cost_credits
+				FROM generation_tasks
+				WHERE generation_tasks.id = api_access_logs.task_id
+				LIMIT 1
+			), 0)
+		WHERE api_access_logs.status IN ('success', 'succeeded')
+			AND api_access_logs.task_id IS NOT NULL
+			AND api_access_logs.charged_credits = 0
+			AND api_access_logs.model_cost_credits = 0
+	`))
+	return err
 }
 
 func backfillSubscriptionPlanQuotas(ctx context.Context, db *sql.DB) error {
@@ -792,6 +824,8 @@ func schemaBootstrapStatements() []string {
 				image_count INTEGER NOT NULL DEFAULT 0,
 				response_format VARCHAR(30) NOT NULL DEFAULT 'url',
 				request_params JSONB NULL,
+				charged_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
+				model_cost_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
 				status VARCHAR(16) NOT NULL DEFAULT 'queued',
 				error_message TEXT NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -925,6 +959,8 @@ func schemaBootstrapStatements() []string {
 			image_count INTEGER NOT NULL DEFAULT 0,
 			response_format VARCHAR(30) NOT NULL DEFAULT 'url',
 			request_params JSON NULL,
+			charged_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
+			model_cost_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
 			status VARCHAR(16) NOT NULL DEFAULT 'queued',
 			error_message TEXT NULL,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,

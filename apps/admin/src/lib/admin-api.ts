@@ -93,6 +93,8 @@ export type UsageLog = {
   responseFormat?: string;
   status: string;
   errorMessage?: string;
+  chargedCredits: number;
+  modelCostCredits: number;
   durationSeconds: number;
   createdAt: string;
   finishedAt?: string;
@@ -228,6 +230,25 @@ export type MailDeliveryLogPage = {
   summary: MailDeliverySummary;
 };
 
+export type MailBroadcastInput = {
+  subject: string;
+  content: string;
+  actionText?: string;
+  actionUrl?: string;
+  targetType: 'all' | 'active' | 'specific';
+  userIds: string[];
+};
+
+export type MailBroadcastResult = {
+  accepted: boolean;
+  total: number;
+  success: number;
+  failed: number;
+  failures: Array<{ email: string; message: string }>;
+  subject: string;
+  message: string;
+};
+
 export type Announcement = {
   id: string;
   title: string;
@@ -239,6 +260,10 @@ export type Announcement = {
   userIds: string[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type AnnouncementMutationInput = Omit<Announcement, 'id' | 'createdAt' | 'updatedAt'> & {
+  sendEmail?: boolean;
 };
 
 export type RequestMonitorRange = '1h' | '24h' | '7d' | '30d';
@@ -388,7 +413,11 @@ export type StabilitySnapshot = {
   series?: StabilitySeriesPoint[];
 };
 
-type Envelope<T> = { data: T; pagination?: { total: number; page: number; pageSize: number } };
+type Envelope<T> = {
+  data: T;
+  pagination?: { total: number; page: number; pageSize: number };
+  mailDelivery?: MailBroadcastResult;
+};
 
 export class APIError extends Error {
   constructor(message: string, public status: number) {
@@ -459,10 +488,11 @@ export const portalApi = {
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   adminUsage: (page = 1) => api<UsageLog[]>(`/api/admin/api-access/logs${query({ page, pageSize: 30 })}`),
   adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
+  sendMailBroadcast: (input: MailBroadcastInput) => api<MailBroadcastResult>('/api/admin/mail-broadcast', { method: 'POST', body: JSON.stringify(input) }),
   adminMailLogs: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; category?: string } = {}) => api<MailDeliveryLogPage>(`/api/admin/mail-logs${query(input)}`),
   announcements: () => api<Announcement[]>('/api/announcements'),
-  createAnnouncement: (input: Omit<Announcement, 'id' | 'createdAt' | 'updatedAt'>) => api<Announcement>('/api/announcements', { method: 'POST', body: JSON.stringify(input) }),
-  updateAnnouncement: (id: string, input: Omit<Announcement, 'id' | 'createdAt' | 'updatedAt'>) => api<Announcement>(`/api/announcements/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
+  createAnnouncement: (input: AnnouncementMutationInput) => api<Announcement>('/api/announcements', { method: 'POST', body: JSON.stringify(input) }),
+  updateAnnouncement: (id: string, input: AnnouncementMutationInput) => api<Announcement>(`/api/announcements/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAnnouncement: (id: string) => api(`/api/announcements/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   requestMonitor: (input: { range?: RequestMonitorRange; page?: number; pageSize?: number; keyword?: string; method?: string; status?: string } = {}) => api<RequestMonitorSnapshot>(`/api/admin/request-monitor${query(input)}`),
   adminInvites: (page = 1, pageSize = 30) => api<AdminInviteRecord[]>(`/api/invites${query({ page, pageSize })}`),
