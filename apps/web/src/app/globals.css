@@ -208,7 +208,7 @@ button { cursor: pointer; }
 .data-table tr:hover td { background: #fcfdfc; }
 .mono { font-family: 'IBM Plex Mono', monospace; }
 .truncate-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.status-pill { display: inline-flex; align-items: center; min-height: 22px; padding: 0 7px; border-radius: 999px; background: #f1f3f2; color: #59625d; font-size: 10px; font-weight: 750; }
+.status-pill { display: inline-flex; flex-shrink: 0; align-items: center; min-height: 22px; padding: 0 7px; border-radius: 999px; background: #f1f3f2; color: #59625d; font-size: 10px; font-weight: 750; white-space: nowrap; }
 .status-pill.success, .status-pill.active, .status-pill.paid { background: #eaf8ef; color: #087443; }
 .status-pill.failed, .status-pill.disabled { background: #fff0f0; color: #b42318; }
 .status-pill.pending, .status-pill.processing, .status-pill.queued { background: #fff7ed; color: #a14b08; }
