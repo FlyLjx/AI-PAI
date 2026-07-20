@@ -13,6 +13,7 @@ import {
   Server,
   TriangleAlert,
   Users,
+  Wallet,
 } from 'lucide-react';
 import {
   CartesianGrid,
@@ -72,6 +73,7 @@ type DashboardData = {
     runningTasks?: number;
     failedTasks?: number;
     successfulTasks?: number;
+    balanceConsumed?: number;
   };
   yesterday?: {
     users?: number;
@@ -81,8 +83,9 @@ type DashboardData = {
     runningTasks?: number;
     failedTasks?: number;
     successfulTasks?: number;
+    balanceConsumed?: number;
   };
-  users?: { total?: number; active?: number };
+  users?: { total?: number; active?: number; totalBalance?: number };
   orders?: { all?: number; paid?: number; pending?: number; failed?: number; closed?: number };
   revenue?: { totalPaidAmount?: number };
   taskStats?: {
@@ -231,6 +234,7 @@ export default function AdminDashboardPage() {
   const requestTrend = dayOverDayTrend(Number(data.today?.tasks || 0), Number(data.yesterday?.tasks || 0));
   const successRateTrend = dayOverDayTrend(todaySuccessRate, yesterdaySuccessRate);
   const customerTrend = dayOverDayTrend(Number(data.today?.users || 0), Number(data.yesterday?.users || 0));
+  const balanceConsumptionTrend = dayOverDayTrend(Number(data.today?.balanceConsumed || 0), Number(data.yesterday?.balanceConsumed || 0));
   const pendingCount = Number(data.pending?.runningTasks || 0) + Number(data.pending?.pendingOrders || 0);
   const recentOrders = data.recentOrders || [];
   const recentTasks = data.recentTasks || [];
@@ -334,8 +338,9 @@ export default function AdminDashboardPage() {
             </div>
           </section>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             <StatBlock title="今日实收" value={formatCNY(Number(data.today?.paidAmount || 0))} subtext={`累计实收 ${formatCNY(Number(data.revenue?.totalPaidAmount || 0))} · ${Number(data.orders?.paid || 0).toLocaleString('zh-CN')} 笔`} trend={revenueTrend} color="green" icon={CircleDollarSign} />
+            <StatBlock title="今日余额消耗" value={formatCNY(Number(data.today?.balanceConsumed || 0), 4)} subtext={`总余额 ${formatCNY(Number(data.users?.totalBalance || 0), 4)}`} trend={balanceConsumptionTrend} color="amber" icon={Wallet} />
             <StatBlock title="今日 API 请求" value={Number(data.today?.tasks || 0).toLocaleString('zh-CN')} subtext={`累计请求 ${Number(stats.total || 0).toLocaleString('zh-CN')} 次`} trend={requestTrend} color="cyan" icon={Activity} />
             <StatBlock title="今日请求成功率" value={todaySuccessRate === null ? '--' : `${Math.round(todaySuccessRate)}%`} subtext={`累计成功率 ${totalSuccessRate === null ? '--' : `${totalSuccessRate}%`} · 返回 ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张`} trend={successRateTrend} color={todaySuccessRate === null ? 'neutral' : todaySuccessRate >= 95 ? 'green' : 'amber'} icon={Cable} />
             <StatBlock title="今日新增客户" value={Number(data.today?.users || 0).toLocaleString('zh-CN')} subtext={`累计客户 ${Number(data.users?.total || 0).toLocaleString('zh-CN')} · 启用 ${Number(data.users?.active || 0).toLocaleString('zh-CN')}`} trend={customerTrend} color="neutral" icon={Users} />

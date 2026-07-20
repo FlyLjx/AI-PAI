@@ -49,6 +49,24 @@ type PageInput struct {
 	UserID   string
 }
 
+type dashboardBalanceMetrics struct {
+	TodayConsumed     float64
+	YesterdayConsumed float64
+	TotalBalance      float64
+}
+
+func (r *Repository) dashboardBalanceMetrics(ctx context.Context) (dashboardBalanceMetrics, error) {
+	var metrics dashboardBalanceMetrics
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COALESCE(SUM(CASE WHEN type='deduct' AND created_at >= CURDATE() THEN amount ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN type='deduct' AND created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE() THEN amount ELSE 0 END), 0),
+			(SELECT COALESCE(SUM(credits), 0) FROM users WHERE role <> 'admin')
+		FROM credit_logs
+	`).Scan(&metrics.TodayConsumed, &metrics.YesterdayConsumed, &metrics.TotalBalance)
+	return metrics, err
+}
+
 func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	result := map[string]any{}
 	totalUsers, err := r.count(ctx, `SELECT COUNT(*) FROM users`)
@@ -108,6 +126,10 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	}
 	var totalPaidAmount float64
 	if err := r.db.QueryRowContext(ctx, `SELECT COALESCE(SUM(amount),0) FROM recharge_orders WHERE status='paid'`).Scan(&totalPaidAmount); err != nil {
+		return nil, err
+	}
+	balanceMetrics, err := r.dashboardBalanceMetrics(ctx)
+	if err != nil {
 		return nil, err
 	}
 	var todayTasks, todayRunning, todayFailed, todaySuccess int
@@ -198,15 +220,15 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	result["today"] = map[string]any{
 		"users": todayUsers, "orders": todayOrders, "paidAmount": todayPaidAmount,
 		"tasks": todayTasks, "runningTasks": todayRunning, "failedTasks": todayFailed,
-		"successfulTasks": todaySuccess,
+		"successfulTasks": todaySuccess, "balanceConsumed": balanceMetrics.TodayConsumed,
 	}
 	result["yesterday"] = map[string]any{
 		"users": yesterdayUsers, "orders": yesterdayOrders, "paidAmount": yesterdayPaidAmount,
 		"tasks": yesterdayTasks, "runningTasks": yesterdayRunning, "failedTasks": yesterdayFailed,
-		"successfulTasks": yesterdaySuccess,
+		"successfulTasks": yesterdaySuccess, "balanceConsumed": balanceMetrics.YesterdayConsumed,
 	}
 	result["users"] = map[string]any{
-		"total": totalUsers, "active": activeUsers,
+		"total": totalUsers, "active": activeUsers, "totalBalance": balanceMetrics.TotalBalance,
 	}
 	result["orders"] = orderTotals
 	result["revenue"] = map[string]any{
