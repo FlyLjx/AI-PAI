@@ -67,7 +67,25 @@ function formatAnimatedValue(value: number, parts: AnimatedValueParts): string {
   return `${parts.prefix}${negative ? '-' : ''}${integerText}${decimalPart !== undefined ? `.${decimalPart}` : ''}${parts.suffix}`;
 }
 
-function AnimatedStatValue({ value }: { value: string | number }) {
+function useUpdatePulse(signature: string) {
+  const [pulseToken, setPulseToken] = useState(0);
+  const previousSignature = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (previousSignature.current === null) {
+      previousSignature.current = signature;
+      return;
+    }
+    if (previousSignature.current === signature) return;
+    previousSignature.current = signature;
+    const frame = window.requestAnimationFrame(() => setPulseToken((current) => current + 1));
+    return () => window.cancelAnimationFrame(frame);
+  }, [signature]);
+
+  return pulseToken;
+}
+
+function AnimatedStatValue({ value, pulseToken }: { value: string | number; pulseToken: number }) {
   const parts = useMemo(() => parseAnimatedValue(value), [value]);
   const [displayNumber, setDisplayNumber] = useState<number | null>(() => (parts ? 0 : null));
   const displayNumberRef = useRef<number | null>(parts ? 0 : null);
@@ -112,7 +130,11 @@ function AnimatedStatValue({ value }: { value: string | number }) {
     return () => window.cancelAnimationFrame(frame);
   }, [parts]);
 
-  return <>{parts && displayNumber !== null ? formatAnimatedValue(displayNumber, parts) : value}</>;
+  return (
+    <span key={pulseToken} className={pulseToken > 0 ? 'stat-value-jump' : undefined}>
+      {parts && displayNumber !== null ? formatAnimatedValue(displayNumber, parts) : value}
+    </span>
+  );
 }
 
 export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'neutral' }: StatBlockProps) {
@@ -147,9 +169,11 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
 
   const { iconBg, accentBar, hoverBorder } = getColorClasses();
   const TrendIcon = trend?.type === 'positive' ? ArrowUpRight : trend?.type === 'negative' ? ArrowDownRight : Minus;
+  const pulseToken = useUpdatePulse(`${String(value)}|${subtext || ''}|${trend?.value || ''}|${trend?.type || ''}`);
 
   return (
-    <div className={`group bg-white border border-[#DCE4DF] rounded-md overflow-hidden flex flex-col justify-between shadow-sm hover:shadow-md ${hoverBorder} transition-all duration-300 relative`}>
+    <div className={`stat-block-card group bg-white border border-[#DCE4DF] rounded-md overflow-hidden flex flex-col justify-between shadow-sm hover:shadow-md ${hoverBorder} transition-all duration-300 relative`}>
+      {pulseToken > 0 && <span key={pulseToken} className="stat-block-update-glow" aria-hidden="true" />}
       {/* Subtle top accent bar */}
       <div className={`h-[3px] w-full ${accentBar}`} />
 
@@ -166,8 +190,8 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
         </div>
 
         <div className="mt-3 flex items-baseline gap-2">
-          <span className="font-sans text-2xl font-bold tracking-tight text-[#17201B] leading-none tabular-nums" aria-label={String(value)}>
-            <AnimatedStatValue value={value} />
+          <span className="stat-block-value font-sans text-2xl font-bold tracking-tight text-[#17201B] leading-none tabular-nums" aria-label={String(value)}>
+            <AnimatedStatValue value={value} pulseToken={pulseToken} />
           </span>
         </div>
 
