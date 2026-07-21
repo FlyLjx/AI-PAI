@@ -5,6 +5,7 @@ import {
   ArrowUpCircle,
   CheckCircle2,
   CircleAlert,
+  CircleOff,
   Clock3,
   ExternalLink,
   GitCommitHorizontal,
@@ -19,13 +20,14 @@ import { portalApi, type SystemBuildVersion, type SystemUpdateInfo, type SystemU
 import { reloadForBuild } from '@/lib/build-version';
 
 const activeStatuses = new Set<SystemUpdateState['status']>([
-  'queued', 'checking', 'pulling', 'backing_up', 'updating', 'rolling_back',
+  'queued', 'waiting_idle', 'checking', 'pulling', 'backing_up', 'updating', 'rolling_back',
 ]);
 
 const statusContent: Record<SystemUpdateState['status'], { label: string; description: string; tone: string }> = {
   unconfigured: { label: '未配置', description: '服务器尚未启用手动更新 worker', tone: 'bg-zinc-100 text-zinc-600' },
   idle: { label: '就绪', description: '等待管理员检查并确认新版本', tone: 'bg-zinc-100 text-zinc-600' },
   queued: { label: '已提交', description: '更新请求已进入服务器队列', tone: 'bg-cyan-50 text-cyan-700' },
+  waiting_idle: { label: '等待空闲', description: '正在等待系统任务全部完成后再更新', tone: 'bg-blue-50 text-blue-700' },
   checking: { label: '校验版本', description: '正在核对 GitHub Actions 构建信息', tone: 'bg-cyan-50 text-cyan-700' },
   pulling: { label: '拉取镜像', description: '正在下载同版本的前台、后台和 API 镜像', tone: 'bg-cyan-50 text-cyan-700' },
   backing_up: { label: '准备更新', description: '旧版更新流程正在完成准备工作', tone: 'bg-amber-50 text-amber-700' },
@@ -71,6 +73,7 @@ export function SystemUpdatePanel() {
   const [checking, setChecking] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [confirmMode, setConfirmMode] = useState<'idle' | 'wait' | 'force'>('idle');
   const previousStatus = useRef<SystemUpdateState['status'] | null>(null);
   const hasLoaded = useRef(false);
 
@@ -114,12 +117,12 @@ export function SystemUpdatePanel() {
     previousStatus.current = status;
   }, [currentVersion, updateStatus]);
 
-  const startUpdate = async () => {
+  const startUpdate = async (force = false) => {
     setSubmitting(true);
     try {
-      const response = await portalApi.startSystemUpdate();
+      const response = await portalApi.startSystemUpdate(force);
       setInfo(response.data);
-      toast.success('更新请求已提交');
+      toast.success(force ? '强制更新请求已提交' : '更新请求已提交，将在任务空闲后执行');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '更新请求提交失败');
     } finally {
@@ -132,8 +135,19 @@ export function SystemUpdatePanel() {
   const updateButtonLabel = active || submitting
     ? '正在更新'
     : info?.updateAvailable
-      ? `更新到 ${info.latest.version}`
+      ? `空闲后更新到 ${info.latest.version}`
       : '已是最新版本';
+  const pendingTaskCount = Number(info?.pendingTaskCount ?? info?.state.pendingTaskCount ?? 0);
+  const waitingForIdle = state.status === 'waiting_idle';
+  const canStartNormalUpdate = Boolean(info?.canUpdate && !submitting && !active);
+  const canStartForceUpdate = Boolean(!submitting && ((info?.canUpdate && !active) || waitingForIdle));
+  const openConfirm = (mode: 'wait' | 'force') => {
+    setConfirmMode(mode);
+    setConfirmOpen(true);
+  };
+  const confirmDescription = confirmMode === 'force'
+    ? `将不等待当前 ${pendingTaskCount.toLocaleString('zh-CN')} 个运行中任务，直接更新 API、管理后台和客户前台。数据库容器保持不变，健康检查失败会恢复上一版本应用镜像。`
+    : `普通更新会先等待系统内排队、处理中任务全部完成；当前检测到 ${pendingTaskCount.toLocaleString('zh-CN')} 个运行中任务。任务清零后会自动更新 API、管理后台和客户前台。`;
 
   return (
     <>
@@ -160,17 +174,23 @@ export function SystemUpdatePanel() {
               <div className="flex min-w-0 items-start gap-3">
                 <span className={`mt-0.5 inline-flex min-h-6 shrink-0 items-center rounded-full px-2 text-[10px] font-bold ${stateMeta.tone}`}>{stateMeta.label}</span>
                 <span className="min-w-0">
-                  <strong className="block text-[11px] text-[#3F4943]">{info.checkError || stateMeta.description}</strong>
-                  <small className="mt-0.5 block truncate text-[10px] text-zinc-400">上次检查：{formatDate(info.checkedAt)}</small>
+                  <strong className="block text-[11px] text-[#3F4943]">{info.checkError || state.message || stateMeta.description}</strong>
+                  <small className="mt-0.5 block truncate text-[10px] text-zinc-400">上次检查：{formatDate(info.checkedAt)} · 当前任务：{pendingTaskCount.toLocaleString('zh-CN')} 个</small>
                 </span>
               </div>
-              <button type="button" onClick={() => setConfirmOpen(true)} disabled={!info.canUpdate || submitting || active} className="btn primary shrink-0">
-                {active || submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : info.updateAvailable ? <ArrowUpCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
-                {updateButtonLabel}
-              </button>
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <button type="button" onClick={() => openConfirm('wait')} disabled={!canStartNormalUpdate} className="btn primary shrink-0">
+                  {active || submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : info.updateAvailable ? <ArrowUpCircle className="h-4 w-4" /> : <CheckCircle2 className="h-4 w-4" />}
+                  {updateButtonLabel}
+                </button>
+                <button type="button" onClick={() => openConfirm('force')} disabled={!canStartForceUpdate} className="btn danger shrink-0" title="跳过任务等待，直接更新应用容器">
+                  {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CircleOff className="h-4 w-4" />}
+                  强制更新
+                </button>
+              </div>
             </div>
             {!info.configured && <div className="flex items-center gap-2 border-t border-amber-200 bg-amber-50 px-5 py-3 text-[11px] text-amber-800"><CircleAlert className="h-4 w-4 shrink-0" />宿主机更新服务尚未安装，版本检测可用，但更新按钮暂不可用。</div>}
-            {info.configured && info.updateAvailable && !active && <div className="flex items-center gap-2 border-t border-emerald-100 bg-emerald-50/70 px-5 py-3 text-[11px] text-emerald-800"><ShieldCheck className="h-4 w-4 shrink-0" />仅替换应用容器，不备份或重建 PostgreSQL；健康检查失败时恢复上一版本应用镜像。</div>}
+            {info.configured && info.updateAvailable && !active && <div className="flex items-center gap-2 border-t border-emerald-100 bg-emerald-50/70 px-5 py-3 text-[11px] text-emerald-800"><ShieldCheck className="h-4 w-4 shrink-0" />普通更新会等待任务清零后执行；强制更新会跳过等待。仅替换应用容器，不备份或重建 PostgreSQL。</div>}
           </>
         ) : (
           <div className="empty-row">版本信息暂不可用</div>
@@ -180,11 +200,11 @@ export function SystemUpdatePanel() {
       <ConfirmDialog
         isOpen={confirmOpen}
         onClose={() => setConfirmOpen(false)}
-        onConfirm={() => void startUpdate()}
-        title={`更新到 ${info?.latest.version || '最新版本'}`}
-        description="服务器将直接更新 API、管理后台和客户前台，不备份或重建 PostgreSQL。期间可能出现短暂连接中断；健康检查失败会自动恢复上一版本应用镜像。"
-        confirmText="开始更新"
-        type="warning"
+        onConfirm={() => void startUpdate(confirmMode === 'force')}
+        title={`${confirmMode === 'force' ? '强制更新到' : '空闲后更新到'} ${info?.latest.version || '最新版本'}`}
+        description={confirmDescription}
+        confirmText={confirmMode === 'force' ? '强制更新' : '等待空闲后更新'}
+        type={confirmMode === 'force' ? 'danger' : 'warning'}
       />
     </>
   );

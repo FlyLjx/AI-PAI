@@ -326,12 +326,14 @@ export type SystemBuildVersion = {
 };
 
 export type SystemUpdateState = {
-  status: 'unconfigured' | 'idle' | 'queued' | 'checking' | 'pulling' | 'backing_up' | 'updating' | 'rolling_back' | 'success' | 'failed';
+  status: 'unconfigured' | 'idle' | 'queued' | 'waiting_idle' | 'checking' | 'pulling' | 'backing_up' | 'updating' | 'rolling_back' | 'success' | 'failed';
   targetVersion?: string;
   targetRunId?: number;
   targetCommit?: string;
   message?: string;
   backupDirectory?: string;
+  pendingTaskCount?: number;
+  force?: boolean;
   startedAt?: string;
   finishedAt?: string;
 };
@@ -343,6 +345,7 @@ export type SystemUpdateInfo = {
   updateAvailable: boolean;
   canUpdate: boolean;
   checkError?: string;
+  pendingTaskCount: number;
   state: SystemUpdateState;
   checkedAt: string;
 };
@@ -500,7 +503,7 @@ export const portalApi = {
   settings: () => api<Record<string, unknown>>('/api/settings'),
   updateSettings: (input: Record<string, unknown>) => api('/api/settings', { method: 'PATCH', body: JSON.stringify(input) }),
   systemUpdate: (refresh = false) => api<SystemUpdateInfo>(`/api/admin/system-update${query({ refresh: refresh ? 1 : undefined })}`),
-  startSystemUpdate: () => api<SystemUpdateInfo>('/api/admin/system-update', { method: 'POST' }),
+  startSystemUpdate: (force = false) => api<SystemUpdateInfo>('/api/admin/system-update', { method: 'POST', body: JSON.stringify({ force }) }),
   logs: () => api<SystemLogFile[]>('/api/system-logs'),
   systemLogDetail: (name: string, maxBytes = 300000) => api<SystemLogDetail>(`/api/system-logs/detail${query({ name, maxBytes })}`),
   deleteSystemLog: (name: string) => api(`/api/system-logs/${encodeURIComponent(name)}`, { method: 'DELETE' }),

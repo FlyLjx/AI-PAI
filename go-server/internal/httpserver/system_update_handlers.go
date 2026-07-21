@@ -29,25 +29,28 @@ type systemUpdateVersion struct {
 }
 
 type systemUpdateState struct {
-	Status          string `json:"status"`
-	TargetVersion   string `json:"targetVersion,omitempty"`
-	TargetRunID     int64  `json:"targetRunId,omitempty"`
-	TargetCommit    string `json:"targetCommit,omitempty"`
-	Message         string `json:"message,omitempty"`
-	BackupDirectory string `json:"backupDirectory,omitempty"`
-	StartedAt       string `json:"startedAt,omitempty"`
-	FinishedAt      string `json:"finishedAt,omitempty"`
+	Status           string `json:"status"`
+	TargetVersion    string `json:"targetVersion,omitempty"`
+	TargetRunID      int64  `json:"targetRunId,omitempty"`
+	TargetCommit     string `json:"targetCommit,omitempty"`
+	Message          string `json:"message,omitempty"`
+	BackupDirectory  string `json:"backupDirectory,omitempty"`
+	PendingTaskCount int    `json:"pendingTaskCount,omitempty"`
+	Force            bool   `json:"force,omitempty"`
+	StartedAt        string `json:"startedAt,omitempty"`
+	FinishedAt       string `json:"finishedAt,omitempty"`
 }
 
 type systemUpdateView struct {
-	Configured      bool                `json:"configured"`
-	Current         systemUpdateVersion `json:"current"`
-	Latest          systemUpdateVersion `json:"latest"`
-	UpdateAvailable bool                `json:"updateAvailable"`
-	CanUpdate       bool                `json:"canUpdate"`
-	CheckError      string              `json:"checkError,omitempty"`
-	State           systemUpdateState   `json:"state"`
-	CheckedAt       string              `json:"checkedAt"`
+	Configured       bool                `json:"configured"`
+	Current          systemUpdateVersion `json:"current"`
+	Latest           systemUpdateVersion `json:"latest"`
+	UpdateAvailable  bool                `json:"updateAvailable"`
+	CanUpdate        bool                `json:"canUpdate"`
+	CheckError       string              `json:"checkError,omitempty"`
+	PendingTaskCount int                 `json:"pendingTaskCount"`
+	State            systemUpdateState   `json:"state"`
+	CheckedAt        string              `json:"checkedAt"`
 }
 
 type systemUpdateRequest struct {
@@ -59,6 +62,11 @@ type systemUpdateRequest struct {
 	RequestedBy    string `json:"requestedBy"`
 	RequestedAt    string `json:"requestedAt"`
 	CurrentVersion string `json:"currentVersion"`
+	Force          bool   `json:"force"`
+}
+
+type systemUpdatePostInput struct {
+	Force bool `json:"force"`
 }
 
 type actionsRunsResponse struct {
@@ -88,9 +96,29 @@ func (r *Router) systemUpdate(w http.ResponseWriter, req *http.Request) {
 		view := r.systemUpdateView(req.Context(), force)
 		writeJSON(w, http.StatusOK, map[string]any{"data": view})
 	case http.MethodPost:
+		forceUpdate, err := decodeSystemUpdateForce(req)
+		if err != nil {
+			writeError(w, newAppError(http.StatusBadRequest, "更新参数格式不正确"))
+			return
+		}
 		view := r.systemUpdateView(req.Context(), true)
 		if !view.Configured {
 			writeError(w, newAppError(http.StatusServiceUnavailable, "服务器尚未配置系统更新服务"))
+			return
+		}
+		if forceUpdate && strings.EqualFold(view.State.Status, "waiting_idle") {
+			forced := view.State
+			forced.Status = "queued"
+			forced.Message = "强制更新已确认，将跳过任务等待直接更新"
+			forced.Force = true
+			forced.PendingTaskCount = view.PendingTaskCount
+			if err := signalSystemUpdateForce(r.cfg.SystemUpdateDir, admin.UserID, time.Now().UTC(), forced); err != nil {
+				writeError(w, err)
+				return
+			}
+			view.State = forced
+			view.CanUpdate = false
+			writeJSON(w, http.StatusAccepted, map[string]any{"data": view})
 			return
 		}
 		if view.CheckError != "" || view.Latest.RunID == 0 {
@@ -115,14 +143,25 @@ func (r *Router) systemUpdate(w http.ResponseWriter, req *http.Request) {
 			RequestedBy:    admin.UserID,
 			RequestedAt:    time.Now().UTC().Format(time.RFC3339),
 			CurrentVersion: view.Current.Version,
+			Force:          forceUpdate,
+		}
+		status := "queued"
+		message := "更新请求已提交，等待服务器开始处理"
+		if forceUpdate {
+			message = "强制更新请求已提交，将直接替换应用容器"
+		} else if view.PendingTaskCount > 0 {
+			status = "waiting_idle"
+			message = fmt.Sprintf("更新请求已提交，等待 %d 个运行中任务完成后自动更新", view.PendingTaskCount)
 		}
 		queued := systemUpdateState{
-			Status:        "queued",
-			TargetVersion: request.Version,
-			TargetRunID:   request.RunID,
-			TargetCommit:  request.Commit,
-			Message:       "更新请求已提交，等待服务器开始处理",
-			StartedAt:     request.RequestedAt,
+			Status:           status,
+			TargetVersion:    request.Version,
+			TargetRunID:      request.RunID,
+			TargetCommit:     request.Commit,
+			Message:          message,
+			PendingTaskCount: view.PendingTaskCount,
+			Force:            forceUpdate,
+			StartedAt:        request.RequestedAt,
 		}
 		if err := queueSystemUpdate(r.cfg.SystemUpdateDir, request, queued); err != nil {
 			if errors.Is(err, os.ErrExist) {
@@ -144,19 +183,56 @@ func (r *Router) systemUpdateView(ctx context.Context, force bool) systemUpdateV
 	current := currentSystemVersion()
 	state := readSystemUpdateState(r.cfg.SystemUpdateDir)
 	latest, err := r.latestActionsVersion(ctx, force)
+	pendingTaskCount, taskCountErr := r.systemUpdatePendingTaskCount(ctx)
 	view := systemUpdateView{
-		Configured: strings.TrimSpace(r.cfg.SystemUpdateDir) != "",
-		Current:    current,
-		Latest:     latest,
-		State:      state,
-		CheckedAt:  time.Now().UTC().Format(time.RFC3339),
+		Configured:       strings.TrimSpace(r.cfg.SystemUpdateDir) != "",
+		Current:          current,
+		Latest:           latest,
+		PendingTaskCount: pendingTaskCount,
+		State:            state,
+		CheckedAt:        time.Now().UTC().Format(time.RFC3339),
 	}
 	if err != nil {
 		view.CheckError = err.Error()
+	} else if taskCountErr != nil {
+		view.CheckError = taskCountErr.Error()
 	}
 	view.UpdateAvailable = latest.RunID != 0 && (latest.Version != current.Version || latest.Commit != current.Commit)
 	view.CanUpdate = view.Configured && view.CheckError == "" && view.UpdateAvailable && !isSystemUpdateActive(state.Status)
 	return view
+}
+
+func decodeSystemUpdateForce(req *http.Request) (bool, error) {
+	force := strings.EqualFold(req.URL.Query().Get("force"), "true") || req.URL.Query().Get("force") == "1"
+	if req.Body == nil {
+		return force, nil
+	}
+	defer req.Body.Close()
+	var input systemUpdatePostInput
+	if err := json.NewDecoder(io.LimitReader(req.Body, 4096)).Decode(&input); err != nil {
+		if errors.Is(err, io.EOF) {
+			return force, nil
+		}
+		return false, err
+	}
+	return force || input.Force, nil
+}
+
+func (r *Router) systemUpdatePendingTaskCount(ctx context.Context) (int, error) {
+	if r == nil || r.db == nil {
+		return 0, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	var count int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM generation_tasks
+		WHERE status IN ('queued', 'pending', 'processing')
+	`).Scan(&count); err != nil {
+		return 0, fmt.Errorf("运行任务统计失败: %w", err)
+	}
+	return count, nil
 }
 
 func currentSystemVersion() systemUpdateVersion {
@@ -179,7 +255,7 @@ func actionsRunNumber(version string) int {
 
 func isSystemUpdateActive(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "queued", "checking", "pulling", "backing_up", "updating", "rolling_back":
+	case "queued", "waiting_idle", "checking", "pulling", "backing_up", "updating", "rolling_back":
 		return true
 	default:
 		return false
@@ -281,6 +357,26 @@ func queueSystemUpdate(directory string, request systemUpdateRequest, state syst
 		return err
 	}
 	return writeJSONFileAtomic(requestPath, request)
+}
+
+func signalSystemUpdateForce(directory string, requestedBy string, requestedAt time.Time, state systemUpdateState) error {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return errors.New("system update directory is not configured")
+	}
+	if err := os.MkdirAll(directory, 0750); err != nil {
+		return err
+	}
+	forcePath := filepath.Join(directory, "force.json")
+	payload := map[string]any{
+		"force":       true,
+		"requestedBy": strings.TrimSpace(requestedBy),
+		"requestedAt": requestedAt.Format(time.RFC3339),
+	}
+	if err := writeJSONFileAtomic(forcePath, payload); err != nil {
+		return err
+	}
+	return writeJSONFileAtomic(filepath.Join(directory, "status.json"), state)
 }
 
 func writeJSONFileAtomic(path string, value any) error {

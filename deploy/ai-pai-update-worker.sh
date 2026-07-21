@@ -12,6 +12,7 @@ WORKFLOW=${AI_PAI_GITHUB_WORKFLOW:-build.yml}
 REGISTRY=${AI_PAI_REGISTRY:-ghcr.io/flyljx}
 REQUEST_FILE=$UPDATE_DIR/request.json
 STATUS_FILE=$UPDATE_DIR/status.json
+FORCE_FILE=$UPDATE_DIR/force.json
 LOCK_FILE=$UPDATE_DIR/update.lock
 API_URL="https://api.github.com/repos/$REPOSITORY/actions/workflows/$WORKFLOW/runs?branch=main&status=success&per_page=1"
 
@@ -41,19 +42,29 @@ print(
     request["version"],
     request["commit"],
     request.get("currentVersion", "unknown"),
+    "true" if request.get("force") else "false",
 )
 PY
 )
-read -r run_id run_number version commit current_version <<<"$request_values"
+read -r run_id run_number version commit current_version force_update <<<"$request_values"
+force_update=${force_update:-false}
 rm -f "$REQUEST_FILE"
 
+set -a
+# shellcheck disable=SC1090
+source "$ENV_FILE"
+set +a
+
 started_at=$(date --iso-8601=seconds)
+pending_task_count=0
 write_status() {
   STATUS_VALUE=$1 \
   MESSAGE_VALUE=$2 \
   TARGET_VERSION=$version \
   TARGET_RUN_ID=$run_id \
   TARGET_COMMIT=$commit \
+  FORCE_UPDATE=$force_update \
+  PENDING_TASK_COUNT=${pending_task_count:-0} \
   STARTED_AT=$started_at \
   FINISHED_AT=${3:-} \
   python3 - "$STATUS_FILE" <<'PY'
@@ -67,6 +78,14 @@ payload = {
     "message": os.environ["MESSAGE_VALUE"],
     "startedAt": os.environ["STARTED_AT"],
 }
+if os.environ.get("FORCE_UPDATE") == "true":
+    payload["force"] = True
+try:
+    pending = int(os.environ.get("PENDING_TASK_COUNT") or "0")
+except ValueError:
+    pending = 0
+if pending > 0:
+    payload["pendingTaskCount"] = pending
 if os.environ.get("FINISHED_AT"):
     payload["finishedAt"] = os.environ["FINISHED_AT"]
 directory = os.path.dirname(path)
@@ -132,10 +151,59 @@ abort_update() {
   exit 1
 }
 
+active_task_count() {
+  local db_driver=${DB_DRIVER:-postgres}
+  local db_container=${AI_PAI_DB_CONTAINER:-ai-pai-postgres}
+  if [[ "$db_driver" != "postgres" && "$db_driver" != "pgx" ]]; then
+    printf '0\n'
+    return 0
+  fi
+  docker exec -e PGPASSWORD="${DB_PASSWORD:-ai_pai_change_me}" "$db_container" \
+    psql -U "${DB_USER:-ai_pai}" -d "${DB_NAME:-ai_pai}" -tA \
+    -c "SELECT COUNT(*) FROM generation_tasks WHERE status IN ('queued','pending','processing');" \
+    | tr -d '[:space:]'
+}
+
+wait_for_idle_tasks() {
+  if [[ "$force_update" == "true" ]]; then
+    pending_task_count=0
+    return 0
+  fi
+
+  local poll_seconds=${AI_PAI_UPDATE_IDLE_POLL_SECONDS:-15}
+  [[ "$poll_seconds" =~ ^[0-9]+$ && "$poll_seconds" -ge 3 ]] || poll_seconds=15
+
+  while true; do
+    if [[ -f "$FORCE_FILE" ]]; then
+      rm -f "$FORCE_FILE"
+      force_update=true
+      pending_task_count=0
+      write_status queued "Force update signal received; skipping the task idle wait for $version."
+      log "force update signal received for $version"
+      return 0
+    fi
+    pending_task_count=$(active_task_count 2>/dev/null || printf 'unknown')
+    if [[ "$pending_task_count" =~ ^[0-9]+$ && "$pending_task_count" -eq 0 ]]; then
+      return 0
+    fi
+    if [[ ! "$pending_task_count" =~ ^[0-9]+$ ]]; then
+      pending_task_count=0
+      write_status waiting_idle "Waiting for task status check before applying $version."
+      log "waiting for task status check before applying $version"
+    else
+      write_status waiting_idle "Waiting for $pending_task_count active generation task(s) to finish before applying $version."
+      log "waiting for $pending_task_count active generation task(s) before applying $version"
+    fi
+    sleep "$poll_seconds"
+  done
+}
+
 [[ "$run_id" =~ ^[0-9]+$ ]] || abort_update "Invalid Actions run id."
 [[ "$run_number" =~ ^[0-9]+$ ]] || abort_update "Invalid Actions run number."
 [[ "$version" == "build-$run_number" ]] || abort_update "Version does not match the Actions run number."
 [[ "$commit" =~ ^[0-9a-f]{40}$ ]] || abort_update "Invalid build commit."
+
+wait_for_idle_tasks
 
 write_status checking "Validating the selected GitHub Actions build."
 metadata=$(curl -fsSL --retry 5 --retry-delay 2 \
@@ -167,10 +235,8 @@ for image in "$web_image" "$admin_image" "$api_image"; do
   docker image inspect "$image" >/dev/null
 done
 
-set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
-set +a
+wait_for_idle_tasks
+
 PUBLIC_ORIGIN=${APP_PUBLIC_ORIGIN:-}
 previous_web=$(docker inspect ai-pai --format '{{.Config.Image}}')
 previous_admin=$(docker inspect ai-pai-admin --format '{{.Config.Image}}')

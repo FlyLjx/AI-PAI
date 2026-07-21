@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDownRight, ArrowUpRight, LucideIcon, Minus } from 'lucide-react';
 
 interface StatBlockProps {
@@ -14,6 +14,105 @@ interface StatBlockProps {
   };
   icon?: LucideIcon;
   color?: 'green' | 'cyan' | 'amber' | 'neutral';
+}
+
+type AnimatedValueParts = {
+  target: number;
+  prefix: string;
+  suffix: string;
+  decimals: number;
+  useGrouping: boolean;
+};
+
+const numericPattern = /[-+]?\d[\d,]*(?:\.\d+)?/g;
+
+function parseAnimatedValue(value: string | number): AnimatedValueParts | null {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) return null;
+    return {
+      target: value,
+      prefix: '',
+      suffix: '',
+      decimals: Number.isInteger(value) ? 0 : Math.min(4, String(value).split('.')[1]?.length || 0),
+      useGrouping: Math.abs(value) >= 1000,
+    };
+  }
+
+  const raw = String(value);
+  const matches = Array.from(raw.matchAll(numericPattern));
+  if (matches.length !== 1) return null;
+
+  const match = matches[0];
+  const numericText = match[0];
+  const target = Number(numericText.replace(/,/g, ''));
+  if (!Number.isFinite(target)) return null;
+
+  return {
+    target,
+    prefix: raw.slice(0, match.index || 0),
+    suffix: raw.slice((match.index || 0) + numericText.length),
+    decimals: numericText.includes('.') ? numericText.split('.')[1].length : 0,
+    useGrouping: numericText.includes(',') || Math.abs(target) >= 1000,
+  };
+}
+
+function formatAnimatedValue(value: number, parts: AnimatedValueParts): string {
+  const fixed = parts.decimals > 0 ? value.toFixed(parts.decimals) : String(Math.round(value));
+  const negative = fixed.startsWith('-');
+  const unsigned = negative ? fixed.slice(1) : fixed;
+  const [integerPart, decimalPart] = unsigned.split('.');
+  const integerText = parts.useGrouping
+    ? Number(integerPart || 0).toLocaleString('zh-CN', { maximumFractionDigits: 0 })
+    : integerPart;
+  return `${parts.prefix}${negative ? '-' : ''}${integerText}${decimalPart !== undefined ? `.${decimalPart}` : ''}${parts.suffix}`;
+}
+
+function AnimatedStatValue({ value }: { value: string | number }) {
+  const parts = useMemo(() => parseAnimatedValue(value), [value]);
+  const [displayNumber, setDisplayNumber] = useState<number | null>(() => (parts ? 0 : null));
+  const displayNumberRef = useRef<number | null>(parts ? 0 : null);
+  const lastTargetRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!parts) {
+      lastTargetRef.current = null;
+      return;
+    }
+
+    const prefersReducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    const from = lastTargetRef.current === null ? 0 : displayNumberRef.current ?? lastTargetRef.current;
+    const to = parts.target;
+    lastTargetRef.current = to;
+    const updateDisplayNumber = (nextValue: number) => {
+      displayNumberRef.current = nextValue;
+      setDisplayNumber(nextValue);
+    };
+
+    if (prefersReducedMotion || Math.abs(to - from) < 0.000001) {
+      const frame = window.requestAnimationFrame(() => updateDisplayNumber(to));
+      return () => window.cancelAnimationFrame(frame);
+    }
+
+    const startedAt = performance.now();
+    const duration = 850;
+    let frame = 0;
+
+    const tick = (now: number) => {
+      const progress = Math.min(1, (now - startedAt) / duration);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      updateDisplayNumber(from + (to - from) * eased);
+      if (progress < 1) {
+        frame = window.requestAnimationFrame(tick);
+      } else {
+        updateDisplayNumber(to);
+      }
+    };
+
+    frame = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frame);
+  }, [parts]);
+
+  return <>{parts && displayNumber !== null ? formatAnimatedValue(displayNumber, parts) : value}</>;
 }
 
 export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'neutral' }: StatBlockProps) {
@@ -67,8 +166,8 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
         </div>
 
         <div className="mt-3 flex items-baseline gap-2">
-          <span className="font-sans text-2xl font-bold tracking-tight text-[#17201B] leading-none">
-            {value}
+          <span className="font-sans text-2xl font-bold tracking-tight text-[#17201B] leading-none tabular-nums" aria-label={String(value)}>
+            <AnimatedStatValue value={value} />
           </span>
         </div>
 

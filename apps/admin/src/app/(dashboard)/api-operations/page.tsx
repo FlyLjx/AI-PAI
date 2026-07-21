@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ImageIcon,
@@ -45,6 +45,24 @@ const EMPTY_OPERATIONS: AdminOperationsSnapshot = {
   generatedAt: '',
 };
 
+type ActiveCallUserGroup = {
+  groupKey: string;
+  userId: string;
+  userEmail?: string;
+  billingMode: string;
+  keyLabel: string;
+  modelLabel: string;
+  representativeStatus: string;
+  taskCount: number;
+  queuedCount: number;
+  processingCount: number;
+  slowCount: number;
+  imageCount: number;
+  maxElapsedSeconds: number;
+  concurrencyUsed: number;
+  concurrencyLimit: number;
+};
+
 function durationLabel(value: number): string {
   const seconds = Math.max(0, Number(value || 0));
   if (seconds < 1) return `${Math.round(seconds * 1000)}ms`;
@@ -70,6 +88,18 @@ function billingModeLabel(mode = '') {
   if (mode === 'balance') return '账户余额';
   if (mode === 'mixed') return '混合计费';
   return '自动兼容';
+}
+
+function sizeTierLabel(value = '') {
+  const normalized = value.trim();
+  return normalized ? normalized.toUpperCase() : '默认规格';
+}
+
+function summarizeLabels(labels: string[], emptyLabel: string, maxVisible = 2) {
+  const unique = Array.from(new Set(labels.map((item) => item.trim()).filter(Boolean)));
+  if (!unique.length) return emptyLabel;
+  if (unique.length <= maxVisible) return unique.join('、');
+  return `${unique.slice(0, maxVisible).join('、')} 等 ${unique.length} 项`;
 }
 
 export default function AdminAPIOperationsPage() {
@@ -102,6 +132,102 @@ export default function AdminAPIOperationsPage() {
       window.clearInterval(timer);
     };
   }, [load]);
+
+  const activeCallUserGroups = useMemo<ActiveCallUserGroup[]>(() => {
+    const groups = new Map<string, {
+      groupKey: string;
+      userId: string;
+      userEmail?: string;
+      billingModes: string[];
+      keyLabels: string[];
+      modelLabels: string[];
+      representativeStatus: string;
+      taskCount: number;
+      queuedCount: number;
+      processingCount: number;
+      slowCount: number;
+      imageCount: number;
+      maxElapsedSeconds: number;
+      firstCreatedAt: string;
+      keyConcurrency: Map<string, { used: number; limit: number }>;
+    }>();
+
+    operations.activeCalls.forEach((call) => {
+      const groupKey = call.userId || call.userEmail || call.apiKeyId || call.taskId;
+      const keyLabel = call.keyName || call.keyPrefix || 'API Key';
+      const modelLabel = `${call.model || '未知模型'} · ${sizeTierLabel(call.sizeTier)}`;
+      const existing = groups.get(groupKey);
+      const group = existing || {
+        groupKey,
+        userId: call.userId,
+        userEmail: call.userEmail,
+        billingModes: [],
+        keyLabels: [],
+        modelLabels: [],
+        representativeStatus: call.status,
+        taskCount: 0,
+        queuedCount: 0,
+        processingCount: 0,
+        slowCount: 0,
+        imageCount: 0,
+        maxElapsedSeconds: 0,
+        firstCreatedAt: call.createdAt,
+        keyConcurrency: new Map<string, { used: number; limit: number }>(),
+      };
+
+      group.taskCount += 1;
+      group.imageCount += Math.max(0, Number(call.quantity || 0));
+      group.maxElapsedSeconds = Math.max(group.maxElapsedSeconds, call.elapsedSeconds);
+      if (!group.userEmail && call.userEmail) group.userEmail = call.userEmail;
+      if (call.billingMode) group.billingModes.push(call.billingMode);
+      group.keyLabels.push(keyLabel);
+      group.modelLabels.push(modelLabel);
+      if (call.status === 'processing') {
+        group.processingCount += 1;
+        group.representativeStatus = 'processing';
+      } else {
+        group.queuedCount += 1;
+      }
+      if (call.elapsedSeconds >= 120) group.slowCount += 1;
+      if (call.createdAt && (!group.firstCreatedAt || call.createdAt < group.firstCreatedAt)) group.firstCreatedAt = call.createdAt;
+
+      const apiKeyId = call.apiKeyId || `${groupKey}:${keyLabel}`;
+      const stored = group.keyConcurrency.get(apiKeyId);
+      group.keyConcurrency.set(apiKeyId, {
+        used: Math.max(stored?.used || 0, Math.max(1, call.activeForKey || 0)),
+        limit: Math.max(stored?.limit || 0, Math.max(1, call.concurrencyLimit || 0)),
+      });
+
+      groups.set(groupKey, group);
+    });
+
+    return Array.from(groups.values())
+      .sort((left, right) => left.firstCreatedAt.localeCompare(right.firstCreatedAt))
+      .map((group) => {
+        const concurrency = Array.from(group.keyConcurrency.values()).reduce((acc, item) => ({
+          used: acc.used + item.used,
+          limit: acc.limit + item.limit,
+        }), { used: 0, limit: 0 });
+        const billingModes = Array.from(new Set(group.billingModes));
+        return {
+          groupKey: group.groupKey,
+          userId: group.userId,
+          userEmail: group.userEmail,
+          billingMode: billingModes.length > 1 ? 'mixed' : billingModes[0] || 'auto',
+          keyLabel: summarizeLabels(group.keyLabels, 'API Key'),
+          modelLabel: summarizeLabels(group.modelLabels, '未知模型', 2),
+          representativeStatus: group.representativeStatus,
+          taskCount: group.taskCount,
+          queuedCount: group.queuedCount,
+          processingCount: group.processingCount,
+          slowCount: group.slowCount,
+          imageCount: group.imageCount,
+          maxElapsedSeconds: group.maxElapsedSeconds,
+          concurrencyUsed: concurrency.used || group.taskCount,
+          concurrencyLimit: concurrency.limit || 1,
+        };
+      });
+  }, [operations.activeCalls]);
 
   return (
     <div className="space-y-5">
@@ -179,19 +305,27 @@ export default function AdminAPIOperationsPage() {
               </div>
 
               <div className="min-w-0">
-                <div className="flex min-h-11 items-center justify-between gap-3 border-b border-[#EDF0EE] px-4 py-2.5"><div><h3 className="text-xs font-semibold text-[#17201B]">正在调用 API</h3><p className="mt-0.5 text-[10px] text-zinc-400">按开始时间从早到晚</p></div><span className={`rounded border px-2 py-0.5 text-[10px] font-semibold ${operations.activeRequests ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{operations.activeRequests ? `${operations.activeRequests} 个任务` : '当前空闲'}</span></div>
+                <div className="flex min-h-11 items-center justify-between gap-3 border-b border-[#EDF0EE] px-4 py-2.5"><div><h3 className="text-xs font-semibold text-[#17201B]">正在调用 API</h3><p className="mt-0.5 text-[10px] text-zinc-400">按用户聚合，按最早任务排序</p></div><span className={`rounded border px-2 py-0.5 text-[10px] font-semibold ${operations.activeRequests ? 'border-blue-200 bg-blue-50 text-blue-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>{operations.activeRequests ? `${activeCallUserGroups.length} 个用户 / ${operations.activeRequests} 个任务` : '当前空闲'}</span></div>
                 <div className="max-h-[520px] divide-y divide-[#EDF0EE] overflow-y-auto">
-                  {operations.activeCalls.slice(0, 20).map((call) => {
-                    const status = activeCallStatus(call.status);
-                    const elapsed = elapsedTimeMeta(call.elapsedSeconds);
+                  {activeCallUserGroups.slice(0, 20).map((group) => {
+                    const status = activeCallStatus(group.representativeStatus);
+                    const elapsed = elapsedTimeMeta(group.maxElapsedSeconds);
+                    const concurrencyBusy = group.concurrencyUsed >= group.concurrencyLimit;
                     return (
-                      <div key={call.taskId} className="px-4 py-3 hover:bg-[#FAFBFA]">
-                        <div className="flex items-start justify-between gap-3"><div className="min-w-0"><Link href={`/users?search=${encodeURIComponent(call.userEmail || call.userId)}`} className="block truncate text-[11px] font-semibold text-[#17201B] hover:text-[#047857] hover:underline">{call.userEmail || call.userId}</Link><span className="mt-0.5 block truncate text-[9px] text-zinc-400">{call.keyName || call.keyPrefix || 'API Key'} · {billingModeLabel(call.billingMode)}</span></div><div className="flex shrink-0 items-center gap-1.5"><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${status.className}`}>{status.label}</span><span className={`min-w-[55px] rounded border px-1.5 py-0.5 text-center font-mono text-[9px] font-semibold ${elapsed.className}`}>{elapsed.label}</span></div></div>
-                        <div className="mt-2 flex items-center justify-between gap-3 rounded bg-[#F7F8F6] px-2 py-1.5 text-[10px]"><span className="min-w-0 truncate font-medium text-zinc-600">{call.model || '未知模型'} · {call.sizeTier.toUpperCase()} · {call.quantity} 张</span><span className={`shrink-0 font-mono ${call.activeForKey >= call.concurrencyLimit ? 'text-red-700' : 'text-zinc-500'}`}>并发 {call.activeForKey}/{call.concurrencyLimit}</span></div>
+                      <div key={group.groupKey} className="px-4 py-3 hover:bg-[#FAFBFA]">
+                        <div className="flex items-start justify-between gap-3"><div className="min-w-0"><Link href={`/users?search=${encodeURIComponent(group.userEmail || group.userId || group.groupKey)}`} className="block truncate text-[11px] font-semibold text-[#17201B] hover:text-[#047857] hover:underline">{group.userEmail || group.userId || group.groupKey}</Link><span className="mt-0.5 block truncate text-[9px] text-zinc-400">{group.keyLabel} · {billingModeLabel(group.billingMode)}</span></div><div className="flex shrink-0 items-center gap-1.5"><span className={`rounded border px-1.5 py-0.5 text-[9px] font-semibold ${status.className}`}>{status.label}</span><span className={`min-w-[55px] rounded border px-1.5 py-0.5 text-center font-mono text-[9px] font-semibold ${elapsed.className}`}>{elapsed.label}</span></div></div>
+                        <div className="mt-2 flex items-center justify-between gap-3 rounded bg-[#F7F8F6] px-2 py-1.5 text-[10px]"><span className="min-w-0 truncate font-medium text-zinc-600">{group.modelLabel}</span><span className={`shrink-0 font-mono ${concurrencyBusy ? 'text-red-700' : 'text-zinc-500'}`}>并发 {group.concurrencyUsed}/{group.concurrencyLimit}</span></div>
+                        <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[9px] text-zinc-500">
+                          <span className="rounded border border-[#DCE4DF] bg-white px-1.5 py-0.5">任务数量 <strong className="font-mono text-[#17201B]">{group.taskCount}</strong> 个</span>
+                          <span className="rounded border border-emerald-100 bg-emerald-50 px-1.5 py-0.5 text-emerald-700">处理中 {group.processingCount}</span>
+                          <span className="rounded border border-amber-100 bg-amber-50 px-1.5 py-0.5 text-amber-700">排队 {group.queuedCount}</span>
+                          <span className="rounded border border-zinc-200 bg-white px-1.5 py-0.5">图片 {group.imageCount}</span>
+                          {group.slowCount > 0 && <span className="rounded border border-red-100 bg-red-50 px-1.5 py-0.5 text-red-700">超时关注 {group.slowCount}</span>}
+                        </div>
                       </div>
                     );
                   })}
-                  {!operations.activeCalls.length && <div className="grid min-h-[240px] place-items-center px-4 text-center"><div><Radio className="mx-auto h-5 w-5 text-emerald-500" /><p className="mt-2 text-[11px] font-semibold text-zinc-600">当前没有进行中的 API 请求</p><span className="mt-1 block text-[10px] text-zinc-400">新任务进入后会自动显示</span></div></div>}
+                  {!activeCallUserGroups.length && <div className="grid min-h-[240px] place-items-center px-4 text-center"><div><Radio className="mx-auto h-5 w-5 text-emerald-500" /><p className="mt-2 text-[11px] font-semibold text-zinc-600">当前没有进行中的 API 请求</p><span className="mt-1 block text-[10px] text-zinc-400">新任务进入后会自动显示</span></div></div>}
                 </div>
               </div>
             </div>

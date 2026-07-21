@@ -65,8 +65,9 @@ func TestQueueSystemUpdateWritesCompleteRequestAndState(t *testing.T) {
 		RequestedBy:    "admin-1",
 		RequestedAt:    time.Now().UTC().Format(time.RFC3339),
 		CurrentVersion: "build-11",
+		Force:          true,
 	}
-	state := systemUpdateState{Status: "queued", TargetVersion: request.Version, TargetRunID: request.RunID}
+	state := systemUpdateState{Status: "waiting_idle", TargetVersion: request.Version, TargetRunID: request.RunID, PendingTaskCount: 2, Force: request.Force}
 	if err := queueSystemUpdate(directory, request, state); err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +80,7 @@ func TestQueueSystemUpdateWritesCompleteRequestAndState(t *testing.T) {
 	if err := json.Unmarshal(requestData, &savedRequest); err != nil {
 		t.Fatal(err)
 	}
-	if savedRequest.Version != request.Version || savedRequest.RunID != request.RunID {
+	if savedRequest.Version != request.Version || savedRequest.RunID != request.RunID || !savedRequest.Force {
 		t.Fatalf("unexpected request: %+v", savedRequest)
 	}
 
@@ -91,11 +92,52 @@ func TestQueueSystemUpdateWritesCompleteRequestAndState(t *testing.T) {
 	if err := json.Unmarshal(stateData, &savedState); err != nil {
 		t.Fatal(err)
 	}
-	if savedState.Status != "queued" || savedState.TargetVersion != request.Version {
+	if savedState.Status != "waiting_idle" || savedState.TargetVersion != request.Version || savedState.PendingTaskCount != 2 || !savedState.Force {
 		t.Fatalf("unexpected state: %+v", savedState)
 	}
 
 	if err := queueSystemUpdate(directory, request, state); !os.IsExist(err) {
 		t.Fatalf("second queue error = %v, want os.ErrExist", err)
+	}
+}
+
+func TestSignalSystemUpdateForceWritesMarkerAndState(t *testing.T) {
+	directory := t.TempDir()
+	state := systemUpdateState{
+		Status:           "queued",
+		TargetVersion:    "build-20",
+		TargetRunID:      200,
+		TargetCommit:     "commit-20",
+		Message:          "强制更新已确认",
+		PendingTaskCount: 3,
+		Force:            true,
+	}
+	requestedAt := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	if err := signalSystemUpdateForce(directory, "admin-1", requestedAt, state); err != nil {
+		t.Fatal(err)
+	}
+
+	forceData, err := os.ReadFile(filepath.Join(directory, "force.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var forcePayload map[string]any
+	if err := json.Unmarshal(forceData, &forcePayload); err != nil {
+		t.Fatal(err)
+	}
+	if forcePayload["force"] != true || forcePayload["requestedBy"] != "admin-1" {
+		t.Fatalf("unexpected force signal: %+v", forcePayload)
+	}
+
+	stateData, err := os.ReadFile(filepath.Join(directory, "status.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var savedState systemUpdateState
+	if err := json.Unmarshal(stateData, &savedState); err != nil {
+		t.Fatal(err)
+	}
+	if savedState.Status != "queued" || !savedState.Force || savedState.PendingTaskCount != 3 {
+		t.Fatalf("unexpected forced state: %+v", savedState)
 	}
 }
