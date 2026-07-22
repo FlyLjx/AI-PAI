@@ -88,7 +88,7 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 			}
 			value = number
 		}
-		if key == "adminRechargeNotificationEnabled" || key == "adminUpstreamNotificationEnabled" {
+		if key == "adminRechargeNotificationEnabled" || key == "adminUpstreamNotificationEnabled" || key == "adminOpenAIStatusNotificationEnabled" || key == "upstreamMaintenanceEnabled" {
 			if _, ok := value.(bool); !ok {
 				return nil, ErrInvalidAdminNotification
 			}

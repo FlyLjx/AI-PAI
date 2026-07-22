@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Cable, FlaskConical, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Activity, Cable, Clock3, FlaskConical, Loader2, Pause, Pencil, Play, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
@@ -9,7 +9,7 @@ import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { portalApi } from '@/lib/admin-api';
+import { portalApi, type OpenAIImageStatusSnapshot, type UpstreamMaintenanceState } from '@/lib/admin-api';
 import { formatDate } from '@/lib/common/utils';
 
 type Provider = {
@@ -62,18 +62,37 @@ export default function UpstreamAPIsPage() {
   const [testingId, setTestingId] = useState('');
   const [testResult, setTestResult] = useState<{ provider: Provider; result: Record<string, unknown> } | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<Provider | null>(null);
+  const [maintenance, setMaintenance] = useState<UpstreamMaintenanceState | null>(null);
+  const [maintenanceLoading, setMaintenanceLoading] = useState(true);
+  const [maintenanceSaving, setMaintenanceSaving] = useState(false);
+  const [openAIStatus, setOpenAIStatus] = useState<OpenAIImageStatusSnapshot | null>(null);
+  const [openAIStatusLoading, setOpenAIStatusLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setMaintenanceLoading(true);
+    setOpenAIStatusLoading(true);
     setError('');
-    try {
-      const response = await portalApi.providers();
-      setProviders(response.data as unknown as Provider[]);
-    } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : '上游接口加载失败');
-    } finally {
-      setLoading(false);
+    const [providerResponse, maintenanceResponse, openAIResponse] = await Promise.allSettled([
+      portalApi.providers(),
+      portalApi.upstreamMaintenance(),
+      portalApi.openAIImageStatus(),
+    ]);
+    if (providerResponse.status === 'fulfilled') {
+      setProviders(providerResponse.value.data as unknown as Provider[]);
+    } else {
+      const reason = providerResponse.reason;
+      setError(reason instanceof Error ? reason.message : '上游接口加载失败');
     }
+    if (maintenanceResponse.status === 'fulfilled') {
+      setMaintenance(maintenanceResponse.value.data);
+    }
+    if (openAIResponse.status === 'fulfilled') {
+      setOpenAIStatus(openAIResponse.value.data);
+    }
+    setLoading(false);
+    setMaintenanceLoading(false);
+    setOpenAIStatusLoading(false);
   }, []);
 
   useEffect(() => {
@@ -175,6 +194,20 @@ export default function UpstreamAPIsPage() {
     }
   };
 
+  const toggleMaintenance = async () => {
+    const nextEnabled = !maintenance?.enabled;
+    setMaintenanceSaving(true);
+    try {
+      const response = await portalApi.updateUpstreamMaintenance(nextEnabled);
+      setMaintenance(response.data);
+      toast.success(nextEnabled ? '已开启上游更新保护，新任务会暂留队列' : '已关闭上游更新保护，排队任务将继续处理');
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '上游更新保护切换失败');
+    } finally {
+      setMaintenanceSaving(false);
+    }
+  };
+
   const deleteProvider = async () => {
     if (!deleteCandidate) return;
     try {
@@ -196,6 +229,17 @@ export default function UpstreamAPIsPage() {
     </div>
   );
 
+  const maintenanceEnabled = Boolean(maintenance?.enabled);
+  const openAISeverity = openAIStatus?.severity || 'ok';
+  const openAITone = openAIStatusLoading && !openAIStatus
+    ? 'border-zinc-200 bg-zinc-50 text-zinc-500'
+    : openAISeverity === 'critical'
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : openAISeverity === 'warning'
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  const openAIDot = openAISeverity === 'critical' ? 'bg-red-500' : openAISeverity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500';
+
   return (
     <div className="space-y-5">
       <PageHeader title="上游接口" description="维护兼容 OpenAI 图片 API 的服务地址、密钥和运行状态。">
@@ -210,6 +254,69 @@ export default function UpstreamAPIsPage() {
           ['已停用', summary.disabled, '不再接收请求'],
           ['New API', summary.newapi, '兼容服务商'],
         ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+        <section className={`overflow-hidden rounded-md border ${maintenanceEnabled ? 'border-amber-200 bg-amber-50/70' : 'border-[#DCE4DF] bg-white'}`}>
+          <div className={`h-1 w-full ${maintenanceEnabled ? 'bg-amber-500' : 'bg-[#3F9274]'}`} />
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className={`grid h-8 w-8 place-items-center rounded-md ${maintenanceEnabled ? 'bg-amber-100 text-amber-700' : 'bg-emerald-50 text-emerald-700'}`}>
+                  {maintenanceEnabled ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                </span>
+                <div>
+                  <h2 className="text-sm font-semibold text-[#17201B]">上游更新保护</h2>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">
+                    {maintenanceEnabled ? '已暂停新任务进入上游处理，任务会保持排队状态。' : '当前任务会按正常队列进入上游处理。'}
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-zinc-500">
+                <span className="rounded border border-[#E5E9E6] bg-white px-2 py-1">等待 {Number(maintenance?.waitingTasks || 0).toLocaleString('zh-CN')}</span>
+                <span className="rounded border border-[#E5E9E6] bg-white px-2 py-1">处理中 {Number(maintenance?.processingTasks || 0).toLocaleString('zh-CN')}</span>
+                {maintenance?.pausedAt && <span className="rounded border border-[#E5E9E6] bg-white px-2 py-1">开启于 {formatDate(maintenance.pausedAt)}</span>}
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => void toggleMaintenance()}
+              disabled={maintenanceLoading || maintenanceSaving}
+              className={`inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-semibold disabled:opacity-50 ${maintenanceEnabled ? 'border border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50' : 'border border-amber-200 bg-amber-600 text-white hover:bg-amber-700'}`}
+            >
+              {maintenanceSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : maintenanceEnabled ? <Play className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+              {maintenanceEnabled ? '关闭保护并放行' : '开启上游更新'}
+            </button>
+          </div>
+        </section>
+
+        <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white">
+          <div className={`h-1 w-full ${openAISeverity === 'critical' ? 'bg-red-500' : openAISeverity === 'warning' ? 'bg-amber-500' : 'bg-[#3F9274]'}`} />
+          <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="grid h-8 w-8 place-items-center rounded-md bg-blue-50 text-blue-700"><Activity className="h-4 w-4" /></span>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="text-sm font-semibold text-[#17201B]">OpenAI Image 状态订阅</h2>
+                    <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-semibold ${openAITone}`}><i className={`h-1.5 w-1.5 rounded-full ${openAIDot}`} />{openAIStatusLoading && !openAIStatus ? '检测中' : openAIStatus?.statusLabel || '未知'}</span>
+                  </div>
+                  <p className="mt-1 line-clamp-2 text-[11px] text-zinc-500">{openAIStatus?.summary || '订阅 status.openai.com/feed.rss，仅关注 Image / Image Generation 相关事件。'}</p>
+                </div>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-zinc-500">
+                <span className="rounded border border-[#E5E9E6] bg-[#FAFBFA] px-2 py-1">Image 事件 {Number(openAIStatus?.totalImageIncidents || 0).toLocaleString('zh-CN')}</span>
+                {openAIStatus?.latestImageIncident?.publishedAt && <span className="rounded border border-[#E5E9E6] bg-[#FAFBFA] px-2 py-1">最新 {formatDate(openAIStatus.latestImageIncident.publishedAt)}</span>}
+                {openAIStatus?.latestImageIncident?.title && <span className="max-w-full truncate rounded border border-[#E5E9E6] bg-[#FAFBFA] px-2 py-1">{openAIStatus.latestImageIncident.title}</span>}
+              </div>
+            </div>
+            <div className="flex shrink-0 items-center gap-2 text-[11px] text-zinc-400">
+              {openAIStatusLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+              <Clock3 className="h-3.5 w-3.5" />
+              {openAIStatus?.fetchedAt ? formatDate(openAIStatus.fetchedAt) : '-'}
+            </div>
+          </div>
+        </section>
       </div>
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>}

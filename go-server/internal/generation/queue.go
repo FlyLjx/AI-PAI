@@ -31,6 +31,8 @@ type Queue struct {
 	shutdown  chan struct{}
 	scopes    map[string]*scopeLimiter
 	active    map[string]context.CancelFunc
+	paused    bool
+	pausedAt  time.Time
 }
 
 type Job struct {
@@ -118,6 +120,9 @@ func (q *Queue) worker(workerID int) {
 }
 
 func (q *Queue) process(job Job, workerID any) {
+	if err := q.waitWhilePaused(); err != nil {
+		return
+	}
 	release := q.acquireScope(job.ConcurrencyScope, job.ConcurrencyLimit)
 	defer release()
 
@@ -128,6 +133,49 @@ func (q *Queue) process(job Job, workerID any) {
 	cancel()
 	if err != nil {
 		q.logger.Error("generation worker failed", "worker", workerID, "taskId", job.TaskID, "error", err)
+	}
+}
+
+func (q *Queue) SetPaused(paused bool) {
+	q.mu.Lock()
+	if q.paused == paused {
+		q.mu.Unlock()
+		return
+	}
+	q.paused = paused
+	if paused {
+		q.pausedAt = time.Now()
+	} else {
+		q.pausedAt = time.Time{}
+	}
+	q.mu.Unlock()
+}
+
+func (q *Queue) Paused() bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.paused
+}
+
+func (q *Queue) PauseSnapshot() (bool, time.Time) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.paused, q.pausedAt
+}
+
+func (q *Queue) waitWhilePaused() error {
+	for {
+		q.mu.Lock()
+		paused := q.paused
+		q.mu.Unlock()
+		if !paused {
+			return nil
+		}
+		select {
+		case <-q.shutdown:
+			return context.Canceled
+		case <-time.After(time.Second):
+		}
 	}
 }
 
@@ -149,7 +197,13 @@ func (q *Queue) sweepTimedOutTasks() {
 	for batch := 0; batch < taskTimeoutSweepMaxBatches; batch++ {
 		now := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		ids, err := q.service.FailTimedOut(ctx, now.Add(-taskProcessingTimeout), now, taskTimeoutSweepBatchSize)
+		var ids []string
+		var err error
+		if q.Paused() {
+			ids, err = q.service.FailTimedOutProcessing(ctx, now.Add(-taskProcessingTimeout), now, taskTimeoutSweepBatchSize)
+		} else {
+			ids, err = q.service.FailTimedOut(ctx, now.Add(-taskProcessingTimeout), now, taskTimeoutSweepBatchSize)
+		}
 		cancel()
 		for _, id := range ids {
 			q.Cancel(id)
@@ -162,6 +216,13 @@ func (q *Queue) sweepTimedOutTasks() {
 			return
 		}
 	}
+}
+
+func (q *Queue) TouchWaitingTasks(ctx context.Context) error {
+	if q == nil || q.service == nil {
+		return nil
+	}
+	return q.service.TouchWaitingTasks(ctx)
 }
 
 func (q *Queue) Cancel(taskID string) bool {

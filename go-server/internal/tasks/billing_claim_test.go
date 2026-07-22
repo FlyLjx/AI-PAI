@@ -17,7 +17,7 @@ func TestClaimForProcessingClaimsQueuedTaskOnce(t *testing.T) {
 	defer rawDB.Close()
 	repo := NewRepository(database.Wrap(rawDB))
 
-	mock.ExpectExec(`UPDATE generation_tasks SET status = 'processing' WHERE id = \? AND status IN \('queued', 'pending'\)`).
+	mock.ExpectExec(`UPDATE generation_tasks SET status = 'processing',\s+updated_at = CURRENT_TIMESTAMP WHERE id = \? AND status IN \('queued', 'pending'\)`).
 		WithArgs("task-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	claimed, err := repo.ClaimForProcessing(context.Background(), "task-1")
@@ -28,7 +28,7 @@ func TestClaimForProcessingClaimsQueuedTaskOnce(t *testing.T) {
 		t.Fatal("expected queued task to be claimed")
 	}
 
-	mock.ExpectExec(`UPDATE generation_tasks SET status = 'processing' WHERE id = \? AND status IN \('queued', 'pending'\)`).
+	mock.ExpectExec(`UPDATE generation_tasks SET status = 'processing',\s+updated_at = CURRENT_TIMESTAMP WHERE id = \? AND status IN \('queued', 'pending'\)`).
 		WithArgs("task-1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	claimed, err = repo.ClaimForProcessing(context.Background(), "task-1")

@@ -416,6 +416,55 @@ export type StabilitySnapshot = {
   series?: StabilitySeriesPoint[];
 };
 
+export type OpenAIAffectedComponent = {
+  name: string;
+  status: string;
+  label: string;
+};
+
+export type OpenAIImageIncident = {
+  title: string;
+  link: string;
+  guid: string;
+  pubDate: string;
+  publishedAt?: string;
+  status: string;
+  statusLabel: string;
+  severity: 'ok' | 'warning' | 'critical' | string;
+  summary: string;
+  affectedComponents: OpenAIAffectedComponent[];
+};
+
+export type OpenAIImageStatusSnapshot = {
+  reachable: boolean;
+  status: 'operational' | 'monitoring' | 'degraded' | 'partial_outage' | 'outage' | 'unreachable' | string;
+  statusLabel: string;
+  severity: 'ok' | 'warning' | 'critical' | string;
+  summary: string;
+  source: string;
+  feedTitle?: string;
+  feedLink?: string;
+  lastBuildDate?: string;
+  fetchedAt: string;
+  upstream_status_code: number;
+  latestImageIncident?: OpenAIImageIncident | null;
+  imageIncidents: OpenAIImageIncident[];
+  affectedComponents: OpenAIAffectedComponent[];
+  totalImageIncidents: number;
+  error?: string;
+};
+
+export type UpstreamMaintenanceState = {
+  enabled: boolean;
+  queuePaused: boolean;
+  queuedTasks: number;
+  pendingTasks: number;
+  processingTasks: number;
+  waitingTasks: number;
+  pausedAt?: string;
+  fetchedAt: string;
+};
+
 type Envelope<T> = {
   data: T;
   pagination?: { total: number; page: number; pageSize: number };
@@ -463,6 +512,9 @@ export const adminAuth = {
 export const portalApi = {
   dashboard: () => api<Record<string, unknown>>('/api/dashboard?limit=8'),
   stability: () => api<StabilitySnapshot>('/api/upstream/stability'),
+  openAIImageStatus: () => api<OpenAIImageStatusSnapshot>('/api/upstream/openai-status'),
+  upstreamMaintenance: () => api<UpstreamMaintenanceState>('/api/admin/upstream-maintenance'),
+  updateUpstreamMaintenance: (enabled: boolean) => api<UpstreamMaintenanceState>('/api/admin/upstream-maintenance', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
   users: () => api<PortalUser[]>('/api/users'),
   createUser: (input: Record<string, unknown>) => api<PortalUser>('/api/users', { method: 'POST', body: JSON.stringify(input) }),
   updateUser: (id: string, input: Record<string, unknown>) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),

@@ -21,6 +21,7 @@ const CUSTOMER_ROUTES: Rule[] = [
   { pattern: /^\/api\/api-access\/logs$/, methods: ['GET'] },
   { pattern: /^\/api\/api-access\/logs\/trend$/, methods: ['GET'] },
   { pattern: /^\/api\/upstream\/stability$/, methods: ['GET'] },
+  { pattern: /^\/api\/upstream\/openai-status$/, methods: ['GET'] },
   { pattern: /^\/api\/invites\/summary$/, methods: ['GET'] },
   { pattern: /^\/api\/subscriptions\/public\/(plans|current)$/, methods: ['GET'] },
   { pattern: /^\/api\/recharge\/qr-code$/, methods: ['GET'] },

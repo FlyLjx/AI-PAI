@@ -40,6 +40,15 @@ func (r *Router) settings(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		r.cacheDynamicConcurrencyConfig(dynamicConcurrencyConfigFromSettings(data))
+		if _, hasMaintenanceFlag := input["upstreamMaintenanceEnabled"]; hasMaintenanceFlag {
+			enabled := anyBool(data["upstreamMaintenanceEnabled"])
+			if !enabled && r.queue != nil {
+				_ = r.queue.TouchWaitingTasks(ctx)
+			}
+			if r.queue != nil {
+				r.queue.SetPaused(enabled)
+			}
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": data})
 	default:
 		writeMethodNotAllowed(w)

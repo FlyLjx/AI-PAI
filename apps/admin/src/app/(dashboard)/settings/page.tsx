@@ -55,6 +55,7 @@ type SettingsForm = {
   emailFromAddress: string;
   adminRechargeNotificationEnabled: boolean;
   adminUpstreamNotificationEnabled: boolean;
+  adminOpenAIStatusNotificationEnabled: boolean;
   adminUpstreamCheckIntervalMinutes: number;
 };
 
@@ -105,6 +106,7 @@ const emptySettings: SettingsForm = {
   emailFromAddress: '',
   adminRechargeNotificationEnabled: true,
   adminUpstreamNotificationEnabled: true,
+  adminOpenAIStatusNotificationEnabled: true,
   adminUpstreamCheckIntervalMinutes: 5,
 };
 
@@ -172,6 +174,7 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     emailFromAddress: String(data.emailFromAddress || ''),
     adminRechargeNotificationEnabled: data.adminRechargeNotificationEnabled !== false,
     adminUpstreamNotificationEnabled: data.adminUpstreamNotificationEnabled !== false,
+    adminOpenAIStatusNotificationEnabled: data.adminOpenAIStatusNotificationEnabled !== false,
     adminUpstreamCheckIntervalMinutes: positiveInteger(data.adminUpstreamCheckIntervalMinutes, 5),
   };
 }
@@ -402,6 +405,7 @@ export default function AdminSettingsPage() {
                 <div><strong className="block text-[11px]">管理员邮件通知</strong><small className="text-[10px] text-zinc-400">发送给所有启用中的管理员账号邮箱</small></div>
                 <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">充值成功通知</strong><small className="text-[10px] text-zinc-400">余额充值或订阅购买到账时发送</small></span><input type="checkbox" checked={form.adminRechargeNotificationEnabled} onChange={(event) => updateField('adminRechargeNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
                 <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">上游状态通知</strong><small className="text-[10px] text-zinc-400">异常与恢复时发送，持续异常 6 小时内不重复</small></span><input type="checkbox" checked={form.adminUpstreamNotificationEnabled} onChange={(event) => updateField('adminUpstreamNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
+                <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">OpenAI Image 订阅</strong><small className="text-[10px] text-zinc-400">订阅 status.openai.com 的图片相关异常与恢复</small></span><input type="checkbox" checked={form.adminOpenAIStatusNotificationEnabled} onChange={(event) => updateField('adminOpenAIStatusNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">上游检查间隔（分钟）</span><input disabled={!form.adminUpstreamNotificationEnabled} min={1} max={1440} step={1} type="number" value={form.adminUpstreamCheckIntervalMinutes} onChange={(event) => updateField('adminUpstreamCheckIntervalMinutes', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
               </div>
             </section>

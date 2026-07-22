@@ -27,7 +27,7 @@ import {
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
-import { portalApi, type StabilitySnapshot } from '@/lib/admin-api';
+import { portalApi, type OpenAIImageStatusSnapshot, type StabilitySnapshot } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
 
 type RechargeRow = {
@@ -172,10 +172,12 @@ function statusView(status = '') {
 export default function AdminDashboardPage() {
   const [data, setData] = useState<DashboardData>({});
   const [stability, setStability] = useState<StabilitySnapshot | null>(null);
+  const [openAIStatus, setOpenAIStatus] = useState<OpenAIImageStatusSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [stabilityLoading, setStabilityLoading] = useState(true);
   const [error, setError] = useState('');
   const [stabilityError, setStabilityError] = useState('');
+  const [openAIStatusError, setOpenAIStatusError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
   const [trendDays, setTrendDays] = useState<7 | 15 | 30>(7);
 
@@ -198,9 +200,23 @@ export default function AdminDashboardPage() {
   const loadStability = useCallback(async () => {
     setStabilityLoading(true);
     setStabilityError('');
+    setOpenAIStatusError('');
     try {
-      const response = await portalApi.stability();
-      setStability(response.data);
+      const [stabilityResponse, openAIResponse] = await Promise.allSettled([
+        portalApi.stability(),
+        portalApi.openAIImageStatus(),
+      ]);
+      if (stabilityResponse.status === 'fulfilled') {
+        setStability(stabilityResponse.value.data);
+      } else {
+        throw stabilityResponse.reason;
+      }
+      if (openAIResponse.status === 'fulfilled') {
+        setOpenAIStatus(openAIResponse.value.data);
+      } else {
+        const reason = openAIResponse.reason;
+        setOpenAIStatusError(reason instanceof Error ? reason.message : 'OpenAI Image 状态加载失败');
+      }
     } catch (requestError) {
       setStabilityError(requestError instanceof Error ? requestError.message : '上游接口状态加载失败');
     } finally {
@@ -269,6 +285,15 @@ export default function AdminDashboardPage() {
   const upstreamIconTone = upstreamReachable
     ? upstreamDegraded ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
     : upstreamPending ? 'bg-zinc-100 text-zinc-500' : 'bg-red-50 text-red-700';
+  const openAISeverity = openAIStatus?.severity || 'ok';
+  const openAIStatusTone = openAIStatusError
+    ? 'border-red-200 bg-red-50 text-red-700'
+    : openAISeverity === 'critical'
+      ? 'border-red-200 bg-red-50 text-red-700'
+      : openAISeverity === 'warning'
+        ? 'border-amber-200 bg-amber-50 text-amber-700'
+        : 'border-emerald-200 bg-emerald-50 text-emerald-700';
+  const openAIStatusDot = openAIStatusError || openAISeverity === 'critical' ? 'bg-red-500' : openAISeverity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500';
 
   const attention = useMemo(() => [
     { label: '待支付充值单', value: Number(data.pending?.pendingOrders || 0), note: '等待支付结果同步', tone: 'amber' },
@@ -383,6 +408,16 @@ export default function AdminDashboardPage() {
                   <small className="mt-0.5 block truncate text-[10px] text-zinc-400">{note}</small>
                 </div>
               ))}
+            </div>
+            <div className="flex flex-col gap-3 border-t border-[#EDF0EE] bg-[#FAFBFA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-semibold ${openAIStatusTone}`}><i className={`h-1.5 w-1.5 rounded-full ${openAIStatusDot}`} />OpenAI Image：{openAIStatusError || openAIStatus?.statusLabel || '检测中'}</span>
+                  {openAIStatus?.latestImageIncident?.title && <span className="truncate text-[11px] font-semibold text-[#17201B]">{openAIStatus.latestImageIncident.title}</span>}
+                </div>
+                <p className="mt-1 line-clamp-2 text-[11px] text-zinc-500">{openAIStatus?.summary || '订阅 status.openai.com/feed.rss 的 Image / Image Generation 相关事件。'}</p>
+              </div>
+              <span className="shrink-0 text-[11px] text-zinc-400">OAI 检测：{openAIStatus?.fetchedAt ? formatDate(openAIStatus.fetchedAt) : '-'}</span>
             </div>
             {stabilityError && (
               <div className="flex items-center gap-2 border-t border-red-100 bg-red-50 px-4 py-2.5 text-[11px] text-red-700" role="alert">

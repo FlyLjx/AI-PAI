@@ -110,7 +110,7 @@ func validateMailAudience(category string, content string, actions []mailAction)
 
 func isAdminMailCategory(category string) bool {
 	switch strings.ToLower(strings.TrimSpace(category)) {
-	case "recharge_success", "upstream_alert", "upstream_recovery":
+	case "recharge_success", "upstream_alert", "upstream_recovery", "openai_image_alert", "openai_image_recovery":
 		return true
 	default:
 		return false

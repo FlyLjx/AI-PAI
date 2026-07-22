@@ -26,6 +26,7 @@ import { StatBlock } from '@/components/common/StatBlock';
 import {
   APIError,
   portalApi,
+  type OpenAIImageStatusSnapshot,
   type StabilityRecentWindow,
   type StabilitySnapshot,
 } from '@/lib/portal-api';
@@ -79,16 +80,31 @@ const TASK_BREAKDOWN: readonly TaskBreakdown[] = [
 
 export default function StatusPage() {
   const [snapshot, setSnapshot] = useState<StabilitySnapshot | null>(null);
+  const [openAIStatus, setOpenAIStatus] = useState<OpenAIImageStatusSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [openAIError, setOpenAIError] = useState('');
   const [autoRefresh, setAutoRefresh] = useState(true);
 
   const loadStatus = useCallback(async () => {
     setLoading(true);
     setError('');
+    setOpenAIError('');
     try {
-      const response = await portalApi.stability();
-      setSnapshot(response.data);
+      const [stabilityResponse, openAIResponse] = await Promise.allSettled([
+        portalApi.stability(),
+        portalApi.openAIImageStatus(),
+      ]);
+      if (stabilityResponse.status === 'fulfilled') {
+        setSnapshot(stabilityResponse.value.data);
+      } else {
+        throw stabilityResponse.reason;
+      }
+      if (openAIResponse.status === 'fulfilled') {
+        setOpenAIStatus(openAIResponse.value.data);
+      } else {
+        setOpenAIError(errorMessage(openAIResponse.reason));
+      }
     } catch (loadError) {
       setError(errorMessage(loadError));
     } finally {
@@ -118,6 +134,13 @@ export default function StatusPage() {
     : snapshot?.error || '状态服务暂时不可达';
   const overallTone = reachable ? degraded ? 'bg-amber-500' : 'bg-[#3F9274]' : 'bg-[#D06F69]';
   const overallIconTone = reachable ? degraded ? 'bg-amber-50 text-amber-700' : 'bg-[#eaf8ef] text-[#087443]' : 'bg-red-50 text-red-700';
+  const openAISeverity = openAIStatus?.severity || 'ok';
+  const openAITone = openAIError || openAISeverity === 'critical'
+    ? 'bg-red-50 text-red-700'
+    : openAISeverity === 'warning'
+      ? 'bg-amber-50 text-amber-700'
+      : 'bg-[#eaf8ef] text-[#087443]';
+  const openAIBar = openAIError || openAISeverity === 'critical' ? 'bg-[#D06F69]' : openAISeverity === 'warning' ? 'bg-amber-500' : 'bg-[#3F9274]';
 
   const trendData = useMemo(() => (runtime?.series || []).map((point) => ({
     label: point.label || timeLabel(point.time),
@@ -176,6 +199,26 @@ export default function StatusPage() {
           </div>
         </div>
         {snapshot?.error && <div className="border-t border-red-100 bg-red-50 px-5 py-2.5 text-[11px] text-red-700">{snapshot.error}</div>}
+      </section>
+
+      <section className="section-panel overflow-hidden" aria-labelledby="openai-image-status-title">
+        <div className={`h-1 w-full ${openAIBar}`} />
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className={`grid h-11 w-11 shrink-0 place-items-center rounded-[7px] ${openAITone}`}>
+              <HeartPulse size={21} />
+            </span>
+            <div className="min-w-0">
+              <span className="text-[10px] font-bold text-zinc-400">OpenAI Image</span>
+              <strong id="openai-image-status-title" className="mt-0.5 block text-[16px]">{loading && !openAIStatus ? '正在检测 OAI 图像状态' : openAIError || openAIStatus?.statusLabel || '状态未知'}</strong>
+              <p className="mt-1 text-[11px] text-zinc-500">{openAIStatus?.summary || '订阅 OpenAI 官方状态源，仅展示 Image / Image Generation 相关事件。'}</p>
+            </div>
+          </div>
+          <div className="shrink-0 text-right">
+            <span className="block text-[10px] text-zinc-400">RSS 更新时间</span>
+            <strong className="mono mt-1 block text-[11px] text-[#526059]">{openAIStatus?.fetchedAt ? formatDate(openAIStatus.fetchedAt) : '-'}</strong>
+          </div>
+        </div>
       </section>
 
       <section className="metric-grid" aria-label="接口状态关键指标">

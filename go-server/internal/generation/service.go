@@ -219,6 +219,33 @@ func (s *Service) FailTimedOut(ctx context.Context, cutoff time.Time, now time.T
 	return ids, syncErr
 }
 
+func (s *Service) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, now time.Time, limit int) ([]string, error) {
+	ids, err := s.tasks.FailTimedOutProcessing(ctx, cutoff, now, taskTimeoutMessage, limit)
+	if err != nil {
+		return ids, err
+	}
+	logRepository := apiaccess.NewRepository(s.db)
+	var syncErr error
+	for _, id := range ids {
+		if err := logRepository.FinishLogsForTask(ctx, id, "failed", 0, taskTimeoutMessage); err != nil {
+			syncErr = errors.Join(syncErr, err)
+		}
+		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
+			if s.hub != nil {
+				s.hub.PublishTask(*task)
+			}
+		}
+		if s.logger != nil {
+			s.logger.Warn("generation task timed out", "taskId", id, "timeout", taskProcessingTimeout.String())
+		}
+	}
+	return ids, syncErr
+}
+
+func (s *Service) TouchWaitingTasks(ctx context.Context) error {
+	return s.tasks.TouchWaiting(ctx)
+}
+
 func (s *Service) callImageGenerationWithGuards(ctx context.Context, expectedQuantity int, request ImageRequest) (any, int, error) {
 	result, err := s.callImageGeneration(ctx, request)
 	if err != nil {

@@ -16,6 +16,7 @@ const (
 	upstreamHealthInitialDelay = 20 * time.Second
 	upstreamAlertCooldown      = 6 * time.Hour
 	upstreamStabilityThreshold = 95.0
+	openAIStatusAlertCooldown  = 6 * time.Hour
 )
 
 var errNoAdminMailRecipients = errors.New("没有可接收通知的启用中管理员邮箱")
@@ -252,6 +253,128 @@ func upstreamHealthMailBody(snapshot map[string]any, healthy bool, stateLabel st
 		anyInt(snapshot["upstream_status_code"], 0),
 		firstNonEmpty(anyString(snapshot["fetched_at"]), time.Now().Format(time.RFC3339)),
 		firstNonEmpty(anyString(snapshot["error"]), "无"),
+	)
+}
+
+func (m *serviceNotificationManager) runOpenAIStatusWorker(ctx context.Context) {
+	timer := time.NewTimer(upstreamHealthInitialDelay + 10*time.Second)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			m.checkAndNotifyOpenAIStatus(ctx)
+			timer.Reset(m.upstreamHealthCheckInterval(ctx))
+		}
+	}
+}
+
+func (m *serviceNotificationManager) checkAndNotifyOpenAIStatus(ctx context.Context) {
+	if err := m.sendOpenAIStatusNotification(ctx); errors.Is(err, errServiceNotificationSuppressed) {
+		return
+	} else if err != nil && ctx.Err() == nil {
+		m.logWarn("admin OpenAI image status notification failed", "error", err)
+	}
+}
+
+func (m *serviceNotificationManager) sendOpenAIStatusNotification(ctx context.Context) error {
+	values, err := settings.NewRepository(m.db).Get(ctx)
+	if err != nil {
+		return err
+	}
+	if !anyBool(values["adminOpenAIStatusNotificationEnabled"]) {
+		return errServiceNotificationSuppressed
+	}
+	checkCtx, cancel := context.WithTimeout(ctx, 12*time.Second)
+	snapshot := fetchOpenAIImageStatusSnapshot(checkCtx)
+	cancel()
+	healthy, stateLabel := openAIStatusSnapshotHealth(snapshot)
+	currentState := "unhealthy:" + strings.ToLower(strings.TrimSpace(stateLabel))
+	if healthy {
+		currentState = "healthy"
+	}
+	previousState, err := m.notificationState(ctx, "notify.openai.image.state")
+	if err != nil {
+		return err
+	}
+	if previousState == "" && healthy {
+		return m.setNotificationState(ctx, "notify.openai.image.state", currentState)
+	}
+	if previousState == currentState && healthy {
+		return errServiceNotificationSuppressed
+	}
+	if previousState == currentState && !healthy {
+		recent, err := m.reminderAlreadySent(ctx, "notify.openai.image.alert", openAIStatusAlertCooldown)
+		if err != nil {
+			return err
+		}
+		if recent {
+			return errServiceNotificationSuppressed
+		}
+	}
+
+	smtpConfig := smtpSettingsFromMap(values)
+	category := "openai_image_alert"
+	subject := emailBrandName(anyString(values["siteName"])) + " OpenAI Image 状态异常"
+	actionText := "查看状态"
+	if healthy {
+		category = "openai_image_recovery"
+		subject = emailBrandName(anyString(values["siteName"])) + " OpenAI Image 状态已恢复"
+	}
+	body := openAIStatusMailBody(snapshot, healthy, stateLabel)
+	sendErr := m.sendAdminNotification(
+		ctx,
+		smtpConfig,
+		category,
+		subject,
+		body,
+		mailAction{Text: actionText, URL: notificationActionURL(anyString(values["frontendUrl"]), "/sys-admins/upstream-apis")},
+	)
+	stateErr := m.setNotificationState(ctx, "notify.openai.image.state", currentState)
+	if !healthy {
+		_ = m.markReminderSent(ctx, "notify.openai.image.alert")
+	}
+	if sendErr != nil {
+		return sendErr
+	}
+	return stateErr
+}
+
+func openAIStatusSnapshotHealth(snapshot map[string]any) (bool, string) {
+	if !anyBool(snapshot["reachable"]) {
+		return false, "状态源不可达"
+	}
+	status := strings.ToLower(strings.TrimSpace(anyString(snapshot["status"])))
+	label := firstNonEmpty(anyString(snapshot["statusLabel"]), status)
+	switch status {
+	case "", "operational", "ok", "healthy", "available", "resolved":
+		return true, firstNonEmpty(label, "正常")
+	default:
+		return false, firstNonEmpty(label, status)
+	}
+}
+
+func openAIStatusMailBody(snapshot map[string]any, healthy bool, stateLabel string) string {
+	heading := "OpenAI Image 状态订阅检测到异常，请关注上游状态。"
+	if healthy {
+		heading = "OpenAI Image 状态已恢复。"
+	}
+	incidentTitle := "-"
+	incidentLink := "-"
+	if latest, ok := snapshot["latestImageIncident"].(openAIImageIncident); ok {
+		incidentTitle = firstNonEmpty(latest.Title, "-")
+		incidentLink = firstNonEmpty(latest.Link, "-")
+	}
+	return fmt.Sprintf(
+		"%s\n\n当前状态：%s\n说明：%s\n最新事件：%s\n事件链接：%s\n检测时间：%s\n数据源：%s",
+		heading,
+		stateLabel,
+		firstNonEmpty(anyString(snapshot["summary"]), "无"),
+		incidentTitle,
+		incidentLink,
+		firstNonEmpty(anyString(snapshot["fetchedAt"]), time.Now().Format(time.RFC3339)),
+		firstNonEmpty(anyString(snapshot["source"]), openAIStatusFeedEndpoint),
 	)
 }
 

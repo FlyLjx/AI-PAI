@@ -60,6 +60,7 @@ func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Han
 	router.taskHub = tasks.NewHub()
 	router.userHub = users.NewHub()
 	router.queue = generation.NewQueue(db, logger, 0, router.taskHub, router.userHub)
+	router.initializeUpstreamMaintenancePause()
 	router.requestMonitor = requestmonitor.NewRecorder(db, logger)
 	router.queue.Start()
 	router.routes()
@@ -69,6 +70,7 @@ func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Han
 func (r *Router) routes() {
 	r.mux.HandleFunc("/api/health", r.health)
 	r.mux.HandleFunc("/api/upstream/stability", r.upstreamStability)
+	r.mux.HandleFunc("/api/upstream/openai-status", r.openAIStatus)
 	r.mux.HandleFunc("/api/go/migration", r.migrationStatus)
 	r.mux.HandleFunc("/api/dashboard", r.dashboard)
 	r.mux.HandleFunc("/api/admin/login", r.adminLogin)
@@ -100,6 +102,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/admin/mail-broadcast", r.mailBroadcast)
 	r.mux.HandleFunc("/api/admin/mail-logs", r.adminMailLogs)
 	r.mux.HandleFunc("/api/admin/request-monitor", r.adminRequestMonitor)
+	r.mux.HandleFunc("/api/admin/upstream-maintenance", r.upstreamMaintenance)
 	r.mux.HandleFunc("/api/admin/system-update", r.systemUpdate)
 	r.mux.HandleFunc("/api/announcements/public", r.publicAnnouncements)
 	r.mux.HandleFunc("/api/announcements", r.announcements)

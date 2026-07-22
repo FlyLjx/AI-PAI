@@ -61,6 +61,7 @@ func StartServiceNotificationWorker(ctx context.Context, db *database.DB, logger
 	manager := newServiceNotificationManager(db, logger)
 	go manager.runSubscriptionExpiryWorker(ctx)
 	go manager.runUpstreamHealthWorker(ctx)
+	go manager.runOpenAIStatusWorker(ctx)
 }
 
 func (r *Router) notifyBalanceInsufficient(userID string) {

@@ -290,6 +290,44 @@ export type StabilitySnapshot = {
   series?: StabilitySeriesPoint[];
 };
 
+export type OpenAIAffectedComponent = {
+  name: string;
+  status: string;
+  label: string;
+};
+
+export type OpenAIImageIncident = {
+  title: string;
+  link: string;
+  guid: string;
+  pubDate: string;
+  publishedAt?: string;
+  status: string;
+  statusLabel: string;
+  severity: 'ok' | 'warning' | 'critical' | string;
+  summary: string;
+  affectedComponents: OpenAIAffectedComponent[];
+};
+
+export type OpenAIImageStatusSnapshot = {
+  reachable: boolean;
+  status: 'operational' | 'monitoring' | 'degraded' | 'partial_outage' | 'outage' | 'unreachable' | string;
+  statusLabel: string;
+  severity: 'ok' | 'warning' | 'critical' | string;
+  summary: string;
+  source: string;
+  feedTitle?: string;
+  feedLink?: string;
+  lastBuildDate?: string;
+  fetchedAt: string;
+  upstream_status_code: number;
+  latestImageIncident?: OpenAIImageIncident | null;
+  imageIncidents: OpenAIImageIncident[];
+  affectedComponents: OpenAIAffectedComponent[];
+  totalImageIncidents: number;
+  error?: string;
+};
+
 export type Plan = {
   id: string;
   name: string;
@@ -485,6 +523,7 @@ export const portalApi = {
   usage: (user: PortalUser, page = 1, pageSize = 20, keyword = '', status = '') => api<UsageLog[]>(`/api/api-access/logs${query({ userId: user.id, page, pageSize, keyword, status })}`, {}, user.token),
   usageTrend: (user: PortalUser, startDate: string, endDate: string) => api<UsageTrendPoint[]>(`/api/api-access/logs/trend${query({ userId: user.id, startDate, endDate })}`, {}, user.token),
   stability: () => api<StabilitySnapshot>('/api/upstream/stability'),
+  openAIImageStatus: () => api<OpenAIImageStatusSnapshot>('/api/upstream/openai-status'),
   plans: () => api<Plan[]>('/api/subscriptions/public/plans'),
   subscription: (user: PortalUser) => api<Subscription | null>(`/api/subscriptions/public/current${query({ userId: user.id })}`, {}, user.token),
   recharge: (user: PortalUser, input: { amount?: number; subscriptionPlanId?: string }) => api<Record<string, unknown>>('/api/recharge', { method: 'POST', body: JSON.stringify({ userId: user.id, ...input }) }, user.token),

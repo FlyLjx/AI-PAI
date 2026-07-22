@@ -294,7 +294,8 @@ func (r *Repository) UpdateStatus(ctx context.Context, id string, status Status)
 func (r *Repository) ClaimForProcessing(ctx context.Context, id string) (bool, error) {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE generation_tasks
-		SET status = 'processing'
+		SET status = 'processing',
+			updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND status IN ('queued', 'pending')
 	`, id)
 	if err != nil {
@@ -335,6 +336,14 @@ func (r *Repository) FinishFailed(ctx context.Context, id string, message string
 }
 
 func (r *Repository) FailTimedOut(ctx context.Context, cutoff time.Time, now time.Time, message string, limit int) ([]string, error) {
+	return r.failTimedOut(ctx, cutoff, now, message, limit, false)
+}
+
+func (r *Repository) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, now time.Time, message string, limit int) ([]string, error) {
+	return r.failTimedOut(ctx, cutoff, now, message, limit, true)
+}
+
+func (r *Repository) failTimedOut(ctx context.Context, cutoff time.Time, now time.Time, message string, limit int, processingOnly bool) ([]string, error) {
 	if limit < 1 {
 		limit = 100
 	}
@@ -343,11 +352,15 @@ func (r *Repository) FailTimedOut(ctx context.Context, cutoff time.Time, now tim
 	}
 	cutoff = appclock.DatabaseTime(cutoff)
 	now = appclock.DatabaseTime(now)
+	where := `status IN ('queued', 'pending', 'processing')`
+	if processingOnly {
+		where = `status = 'processing'`
+	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT id, created_at
 		FROM generation_tasks
-		WHERE status IN ('queued', 'pending', 'processing')
-			AND created_at <= ?
+		WHERE `+where+`
+			AND updated_at <= ?
 		ORDER BY created_at ASC, id ASC
 		LIMIT ?
 	`, cutoff, limit)
@@ -388,8 +401,8 @@ func (r *Repository) FailTimedOut(ctx context.Context, cutoff time.Time, now tim
 				duration_seconds = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
-				AND status IN ('queued', 'pending', 'processing')
-				AND created_at <= ?
+				AND `+where+`
+				AND updated_at <= ?
 		`, message, durationSeconds, item.id, cutoff)
 		if err != nil {
 			return failedIDs, err
@@ -403,6 +416,15 @@ func (r *Repository) FailTimedOut(ctx context.Context, cutoff time.Time, now tim
 		}
 	}
 	return failedIDs, nil
+}
+
+func (r *Repository) TouchWaiting(ctx context.Context) error {
+	_, err := r.db.ExecContext(ctx, `
+		UPDATE generation_tasks
+		SET updated_at = CURRENT_TIMESTAMP
+		WHERE status IN ('queued', 'pending')
+	`)
+	return err
 }
 
 func (r *Repository) Cancel(ctx context.Context, id string) (*Task, error) {
