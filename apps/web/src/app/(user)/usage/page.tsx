@@ -19,6 +19,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { AppSelect, type AppSelectOption } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
+import { SpecTags } from '@/components/common/SpecTags';
 import { APIError, getSession, portalApi, type UsageLog, type UsageSummary } from '@/lib/portal-api';
 import { formatDate } from '@/lib/common/utils';
 
@@ -212,7 +213,9 @@ export default function UsagePage() {
                 <td className="min-w-[220px] max-w-[300px] px-4 py-3" title={log.prompt || ''}>
                   <p className="truncate text-[12px] text-zinc-600">{log.prompt || '-'}</p>
                 </td>
-                <td className="px-4 py-3 mono">{log.size || '-'}{log.quality ? ` · ${log.quality}` : ''}</td>
+                <td className="px-4 py-3">
+                  <SpecTags size={log.size} quality={log.quality} />
+                </td>
                 <td className="px-4 py-3 mono">{Number(log.quantity || 0)} / {Number(log.imageCount || 0)}</td>
                 <td className="px-4 py-3 mono text-[#047857]">{Number(log.chargedCredits || 0).toFixed(4)}</td>
                 <td className="px-4 py-3"><span className={`status-pill mono min-w-[58px] justify-center ${duration.className}`}>{duration.label}</span></td>
@@ -239,7 +242,12 @@ export default function UsagePage() {
                     <dd className="mt-1 line-clamp-3 whitespace-pre-wrap break-words leading-5 text-[#3f4943]" title={log.prompt || ''}>{log.prompt || '-'}</dd>
                   </div>
                   <div><dt className="text-zinc-400">API Key</dt><dd className="mt-0.5 truncate">{log.keyName || log.keyPrefix || '-'}</dd></div>
-                  <div><dt className="text-zinc-400">规格</dt><dd className="mono mt-0.5">{log.size || '-'} · {log.quality || '-'}</dd></div>
+                  <div>
+                    <dt className="text-zinc-400">规格</dt>
+                    <dd className="mt-1">
+                      <SpecTags size={log.size} quality={log.quality} />
+                    </dd>
+                  </div>
                   <div><dt className="text-zinc-400">请求 / 输出</dt><dd className="mono mt-0.5">{Number(log.quantity || 0)} / {Number(log.imageCount || 0)}</dd></div>
                   <div><dt className="text-zinc-400">扣费金额</dt><dd className="mono mt-0.5 text-[#047857]">{Number(log.chargedCredits || 0).toFixed(4)}</dd></div>
                   <div><dt className="text-zinc-400">响应时间</dt><dd className="mt-1"><span className={`status-pill mono min-w-[58px] justify-center ${duration.className}`}>{duration.label}</span></dd></div>

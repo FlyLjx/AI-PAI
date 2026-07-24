@@ -41,6 +41,17 @@ export type CreditLog = {
   createdAt: string;
 };
 
+export type ConsumptionRank = {
+  rank: number;
+  userId: string;
+  userEmail?: string;
+  userStatus?: string;
+  deductCount: number;
+  creditsSpent: number;
+  lastDeductAt?: string | null;
+  windowDays: number;
+};
+
 export type AdminIdentity = Pick<PortalUser, 'id' | 'email'> & { role: 'admin' };
 
 export type APIKeyBillingMode = 'balance' | 'subscription' | 'auto';
@@ -116,6 +127,7 @@ export type AdminInviteRecord = {
   inviteeRewardLabel?: string;
   status: string;
   riskReason?: string;
+  inviterIp?: string;
   inviteeIp?: string;
   verifiedAt?: string;
   rewardedAt?: string;
@@ -520,6 +532,7 @@ export const portalApi = {
   updateUser: (id: string, input: Record<string, unknown>) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   updateUserBalance: (id: string, input: { balance: number; remark: string }) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/balance`, { method: 'PATCH', body: JSON.stringify(input) }),
   userCreditLogs: (id: string, page = 1, pageSize = 10, type = 'all') => api<CreditLog[]>(`/api/users/${encodeURIComponent(id)}/credit-logs${query({ page, pageSize, type: type === 'all' ? undefined : type })}`),
+  userConsumptionRanking: (days = 30, limit = 8) => api<ConsumptionRank[]>(`/api/admin/users/consumption-ranking${query({ days, limit })}`),
   deleteUser: (id: string) => api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   verifyUserEmail: (id: string) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/verify-email`, { method: 'POST' }),
   grantSubscription: (id: string, input: Record<string, unknown>) => api(`/api/users/${encodeURIComponent(id)}/subscription`, { method: 'POST', body: JSON.stringify(input) }),

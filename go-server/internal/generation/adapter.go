@@ -22,6 +22,7 @@ type ImageRequest struct {
 	Size                  string
 	Quantity              int
 	OutputFormat          string
+	ResponseFormat        string
 	TransparentBackground bool
 	ReferenceImageURLs    []string
 	MaskImageURL          string
@@ -69,6 +70,13 @@ func (s *Service) callImageGeneration(ctx context.Context, input ImageRequest) (
 	}
 	if len(images) > expectedQuantity {
 		images = images[:expectedQuantity]
+	}
+	if wantsBase64ImageResponse(input.ResponseFormat) {
+		var err error
+		images, err = EnsureBase64Images(ctx, images)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return map[string]any{"data": images}, nil
 }

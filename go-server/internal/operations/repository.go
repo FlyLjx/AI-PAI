@@ -871,7 +871,7 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 		return nil, 0, err
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT user_invites.id, user_invites.inviter_id, inviter.email, user_invites.invitee_id, invitee.email,
+		SELECT user_invites.id, user_invites.inviter_id, inviter.email, inviter.invited_ip, user_invites.invitee_id, invitee.email,
 			user_invites.reward_credits,
 			COALESCE(user_invites.reward_type, 'subscription') AS reward_type,
 			user_invites.reward_plan_id,
@@ -1021,7 +1021,7 @@ func (r *Repository) inviteRechargeRebateRecords(ctx context.Context, inviterID 
 
 func (r *Repository) inviteRecords(ctx context.Context, where string, arg any, limit int) ([]Invite, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT user_invites.id, user_invites.inviter_id, inviter.email, user_invites.invitee_id, invitee.email,
+		SELECT user_invites.id, user_invites.inviter_id, inviter.email, inviter.invited_ip, user_invites.invitee_id, invitee.email,
 			user_invites.reward_credits,
 			COALESCE(user_invites.reward_type, 'subscription') AS reward_type,
 			user_invites.reward_plan_id,
@@ -2427,7 +2427,7 @@ func (r *Repository) CompleteOrder(ctx context.Context, outTradeNo string, trade
 		}
 		return &order, false, nil
 	}
-	if order.Status != "pending" {
+	if order.Status != "pending" && order.Status != "closed" {
 		return &order, false, ErrRechargeOrderClosed
 	}
 	isSubscription := order.OrderType == "subscription" && order.SubscriptionPlanID != nil && strings.TrimSpace(*order.SubscriptionPlanID) != ""
@@ -2632,14 +2632,15 @@ func scanPlanWithPrefix(row interface{ Scan(dest ...any) error }, prefix ...any)
 
 func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 	var item Invite
-	var inviter, invitee, rewardType, planID, label sql.NullString
-	var inviteeRewardType, inviteePlanID, inviteeLabel, riskReason, ip sql.NullString
+	var inviter, inviterIP, invitee, rewardType, planID, label sql.NullString
+	var inviteeRewardType, inviteePlanID, inviteeLabel, riskReason, inviteeAddr sql.NullString
 	var verifiedAt, rewardedAt sql.NullTime
 	var created time.Time
 	err := row.Scan(
 		&item.ID,
 		&item.InviterID,
 		&inviter,
+		&inviterIP,
 		&item.InviteeID,
 		&invitee,
 		&item.RewardCredits,
@@ -2652,7 +2653,7 @@ func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 		&inviteeLabel,
 		&item.Status,
 		&riskReason,
-		&ip,
+		&inviteeAddr,
 		&verifiedAt,
 		&rewardedAt,
 		&item.RechargeRebateCount,
@@ -2674,7 +2675,8 @@ func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 	item.InviteeRewardPlanID = nullString(inviteePlanID)
 	item.InviteeRewardLabel = nullString(inviteeLabel)
 	item.RiskReason = nullString(riskReason)
-	item.InviteeIP = nullString(ip)
+	item.InviterIP = nullString(inviterIP)
+	item.InviteeIP = nullString(inviteeAddr)
 	if verifiedAt.Valid {
 		value := appclock.DatabaseTime(verifiedAt.Time).Format(time.RFC3339)
 		item.VerifiedAt = &value

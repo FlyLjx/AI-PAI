@@ -17,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   ReceiptText,
+  Trophy,
   ShieldCheck,
   Trash2,
   UserRoundCog,
@@ -30,7 +31,7 @@ import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { type CreditLog, type Plan, type PortalUser, portalApi } from '@/lib/admin-api';
+import { type ConsumptionRank, type CreditLog, type Plan, type PortalUser, portalApi } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
 
 type UserDraft = {
@@ -93,6 +94,13 @@ function SubscriptionStatusBadge({ user }: { user: PortalUser }) {
   return <span className="inline-flex rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">未订阅</span>;
 }
 
+function userStatusLabel(status?: string) {
+  if (status === 'active') return '启用';
+  if (status === 'disabled') return '停用';
+  if (status === 'deleted') return '已删除';
+  return status || '-';
+}
+
 export default function AdminUsersPage() {
   const [users, setUsers] = useState<PortalUser[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -118,6 +126,10 @@ export default function AdminUsersPage() {
   const [creditLogLoading, setCreditLogLoading] = useState(false);
   const [creditLogError, setCreditLogError] = useState('');
   const [creditLogRefresh, setCreditLogRefresh] = useState(0);
+  const [consumptionRanking, setConsumptionRanking] = useState<ConsumptionRank[]>([]);
+  const [consumptionDays, setConsumptionDays] = useState(30);
+  const [consumptionLoading, setConsumptionLoading] = useState(true);
+  const [consumptionError, setConsumptionError] = useState('');
   const [grantPlanId, setGrantPlanId] = useState('');
   const [grantMode, setGrantMode] = useState<GrantMode>('plan');
   const [customGrantName, setCustomGrantName] = useState('自定义订阅');
@@ -144,6 +156,24 @@ export default function AdminUsersPage() {
     }
   }, []);
 
+  const loadConsumptionRanking = useCallback(async () => {
+    setConsumptionLoading(true);
+    setConsumptionError('');
+    try {
+      const response = await portalApi.userConsumptionRanking(consumptionDays, 8);
+      setConsumptionRanking(response.data);
+    } catch (requestError) {
+      setConsumptionRanking([]);
+      setConsumptionError(requestError instanceof Error ? requestError.message : '消费排行榜加载失败');
+    } finally {
+      setConsumptionLoading(false);
+    }
+  }, [consumptionDays]);
+
+  const refreshAll = useCallback(async () => {
+    await Promise.all([load(), loadConsumptionRanking()]);
+  }, [load, loadConsumptionRanking]);
+
   useEffect(() => {
     const initialSearch = new URLSearchParams(window.location.search).get('search')?.trim();
     const timer = window.setTimeout(() => {
@@ -156,6 +186,11 @@ export default function AdminUsersPage() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadConsumptionRanking(), 0);
+    return () => window.clearTimeout(timer);
+  }, [loadConsumptionRanking]);
 
   useEffect(() => {
     if (!creditLogUser) return;
@@ -207,6 +242,7 @@ export default function AdminUsersPage() {
     subscribed: users.filter(subscriptionActive).length,
     balance: users.reduce((sum, user) => sum + Number(user.credits || 0), 0),
   }), [users]);
+  const consumptionWindowLabel = consumptionDays === 0 ? '全部时间' : `近 ${consumptionDays} 天`;
 
   const resetPage = () => setPage(1);
   const updateDraft = <K extends keyof UserDraft>(key: K, value: UserDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
@@ -389,7 +425,7 @@ export default function AdminUsersPage() {
   return (
     <div className="space-y-5">
       <PageHeader title="用户管理" description="管理 API 客户、账户状态、余额与订阅权益。">
-        <button type="button" onClick={() => void load()} disabled={loading} title="刷新用户" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
+        <button type="button" onClick={() => void refreshAll()} disabled={loading || consumptionLoading} title="刷新数据" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${(loading || consumptionLoading) ? 'animate-spin' : ''}`} /></button>
         <button type="button" onClick={openCreate} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#047857] px-3 text-xs font-semibold text-white hover:bg-[#036b4f]"><Plus className="h-4 w-4" />新增用户</button>
       </PageHeader>
 
@@ -407,6 +443,108 @@ export default function AdminUsersPage() {
           </div>
         ))}
       </div>
+
+      <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="consumption-ranking-title">
+        <header className="flex flex-col gap-3 border-b border-[#EDF0EE] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-amber-50 text-amber-700"><Trophy className="h-4.5 w-4.5" /></span>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 id="consumption-ranking-title" className="text-sm font-semibold text-[#17201B]">消费排行榜</h2>
+                <span className="inline-flex h-5 items-center gap-1.5 rounded border border-amber-200 bg-amber-50 px-1.5 text-[10px] font-semibold text-amber-700">按余额扣费排序</span>
+              </div>
+              <p className="mt-0.5 text-[11px] text-zinc-500">查看 {consumptionWindowLabel} 的 API 消费最高客户</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-md border border-[#DCE4DF] bg-[#F7F8F6] p-0.5" role="group" aria-label="消费排行榜时间范围">
+              {([ [7, '7天'], [15, '15天'], [30, '30天'], [0, '全部'] ] as const).map(([value, label]) => (
+                <button key={label} type="button" onClick={() => setConsumptionDays(value)} aria-pressed={consumptionDays === value} className={`h-7 min-w-11 rounded px-2 text-[11px] font-semibold ${consumptionDays === value ? 'bg-white text-[#047857] shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>{label}</button>
+              ))}
+            </div>
+            <button type="button" onClick={() => void loadConsumptionRanking()} disabled={consumptionLoading} className="inline-flex h-8 items-center gap-2 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-[#17201B] hover:border-[#12B76A] disabled:opacity-50">
+              <RefreshCw className={`h-3.5 w-3.5 ${consumptionLoading ? 'animate-spin' : ''}`} />刷新
+            </button>
+          </div>
+        </header>
+
+        {consumptionLoading && !consumptionRanking.length ? (
+          <div className="grid min-h-[240px] place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[#12B76A]" /></div>
+        ) : consumptionError && !consumptionRanking.length ? (
+          <div className="grid min-h-[240px] place-items-center px-4 text-center">
+            <div>
+              <CircleDollarSign className="mx-auto h-8 w-8 text-red-300" />
+              <p className="mt-3 text-xs font-semibold text-red-700">消费排行榜加载失败</p>
+              <p className="mt-1 text-[11px] text-zinc-400">{consumptionError}</p>
+              <button type="button" onClick={() => void loadConsumptionRanking()} className="mt-3 rounded-md border border-red-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-red-700 hover:bg-red-50">重试</button>
+            </div>
+          </div>
+        ) : consumptionRanking.length ? (
+          <>
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full min-w-[680px] text-left text-[11px]">
+                <thead className="bg-[#F7F8F6] text-[10px] text-zinc-500"><tr><th className="w-11 px-3 py-2 text-center">#</th><th className="px-3 py-2">客户</th><th className="px-3 py-2 text-right">消费金额</th><th className="px-3 py-2 text-right">扣费次数</th><th className="px-3 py-2 text-right">最近扣费</th></tr></thead>
+                <tbody className="divide-y divide-[#EDF0EE]">
+                  {consumptionRanking.map((item, index) => {
+                    const statusLabel = userStatusLabel(item.userStatus);
+                    const rankTone = index === 0 ? 'bg-amber-50 text-amber-700' : index === 1 ? 'bg-zinc-100 text-zinc-600' : index === 2 ? 'bg-orange-50 text-orange-700' : 'bg-zinc-100 text-zinc-500';
+                    return (
+                      <tr key={item.userId} className="hover:bg-[#FAFBFA]">
+                        <td className="px-3 py-2.5 text-center"><span className={`inline-grid h-5 w-5 place-items-center rounded font-mono text-[10px] font-bold ${rankTone}`}>{index + 1}</span></td>
+                        <td className="max-w-[220px] px-3 py-2.5"><strong className="block truncate font-semibold text-[#17201B]">{item.userEmail || item.userId}</strong><small className="mt-0.5 block truncate text-[9px] text-zinc-400">{item.userId} · {statusLabel}</small></td>
+                        <td className="px-3 py-2.5 text-right font-mono font-semibold text-[#17201B]">{formatCNY(item.creditsSpent)}</td>
+                        <td className="px-3 py-2.5 text-right font-mono">{item.deductCount.toLocaleString('zh-CN')}</td>
+                        <td className="px-3 py-2.5 text-right text-zinc-500">{item.lastDeductAt ? formatDate(item.lastDeductAt) : '-'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="divide-y divide-[#EDF0EE] md:hidden">
+              {consumptionRanking.map((item, index) => {
+                const statusLabel = userStatusLabel(item.userStatus);
+                const rankTone = index === 0 ? 'bg-amber-50 text-amber-700' : index === 1 ? 'bg-zinc-100 text-zinc-600' : index === 2 ? 'bg-orange-50 text-orange-700' : 'bg-zinc-100 text-zinc-500';
+                return (
+                  <article key={item.userId} className="px-4 py-3.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`grid h-5 w-5 shrink-0 place-items-center rounded font-mono text-[10px] font-bold ${rankTone}`}>{index + 1}</span>
+                          <strong className="truncate text-sm text-[#17201B]">{item.userEmail || item.userId}</strong>
+                        </div>
+                        <small className="mt-1 block truncate text-[10px] text-zinc-400">{item.userId} · {statusLabel}</small>
+                      </div>
+                      <div className="text-right">
+                        <span className="block font-mono text-sm font-semibold text-[#17201B]">{formatCNY(item.creditsSpent)}</span>
+                        <small className="block text-[10px] text-zinc-400">累计消费</small>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex items-center justify-between text-[10px] text-zinc-500">
+                      <span>扣费 {item.deductCount} 次</span>
+                      <span>{item.lastDeductAt ? formatDate(item.lastDeductAt) : '-'}</span>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </>
+        ) : (
+          <div className="grid min-h-[240px] place-items-center px-4 text-center">
+            <div>
+              <Trophy className="mx-auto h-8 w-8 text-zinc-300" />
+              <p className="mt-3 text-xs font-semibold text-zinc-600">暂无消费记录</p>
+              <p className="mt-1 text-[11px] text-zinc-400">用户发起 API 调用并产生扣费后会自动进入排行榜。</p>
+            </div>
+          </div>
+        )}
+
+        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[#EDF0EE] bg-[#FAFBFA] px-4 py-2 text-[9px] text-zinc-400">
+          <span>排行按 {consumptionWindowLabel} 的扣费金额统计，默认展示前 8 名</span>
+          <span>当前榜单：{consumptionRanking.length} 人</span>
+        </footer>
+      </section>
 
       {error && (
         <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>

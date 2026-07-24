@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -594,6 +595,37 @@ func (r *Router) userActivityRanking(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	items, err := users.NewRepository(r.db).ActivityRanking(ctx, queryInt(req, "days", 7), queryInt(req, "limit", 10))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": items})
+}
+
+func (r *Router) adminConsumptionRanking(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	days := 30
+	if rawDays := strings.TrimSpace(req.URL.Query().Get("days")); rawDays != "" {
+		if strings.EqualFold(rawDays, "all") {
+			days = 0
+		} else if parsedDays, err := strconv.Atoi(rawDays); err == nil {
+			if parsedDays < 0 {
+				days = 0
+			} else {
+				days = parsedDays
+			}
+		}
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	items, err := users.NewRepository(r.db).ConsumptionRanking(ctx, days, queryInt(req, "limit", 10))
 	if err != nil {
 		writeError(w, err)
 		return

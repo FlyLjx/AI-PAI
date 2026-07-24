@@ -3,6 +3,7 @@ package generation
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +15,11 @@ import (
 	"aipi-go/internal/providers"
 )
 
-const upstreamImageMaxAttempts = 3
+const (
+	upstreamImageMaxAttempts      = 3
+	maxUpstreamImageResponseBytes = 120 * 1024 * 1024
+	maxInlineResultImageBytes     = 80 * 1024 * 1024
+)
 
 func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt int) (any, error) {
 	body := map[string]any{
@@ -23,7 +28,7 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 		"size":            input.Size,
 		"n":               input.Quantity,
 		"quality":         "high",
-		"response_format": "url",
+		"response_format": normalizeUpstreamImageResponseFormat(input.ResponseFormat),
 	}
 	if input.OutputFormat != "" {
 		body["output_format"] = input.OutputFormat
@@ -136,7 +141,10 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 	}
 	defer resp.Body.Close()
 
-	responseBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
+	responseBytes, _ := io.ReadAll(io.LimitReader(resp.Body, maxUpstreamImageResponseBytes+1))
+	if len(responseBytes) > maxUpstreamImageResponseBytes {
+		return nil, errors.New("上游图片响应过大")
+	}
 	var responseJSON any
 	_ = json.Unmarshal(responseBytes, &responseJSON)
 	errorMessage := cleanUpstreamError(responseJSON, string(responseBytes))
@@ -173,6 +181,75 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 		return nil, errors.New("上游接口未返回图片结果")
 	}
 	return NormalizeImageResultForProvider(responseJSON, input.Provider), nil
+}
+
+func normalizeUpstreamImageResponseFormat(format string) string {
+	if wantsBase64ImageResponse(format) {
+		return "b64_json"
+	}
+	return "url"
+}
+
+func wantsBase64ImageResponse(format string) bool {
+	format = strings.ToLower(strings.TrimSpace(format))
+	return format == "b64_json" || format == "base64" || format == "b64"
+}
+
+func EnsureBase64Images(ctx context.Context, images []ExtractedImage) ([]ExtractedImage, error) {
+	result := make([]ExtractedImage, 0, len(images))
+	for index, image := range images {
+		if strings.TrimSpace(image.B64) != "" {
+			image.Type = "b64_json"
+			image.B64 = compactBase64(image.B64)
+			image.URL = ""
+			result = append(result, image)
+			continue
+		}
+		if converted, ok := base64ImageFromDataURL(image.URL); ok {
+			result = append(result, converted)
+			continue
+		}
+		if strings.TrimSpace(image.URL) == "" {
+			return nil, fmt.Errorf("第 %d 张图片缺少可转为 base64 的结果", index+1)
+		}
+		converted, err := fetchImageAsBase64(ctx, image.URL)
+		if err != nil {
+			return nil, fmt.Errorf("第 %d 张图片转为 base64 失败：%w", index+1, err)
+		}
+		result = append(result, converted)
+	}
+	return result, nil
+}
+
+func fetchImageAsBase64(ctx context.Context, imageURL string) (ExtractedImage, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSpace(imageURL), nil)
+	if err != nil {
+		return ExtractedImage{}, err
+	}
+	req.Header.Set("User-Agent", "AI-PAI image base64")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return ExtractedImage{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return ExtractedImage{}, fmt.Errorf("图片下载失败：HTTP %d", resp.StatusCode)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxInlineResultImageBytes+1))
+	if err != nil {
+		return ExtractedImage{}, err
+	}
+	if len(body) == 0 || len(body) > maxInlineResultImageBytes {
+		return ExtractedImage{}, errors.New("图片内容为空或过大")
+	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(resp.Header.Get("Content-Type"), ";")[0]))
+	if !strings.HasPrefix(contentType, "image/") {
+		contentType = strings.ToLower(http.DetectContentType(body))
+	}
+	if !strings.HasPrefix(contentType, "image/") {
+		return ExtractedImage{}, errors.New("下载内容不是图片")
+	}
+	return ExtractedImage{Type: "b64_json", B64: base64.StdEncoding.EncodeToString(body)}, nil
 }
 
 type imageUpstreamHTTPError struct {

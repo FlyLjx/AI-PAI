@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
+import { SpecTags } from '@/components/common/SpecTags';
 import { UsageTrendPanel } from '@/components/dashboard/UsageTrendPanel';
 import {
   APIError,
@@ -198,7 +199,9 @@ export default function DashboardPage() {
                     <td><span className={`status-pill ${status.className}`}>{status.label}</span></td>
                     <td className="mono truncate-cell" title={log.endpoint}>{log.endpoint || '-'}</td>
                     <td className="truncate-cell" title={log.model}>{log.model || '-'}</td>
-                    <td className="mono">{log.size || log.quality || '-'}</td>
+                    <td>
+                      <SpecTags size={log.size} quality={log.quality} />
+                    </td>
                     <td className="mono">{Number(log.imageCount || 0)}</td>
                     <td className="mono">{formatDate(log.createdAt)}</td>
                   </tr>

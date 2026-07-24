@@ -107,6 +107,21 @@ function taskImageDownloadURL(url: string, filename: string): string {
   return `${target.pathname}${target.search}`;
 }
 
+function imageMimeType(format: OutputFormat): string {
+  if (format === 'png') return 'image/png';
+  if (format === 'webp') return 'image/webp';
+  return 'image/jpeg';
+}
+
+function imageResultSource(item: { url?: string; b64_json?: string }, format: OutputFormat): string {
+  const url = String(item.url || '').trim();
+  if (url) return url;
+  const b64 = String(item.b64_json || '').trim();
+  if (!b64) return '';
+  if (b64.startsWith('data:image/')) return b64;
+  return `data:${imageMimeType(format)};base64,${b64}`;
+}
+
 export default function PlaygroundPage() {
   const mountedRef = useRef(true);
   const keyRequestRef = useRef(0);
@@ -347,7 +362,7 @@ export default function PlaygroundPage() {
         aspect_ratio: aspectRatio,
         output_format: outputFormat,
       }, referenceImages.map((item) => item.file));
-      const urls = (response.data || []).map((item) => item.url).filter(Boolean);
+      const urls = (response.data || []).map((item) => imageResultSource(item, outputFormat)).filter(Boolean);
       if (urls.length === 0) throw new Error('生成完成，但服务端没有返回图片');
       setResults(urls);
       setCreatedAt(response.created || Math.floor(Date.now() / 1000));
@@ -369,6 +384,19 @@ export default function PlaygroundPage() {
     setDownloadingIndex(index);
     try {
       const filename = `aipai-${Date.now()}-${index + 1}.${fileExtension(outputFormat)}`;
+      if (url.startsWith('data:image/')) {
+        const blob = await fetch(url).then((response) => response.blob());
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = filename;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1500);
+        toast.success('已开始下载');
+        return;
+      }
       const downloadURL = taskImageDownloadURL(url, filename);
       const anchor = document.createElement('a');
       anchor.href = downloadURL;

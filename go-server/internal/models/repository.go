@@ -4,9 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"aipi-go/internal/database"
+)
+
+var (
+	ErrAmbiguousModelName        = errors.New("ambiguous active model match")
+	ErrDuplicateModelDisplayName = errors.New("duplicate model display name")
 )
 
 type Repository struct {
@@ -44,6 +51,7 @@ func (r *Repository) FindAll(ctx context.Context) ([]Model, error) {
 			ai_models.updated_at
 		FROM ai_models
 		LEFT JOIN api_providers ON api_providers.id = ai_models.provider_id
+		WHERE ai_models.deleted_at IS NULL
 		ORDER BY
 			ai_models.capability ASC,
 			ai_models.sort_order ASC,
@@ -102,7 +110,41 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*Model, error) {
 }
 
 func (r *Repository) FindActiveByNameOrDisplayName(ctx context.Context, name string) (*Model, error) {
-	row := r.db.QueryRowContext(ctx, `
+	items, err := r.findActiveChatImageModelsByColumn(ctx, "display_name", name)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 1 {
+		return &items[0], nil
+	}
+	if len(items) > 1 {
+		return nil, fmt.Errorf("%w: 模型 %q 匹配到多个公开模型配置，请确保模型 ID 唯一", ErrAmbiguousModelName, name)
+	}
+
+	items, err = r.findActiveChatImageModelsByColumn(ctx, "model_name", name)
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return nil, sql.ErrNoRows
+	}
+	if len(items) > 1 {
+		return nil, fmt.Errorf("%w: 模型 %q 匹配到多个上游渠道，请使用 /v1/models 返回的精确模型 ID", ErrAmbiguousModelName, name)
+	}
+	return &items[0], nil
+}
+
+func (r *Repository) findActiveChatImageModelsByColumn(ctx context.Context, column string, value string) ([]Model, error) {
+	var predicate string
+	switch column {
+	case "display_name":
+		predicate = "ai_models.display_name = ?"
+	case "model_name":
+		predicate = "ai_models.model_name = ?"
+	default:
+		return nil, fmt.Errorf("unsupported model lookup column %q", column)
+	}
+	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT
 			ai_models.id,
 			ai_models.provider_id,
@@ -131,11 +173,28 @@ func (r *Repository) FindActiveByNameOrDisplayName(ctx context.Context, name str
 		WHERE ai_models.capability = 'chat_image'
 			AND ai_models.status = 'active'
 			AND api_providers.status = 'active'
-			AND (ai_models.model_name = ? OR ai_models.display_name = ?)
-		ORDER BY ai_models.created_at DESC, ai_models.id ASC
-		LIMIT 1
-	`, name, name)
-	return scanModel(row)
+			AND ai_models.deleted_at IS NULL
+			AND %s
+		ORDER BY
+			ai_models.sort_order ASC,
+			ai_models.created_at DESC,
+			ai_models.id ASC
+		LIMIT 2
+	`, predicate), value)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := []Model{}
+	for rows.Next() {
+		item, err := scanModel(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
 }
 
 func (r *Repository) FindByProviderNameAndCapability(ctx context.Context, providerID string, modelName string, capability string) (*Model, error) {
@@ -174,8 +233,20 @@ func (r *Repository) FindByProviderNameAndCapability(ctx context.Context, provid
 }
 
 func (r *Repository) Create(ctx context.Context, model Model) (*Model, error) {
+	excludeID := model.ID
+	existing, err := r.FindByProviderNameAndCapability(ctx, model.ProviderID, model.ModelName, model.Capability)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if existing != nil {
+		excludeID = existing.ID
+	}
+	if err := r.ensureUniqueDisplayName(ctx, model.DisplayName, model.Capability, excludeID); err != nil {
+		return nil, err
+	}
+
 	tiers, _ := json.Marshal(ParseEnabledSizeTiersFromStrings(model.EnabledSizeTiers))
-	_, err := r.db.ExecContext(ctx, `
+	_, err = r.db.ExecContext(ctx, `
 		INSERT INTO ai_models
 			(id, provider_id, model_name, display_name, capability,
 			 cost_1k, cost_2k, cost_4k, markup_percent,
@@ -211,6 +282,10 @@ func (r *Repository) Create(ctx context.Context, model Model) (*Model, error) {
 }
 
 func (r *Repository) Update(ctx context.Context, id string, model Model) (*Model, error) {
+	if err := r.ensureUniqueDisplayName(ctx, model.DisplayName, model.Capability, id); err != nil {
+		return nil, err
+	}
+
 	tiers, _ := json.Marshal(ParseEnabledSizeTiersFromStrings(model.EnabledSizeTiers))
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE ai_models
@@ -241,8 +316,33 @@ func (r *Repository) Update(ctx context.Context, id string, model Model) (*Model
 	return r.FindByID(ctx, id)
 }
 
+func (r *Repository) ensureUniqueDisplayName(ctx context.Context, displayName string, capability string, excludeID string) error {
+	var existingID string
+	err := r.db.QueryRowContext(ctx, `
+		SELECT id
+		FROM ai_models
+		WHERE capability = ?
+			AND LOWER(display_name) = LOWER(?)
+			AND (? = '' OR id <> ?)
+		LIMIT 1
+	`, capability, displayName, excludeID, excludeID).Scan(&existingID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return fmt.Errorf("%w: 对外模型名称 %q 已存在，请换一个唯一名称", ErrDuplicateModelDisplayName, displayName)
+}
+
 func (r *Repository) Delete(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM ai_models WHERE id = ?`, id)
+	result, err := r.db.ExecContext(ctx, `
+		UPDATE ai_models
+		SET status = 'disabled',
+			deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP),
+			updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, id)
 	if err != nil {
 		return false, err
 	}
@@ -251,36 +351,22 @@ func (r *Repository) Delete(ctx context.Context, id string) (bool, error) {
 }
 
 func (r *Repository) DeleteByProviderID(ctx context.Context, providerID string) (int64, int64, error) {
-	disabledResult, err := r.db.ExecContext(ctx, `
+	result, err := r.db.ExecContext(ctx, `
 		UPDATE ai_models
-		SET status = 'disabled'
+		SET status = 'disabled',
+			deleted_at = COALESCE(deleted_at, CURRENT_TIMESTAMP),
+			updated_at = CURRENT_TIMESTAMP
 		WHERE provider_id = ?
-			AND EXISTS (
-				SELECT 1 FROM generation_tasks WHERE generation_tasks.model_id = ai_models.id
-			)
+			AND deleted_at IS NULL
 	`, providerID)
 	if err != nil {
 		return 0, 0, err
 	}
-	deletedResult, err := r.db.ExecContext(ctx, `
-		DELETE FROM ai_models
-		WHERE provider_id = ?
-			AND NOT EXISTS (
-				SELECT 1 FROM generation_tasks WHERE generation_tasks.model_id = ai_models.id
-			)
-	`, providerID)
+	deleted, err := result.RowsAffected()
 	if err != nil {
 		return 0, 0, err
 	}
-	disabled, err := disabledResult.RowsAffected()
-	if err != nil {
-		return 0, 0, err
-	}
-	deleted, err := deletedResult.RowsAffected()
-	if err != nil {
-		return 0, 0, err
-	}
-	return disabled, deleted, nil
+	return deleted, 0, nil
 }
 
 func (r *Repository) CountTaskReferences(ctx context.Context, id string) (int64, error) {

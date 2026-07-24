@@ -9,11 +9,13 @@ import (
 	"image/jpeg"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"aipi-go/internal/apiaccess"
+	"aipi-go/internal/imagecache"
 	"aipi-go/internal/tasks"
 
 	_ "image/gif"
@@ -338,6 +340,10 @@ func (r *Router) checkTaskImage(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
+	if _, ok := imagecache.FindTaskImage(taskID, index); ok {
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"ok": true, "message": ""}})
+		return
+	}
 	ok := probeImageURL(req.Context(), imageURL)
 	message := ""
 	if !ok {
@@ -659,6 +665,10 @@ func (r *Router) taskImage(w http.ResponseWriter, req *http.Request, path string
 		writeError(w, err)
 		return
 	}
+	if cached, ok := imagecache.FindTaskImage(parts[0], index); ok {
+		r.serveCachedTaskImage(w, req, cached, len(parts) >= 4 && parts[3] == "download")
+		return
+	}
 	if len(parts) >= 4 && parts[3] == "download" {
 		r.proxyTaskImageDownload(w, req, imageURL)
 		return
@@ -667,7 +677,7 @@ func (r *Router) taskImage(w http.ResponseWriter, req *http.Request, path string
 		r.proxyTaskImageDownload(w, req, imageURL)
 		return
 	}
-	http.Redirect(w, req, imageURL, http.StatusFound)
+	r.proxyTaskImageInline(w, req, imageURL)
 }
 
 func (r *Router) taskThumbnail(w http.ResponseWriter, req *http.Request, path string) {
@@ -696,8 +706,12 @@ func (r *Router) taskThumbnail(w http.ResponseWriter, req *http.Request, path st
 		writeError(w, err)
 		return
 	}
+	if cached, ok := imagecache.FindTaskImage(parts[0], index); ok {
+		r.serveCachedTaskImage(w, req, cached, false)
+		return
+	}
 	if err := r.proxyCompressedThumbnail(w, req, ctx, imageURL); err != nil {
-		http.Redirect(w, req, imageURL, http.StatusFound)
+		r.proxyTaskImageInline(w, req, imageURL)
 	}
 }
 
@@ -792,6 +806,55 @@ func (r *Router) proxyTaskImageDownload(w http.ResponseWriter, req *http.Request
 	}
 	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(filename, `"`, "")+`"`)
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, resp.Body)
+}
+
+func (r *Router) serveCachedTaskImage(w http.ResponseWriter, req *http.Request, cached imagecache.CachedImage, download bool) {
+	if info, err := os.Stat(cached.Path); err != nil || info.IsDir() || info.Size() <= 0 {
+		writeError(w, newAppError(http.StatusNotFound, "图片跑丢了"))
+		return
+	}
+	contentType := strings.TrimSpace(cached.ContentType)
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=604800, immutable")
+	if download {
+		filename := strings.TrimSpace(req.URL.Query().Get("filename"))
+		if filename == "" {
+			filename = "aipi-image"
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="`+strings.ReplaceAll(filename, `"`, "")+`"`)
+	}
+	http.ServeFile(w, req, cached.Path)
+}
+
+func (r *Router) proxyTaskImageInline(w http.ResponseWriter, req *http.Request, imageURL string) {
+	ctx, cancel := context.WithTimeout(req.Context(), 30*time.Second)
+	defer cancel()
+	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, imageURL, nil)
+	if err != nil {
+		writeError(w, newAppError(http.StatusNotFound, "图片跑丢了"))
+		return
+	}
+	resp, err := http.DefaultClient.Do(upstreamReq)
+	if err != nil {
+		writeError(w, newAppError(http.StatusNotFound, "图片跑丢了"))
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		writeError(w, newAppError(http.StatusNotFound, "图片跑丢了"))
+		return
+	}
+	contentType := resp.Header.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Cache-Control", "public, max-age=3600")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, resp.Body)
 }

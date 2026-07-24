@@ -81,6 +81,7 @@ type Invite struct {
 	InviteeRewardLabel    *string `json:"inviteeRewardLabel,omitempty"`
 	Status                string  `json:"status"`
 	RiskReason            *string `json:"riskReason,omitempty"`
+	InviterIP             *string `json:"inviterIp,omitempty"`
 	InviteeIP             *string `json:"inviteeIp"`
 	VerifiedAt            *string `json:"verifiedAt,omitempty"`
 	RewardedAt            *string `json:"rewardedAt,omitempty"`

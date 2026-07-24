@@ -36,9 +36,10 @@ type Queue struct {
 }
 
 type Job struct {
-	TaskID           string
-	ConcurrencyScope string
-	ConcurrencyLimit int
+	TaskID              string
+	ConcurrencyScope    string
+	ConcurrencyLimit    int
+	ImageResponseFormat string
 }
 
 type scopeLimiter struct {
@@ -91,6 +92,15 @@ func (q *Queue) EnqueueScoped(taskID string, scope string, limit int) {
 	})
 }
 
+func (q *Queue) EnqueueScopedWithOptions(taskID string, scope string, limit int, options ProcessOptions) {
+	q.enqueue(Job{
+		TaskID:              taskID,
+		ConcurrencyScope:    strings.TrimSpace(scope),
+		ConcurrencyLimit:    limit,
+		ImageResponseFormat: strings.TrimSpace(options.ImageResponseFormat),
+	})
+}
+
 func (q *Queue) enqueue(job Job) {
 	q.Start()
 	if q.unlimited {
@@ -129,7 +139,7 @@ func (q *Queue) process(job Job, workerID any) {
 	ctx, cancel := context.WithTimeout(context.Background(), taskProcessingTimeout)
 	q.registerActiveTask(job.TaskID, cancel)
 	defer q.unregisterActiveTask(job.TaskID)
-	err := q.service.Process(ctx, job.TaskID)
+	err := q.service.ProcessWithOptions(ctx, job.TaskID, ProcessOptions{ImageResponseFormat: job.ImageResponseFormat})
 	cancel()
 	if err != nil {
 		q.logger.Error("generation worker failed", "worker", workerID, "taskId", job.TaskID, "error", err)

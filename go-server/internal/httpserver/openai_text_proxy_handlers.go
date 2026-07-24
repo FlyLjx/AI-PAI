@@ -151,12 +151,20 @@ func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, aut
 	defer cancel()
 	modelName := strings.TrimSpace(stringValue(body["model"]))
 	model, err := models.NewRepository(r.db).FindActiveByNameOrDisplayName(ctx, modelName)
-	if errors.Is(err, sql.ErrNoRows) || model == nil {
-		writeOpenAIError(w, http.StatusNotFound, "模型不存在或已禁用", "invalid_request_error")
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeOpenAIError(w, http.StatusNotFound, "模型不存在或已禁用", "invalid_request_error")
+			return
+		}
+		if errors.Is(err, models.ErrAmbiguousModelName) {
+			writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+			return
+		}
+		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
 		return
 	}
-	if err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
+	if model == nil {
+		writeOpenAIError(w, http.StatusNotFound, "模型不存在或已禁用", "invalid_request_error")
 		return
 	}
 	provider, err := providers.NewRepository(r.db).FindByID(ctx, model.ProviderID)

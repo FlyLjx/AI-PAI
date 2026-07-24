@@ -212,6 +212,11 @@ button { cursor: pointer; }
 .status-pill.success, .status-pill.active, .status-pill.paid { background: #eaf8ef; color: #087443; }
 .status-pill.failed, .status-pill.disabled { background: #fff0f0; color: #b42318; }
 .status-pill.pending, .status-pill.processing, .status-pill.queued { background: #fff7ed; color: #a14b08; }
+.spec-tags { display: inline-flex; flex-wrap: nowrap; align-items: center; gap: 4px; vertical-align: middle; width: max-content; max-width: none; white-space: nowrap; }
+.spec-pill { display: inline-flex; align-items: center; min-height: 20px; padding: 0 6px; border: 1px solid transparent; border-radius: 999px; font-size: 9px; font-weight: 750; line-height: 1; white-space: nowrap; }
+.spec-pill-size { background: #eff6ff; border-color: #dbeafe; color: #1d4ed8; }
+.spec-pill-quality { background: #fffbeb; border-color: #fde68a; color: #92400e; }
+.spec-pill-empty { background: #f8fafc; border-color: #e2e8f0; color: #94a3b8; }
 .action-row { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
 .btn { min-height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 12px; border: 1px solid #dce4df; border-radius: 7px; background: #fff; color: #3d4942; font-size: 12px; font-weight: 750; }
 .btn:hover { border-color: #86efac; color: #087443; }

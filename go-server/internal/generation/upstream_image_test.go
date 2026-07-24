@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"aipi-go/internal/models"
 	"aipi-go/internal/providers"
@@ -56,6 +57,69 @@ func TestCallImageJSONNormalizesURLOnlyResponse(t *testing.T) {
 	}
 	if len(images) != 1 || images[0].Type != "url" || images[0].URL != "https://cdn.example.test/out.png" {
 		t.Fatalf("unexpected images: %#v", images)
+	}
+}
+
+func TestCallImageJSONRequestsAndExtractsBase64Response(t *testing.T) {
+	const imageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lYV0ZQAAAABJRU5ErkJggg=="
+	var received map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"b64_json": imageBase64}},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{logger: slog.Default()}
+	input := testImageRequest(server.URL)
+	input.ResponseFormat = "b64_json"
+	result, err := service.callImageJSON(context.Background(), input, 1)
+	if err != nil {
+		t.Fatalf("callImageJSON returned error: %v", err)
+	}
+	if received["response_format"] != "b64_json" {
+		t.Fatalf("response_format should request b64_json, got %#v", received["response_format"])
+	}
+	images := ExtractImages(result)
+	if len(images) != 1 || images[0].URL != "" || images[0].B64 != imageBase64 {
+		t.Fatalf("unexpected base64 images: %#v", images)
+	}
+}
+
+func TestNormalizeImageResultForProviderKeepsRawJPEGBase64(t *testing.T) {
+	imageBase64 := base64.StdEncoding.EncodeToString([]byte{
+		0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10,
+		'J', 'F', 'I', 'F', 0x00, 0x01, 0x01, 0x00,
+		0x00, 0x01, 0x00, 0x01, 0x00, 0x00,
+		0xff, 0xd9,
+	})
+	result := NormalizeImageResultForProvider(map[string]any{
+		"data": []any{map[string]any{"b64_json": imageBase64}},
+	}, providers.Provider{BaseURL: "https://upstream.example.test/v1"})
+
+	images := ExtractImages(result)
+	if len(images) != 1 || images[0].URL != "" || images[0].B64 != imageBase64 {
+		t.Fatalf("unexpected JPEG base64 images: %#v", images)
+	}
+}
+
+func TestCacheTaskResultImagesRejectsUnavailableURL(t *testing.T) {
+	t.Setenv("LOG_DIR", t.TempDir())
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		http.Error(w, "not an image", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := (&Service{logger: slog.Default()}).cacheTaskResultImages(ctx, "task-bad-url", map[string]any{
+		"data": []any{map[string]any{"url": server.URL + "/broken.png"}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "无法访问") {
+		t.Fatalf("cacheTaskResultImages error = %v, want unavailable image error", err)
 	}
 }
 

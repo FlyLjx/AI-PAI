@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"aipi-go/internal/apiaccess"
+	"aipi-go/internal/imagecache"
 	"aipi-go/internal/tasks"
 )
 
@@ -17,6 +18,14 @@ const upstreamDuplicateGuardAttempts = 3
 var ErrTaskTimedOut = errors.New(taskTimeoutMessage)
 
 func (s *Service) Process(ctx context.Context, taskID string) error {
+	return s.ProcessWithOptions(ctx, taskID, ProcessOptions{})
+}
+
+type ProcessOptions struct {
+	ImageResponseFormat string
+}
+
+func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options ProcessOptions) error {
 	startedAt := time.Now()
 	claimed, err := s.tasks.ClaimForProcessing(ctx, taskID)
 	if err != nil {
@@ -93,6 +102,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		Size:                  size,
 		Quantity:              task.Quantity,
 		OutputFormat:          taskOutputFormat(task.OutputFormat, task.TransparentBackground),
+		ResponseFormat:        options.ImageResponseFormat,
 		TransparentBackground: task.TransparentBackground,
 		ReferenceImageURLs:    referenceImages(task.ReferenceImageURL),
 		MaskImageURL:          maskImage(task.ReferenceImageURL),
@@ -109,6 +119,10 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		}
 		actualQuantity = quantity
 		modelCostCredits = taskModelCost(task.SizeTier, actualQuantity, model.Cost1K, model.Cost2K, model.Cost4K)
+		if err := s.cacheTaskResultImages(ctx, taskID, result); err != nil {
+			lastErr = err
+			break
+		}
 		err = s.finishSuccessWithBilling(ctx, BillingSuccessInput{
 			TaskID:           taskID,
 			ProviderID:       provider.ID,
@@ -186,6 +200,23 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 		"modelCostCredits", modelCostCredits,
 		"imageCount", actualQuantity,
 	)
+	return nil
+}
+
+func (s *Service) cacheTaskResultImages(ctx context.Context, taskID string, result any) error {
+	images := ExtractImages(result)
+	for index, image := range images {
+		url := strings.TrimSpace(image.URL)
+		if url == "" {
+			continue
+		}
+		if _, err := imagecache.StoreTaskImageWithTimeout(ctx, taskID, index, url); err != nil {
+			if s.logger != nil {
+				s.logger.Warn("generation result image cache failed", "taskId", taskID, "index", index, "url", url, "error", err)
+			}
+			return fmt.Errorf("第 %d 张图片无法访问，上游返回了不可下载的图片地址", index+1)
+		}
+	}
 	return nil
 }
 

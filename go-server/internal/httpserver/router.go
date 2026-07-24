@@ -75,6 +75,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/dashboard", r.dashboard)
 	r.mux.HandleFunc("/api/admin/login", r.adminLogin)
 	r.mux.HandleFunc("/api/admin/session", r.adminSession)
+	r.mux.HandleFunc("/api/admin/users/consumption-ranking", r.adminConsumptionRanking)
 	r.mux.HandleFunc("/api/users/register", r.registerUser)
 	r.mux.HandleFunc("/api/users/register/challenge", r.registrationChallenge)
 	r.mux.HandleFunc("/api/users/login", r.userLogin)

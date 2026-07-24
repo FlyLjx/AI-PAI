@@ -1,6 +1,7 @@
 package generation
 
 import (
+	"encoding/base64"
 	"net/url"
 	"strings"
 
@@ -35,6 +36,9 @@ func extractImages(value any, depth int) []ExtractedImage {
 		if isImageURL(text) {
 			return []ExtractedImage{{Type: "url", URL: text}}
 		}
+		if image, ok := extractBase64Image(text, false); ok {
+			return []ExtractedImage{image}
+		}
 		return nil
 	}
 	if images, ok := value.([]ExtractedImage); ok {
@@ -55,6 +59,13 @@ func extractImages(value any, depth int) []ExtractedImage {
 	for _, key := range []string{"url", "image_url", "imageUrl", "output_url", "outputUrl", "file_url", "fileUrl"} {
 		if text, ok := payload[key].(string); ok && isImageURL(text) {
 			result = append(result, ExtractedImage{Type: "url", URL: text})
+		}
+	}
+	for _, key := range []string{"b64_json", "base64"} {
+		if text, ok := payload[key].(string); ok {
+			if image, ok := extractBase64Image(text, true); ok {
+				result = append(result, image)
+			}
 		}
 	}
 	for _, key := range []string{"data", "result", "results", "output", "outputs", "images", "image", "final", "choices", "message", "content"} {
@@ -79,6 +90,48 @@ func uniqueImages(images []ExtractedImage) []ExtractedImage {
 
 func isImageURL(value string) bool {
 	return len(value) > 4 && (hasPrefix(value, "http://") || hasPrefix(value, "https://"))
+}
+
+func extractBase64Image(value string, allowRaw bool) (ExtractedImage, bool) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ExtractedImage{}, false
+	}
+	if image, ok := base64ImageFromDataURL(trimmed); ok {
+		return image, true
+	}
+	if !allowRaw {
+		return ExtractedImage{}, false
+	}
+	encoded := compactBase64(trimmed)
+	if len(encoded) < 24 || strings.Contains(encoded, "://") || strings.Contains(encoded, ",") {
+		return ExtractedImage{}, false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) == 0 {
+		return ExtractedImage{}, false
+	}
+	if !strings.HasPrefix(imageContentType("", decoded), "image/") {
+		return ExtractedImage{}, false
+	}
+	return ExtractedImage{Type: "b64_json", B64: encoded}, true
+}
+
+func base64ImageFromDataURL(value string) (ExtractedImage, bool) {
+	header, payload, ok := strings.Cut(strings.TrimSpace(value), ",")
+	if !ok {
+		return ExtractedImage{}, false
+	}
+	header = strings.ToLower(strings.TrimSpace(header))
+	if !strings.HasPrefix(header, "data:image/") || !strings.Contains(header, ";base64") {
+		return ExtractedImage{}, false
+	}
+	encoded := compactBase64(payload)
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(decoded) == 0 {
+		return ExtractedImage{}, false
+	}
+	return ExtractedImage{Type: "b64_json", B64: encoded}, true
 }
 
 func rewriteUpstreamResultURLs(value any, provider providers.Provider, depth int) any {
@@ -117,6 +170,9 @@ func rewriteUpstreamResultURLs(value any, provider providers.Provider, depth int
 func rewriteUpstreamImageURL(provider providers.Provider, value string) string {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || strings.HasPrefix(trimmed, "data:image/") {
+		return value
+	}
+	if _, ok := extractBase64Image(trimmed, true); ok {
 		return value
 	}
 	providerURL, err := url.Parse(strings.TrimSpace(provider.BaseURL))

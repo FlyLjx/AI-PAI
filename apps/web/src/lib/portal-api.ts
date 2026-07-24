@@ -71,6 +71,8 @@ export type InviteRecord = {
   inviteeRewardLabel?: string;
   status: string;
   riskReason?: string;
+  inviterIp?: string;
+  inviteeIp?: string;
   verifiedAt?: string;
   rewardedAt?: string;
   rechargeRebateCount: number;
@@ -182,11 +184,12 @@ export type ImageGenerationInput = {
   size_tier: '1k' | '2k' | '4k';
   aspect_ratio: '1:1' | '16:9' | '9:16' | '4:3' | '3:4' | '3:2' | '2:3';
   output_format: 'jpeg' | 'png' | 'webp';
+  response_format?: 'url' | 'b64_json';
 };
 
 export type ImageGenerationResult = {
   created: number;
-  data: Array<{ url: string }>;
+  data: Array<{ url?: string; b64_json?: string }>;
 };
 
 export type UsageLog = {
@@ -536,22 +539,28 @@ export const portalApi = {
   changePassword: (user: PortalUser, oldPassword: string, password: string) => api(`/api/users/${encodeURIComponent(user.id)}/password`, { method: 'PATCH', body: JSON.stringify({ userId: user.id, oldPassword, password }) }, user.token),
   compatibleModels: (apiKey: string) => openAIRequest<{ object: string; data: CompatibleModel[] }>('/v1/models', apiKey),
   generateImages: (apiKey: string, input: ImageGenerationInput, referenceImages: File[] = []) => {
+    const headers = new Headers();
+    headers.set('X-Aipi-Image-Result-Mode', 'b64');
+    const requestInput: ImageGenerationInput = { ...input, response_format: 'b64_json' };
     if (referenceImages.length === 0) {
       return openAIRequest<ImageGenerationResult>('/v1/images/generations', apiKey, {
         method: 'POST',
-        body: JSON.stringify(input),
+        headers,
+        body: JSON.stringify(requestInput),
       });
     }
     const body = new FormData();
-    body.set('model', input.model);
-    body.set('prompt', input.prompt);
-    body.set('n', String(input.n));
-    body.set('size_tier', input.size_tier);
-    body.set('aspect_ratio', input.aspect_ratio);
-    body.set('output_format', input.output_format);
+    body.set('model', requestInput.model);
+    body.set('prompt', requestInput.prompt);
+    body.set('n', String(requestInput.n));
+    body.set('size_tier', requestInput.size_tier);
+    body.set('aspect_ratio', requestInput.aspect_ratio);
+    body.set('output_format', requestInput.output_format);
+    body.set('response_format', 'b64_json');
     referenceImages.forEach((file) => body.append('image[]', file, file.name));
     return openAIRequest<ImageGenerationResult>('/v1/images/edits', apiKey, {
       method: 'POST',
+      headers,
       body,
     });
   },

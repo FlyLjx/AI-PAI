@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Calculator, CircleDollarSign, Loader2, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { Calculator, CircleDollarSign, EyeOff, Loader2, Pencil, Plus, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable } from '@/components/common/DataTable';
@@ -276,11 +276,11 @@ export default function AdminPricesPage() {
     if (!deleteCandidate) return;
     try {
       await portalApi.deleteModel(deleteCandidate.id);
-      toast.success('模型已删除；如存在历史调用，Go 后端会自动停用该模型');
+      toast.success('模型已隐藏；历史调用记录仍保留');
       setDeleteCandidate(null);
       await load();
     } catch (requestError) {
-      toast.error(requestError instanceof Error ? requestError.message : '模型删除失败');
+      toast.error(requestError instanceof Error ? requestError.message : '模型隐藏失败');
     }
   };
 
@@ -297,7 +297,7 @@ export default function AdminPricesPage() {
     <div className="flex items-center justify-end gap-1">
       <button type="button" onClick={() => openEdit(model)} title="编辑模型" className="rounded p-1.5 text-zinc-600 hover:bg-zinc-100"><Pencil className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => void toggleStatus(model)} disabled={actionId === model.id} className={`rounded px-2 py-1 text-[11px] font-semibold ${model.status === 'active' ? 'text-amber-700 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'} disabled:opacity-40`}>{model.status === 'active' ? '停用' : '启用'}</button>
-      <button type="button" onClick={() => setDeleteCandidate(model)} title="删除模型" className="rounded p-1.5 text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /></button>
+      <button type="button" onClick={() => setDeleteCandidate(model)} title="隐藏模型" className="rounded p-1.5 text-red-600 hover:bg-red-50"><EyeOff className="h-3.5 w-3.5" /></button>
     </div>
   );
 
@@ -400,7 +400,7 @@ export default function AdminPricesPage() {
         </div>
       )}
 
-      <ConfirmDialog isOpen={Boolean(deleteCandidate)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void deleteModel()} title="删除模型" description={`确定删除 ${deleteCandidate?.displayName || '该模型'} 吗？存在历史调用时，Go 后端会保留记录并自动停用模型。`} confirmText="删除" type="danger" />
+      <ConfirmDialog isOpen={Boolean(deleteCandidate)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void deleteModel()} title="隐藏模型" description={`确定隐藏 ${deleteCandidate?.displayName || '该模型'} 吗？隐藏后不会出现在列表中，但历史调用与统计会保留。`} confirmText="隐藏" type="danger" />
     </div>
   );
 }

@@ -188,6 +188,28 @@ func TestAbsoluteURLUsesForwardedOrigin(t *testing.T) {
 	}
 }
 
+func TestResolveCompatSizeDoesNotInferTierFromModelName(t *testing.T) {
+	size, tier := resolveCompatSize(compatImageInput{Model: "gpt-image-2"}, models.Model{
+		ModelName:        "gpt-image-2",
+		DisplayName:      "gpt-image-2-4k",
+		EnabledSizeTiers: []string{"1k", "2k", "4k"},
+	})
+	if tier != "1k" || size != "1024x1024" {
+		t.Fatalf("size=%q tier=%q, want default configured 1k square", size, tier)
+	}
+}
+
+func TestResolveCompatSizeDefaultsToOnlyEnabledTier(t *testing.T) {
+	size, tier := resolveCompatSize(compatImageInput{Model: "gpt-image-2"}, models.Model{
+		ModelName:        "gpt-image-2",
+		DisplayName:      "GPT Image 2",
+		EnabledSizeTiers: []string{"4k"},
+	})
+	if tier != "4k" || size != "3072x3072" {
+		t.Fatalf("size=%q tier=%q, want only enabled 4k tier", size, tier)
+	}
+}
+
 func TestPaidSubscriptionQuotaValidationUsesQuotedEntitlement(t *testing.T) {
 	entitlement := &operations.SubscriptionEntitlement{
 		IsPaid:             true,

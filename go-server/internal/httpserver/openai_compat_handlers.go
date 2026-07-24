@@ -61,6 +61,7 @@ const (
 	compatTaskClientWaitTimeout = 8 * time.Minute
 	compatTaskLogWaitTimeout    = 30 * time.Minute
 	maxCompatReferenceImages    = 4
+	compatImageResultModeHeader = "X-Aipi-Image-Result-Mode"
 )
 
 type compatTaskResult struct {
@@ -171,20 +172,32 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		writeOpenAIError(w, http.StatusBadRequest, "生成数量必须在 1 到 10 之间", "invalid_request_error")
 		return
 	}
+	resultMode := strings.ToLower(strings.TrimSpace(req.Header.Get(compatImageResultModeHeader)))
+	if resultMode == "b64" || resultMode == "base64" || resultMode == "b64_json" {
+		input.ResponseFormat = "b64_json"
+	}
 	requestParams := compatRequestParams(req, input)
 
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	model, err := models.NewRepository(r.db).FindActiveByNameOrDisplayName(ctx, input.Model)
-	if errors.Is(err, sql.ErrNoRows) || model == nil {
-		writeOpenAIError(w, http.StatusNotFound, "模型不存在或已禁用", "invalid_request_error")
-		return
-	}
 	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeOpenAIError(w, http.StatusNotFound, "模型不存在或已禁用", "invalid_request_error")
+			return
+		}
+		if errors.Is(err, models.ErrAmbiguousModelName) {
+			writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+			return
+		}
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
 		return
 	}
-	size, sizeTier := resolveCompatSize(input, model.ModelName)
+	if model == nil {
+		writeOpenAIError(w, http.StatusNotFound, "模型不存在或已禁用", "invalid_request_error")
+		return
+	}
+	size, sizeTier := resolveCompatSize(input, *model)
 	if !sizeTierEnabled(model.EnabledSizeTiers, sizeTier) {
 		writeOpenAIError(w, http.StatusBadRequest, "当前模型未开放 "+strings.ToUpper(sizeTier)+" 清晰度", "invalid_request_error")
 		return
@@ -283,11 +296,13 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		writeOpenAIError(w, status, message, errorType)
 		return
 	}
-	r.queue.EnqueueScoped(savedTask.ID, generation.APIKeyConcurrencyScope(auth.APIKey.ID), r.dynamicAPIKeyConcurrencyLimit(auth.APIKey))
+	r.queue.EnqueueScopedWithOptions(savedTask.ID, generation.APIKeyConcurrencyScope(auth.APIKey.ID), r.dynamicAPIKeyConcurrencyLimit(auth.APIKey), generation.ProcessOptions{ImageResponseFormat: input.ResponseFormat})
+	preferProxyResults := resultMode == "proxy"
+	preferBase64Results := compatWantsBase64ImageResponse(input.ResponseFormat)
 
 	resultCh := make(chan compatTaskResult, 1)
 	go func() {
-		resultCh <- r.finalizeCompatTaskLog(accessLogID, savedTask.ID)
+		resultCh <- r.finalizeCompatTaskLog(accessLogID, savedTask.ID, preferProxyResults, preferBase64Results)
 	}()
 
 	var result compatTaskResult
@@ -392,7 +407,12 @@ func compatRequestParams(req *http.Request, input compatImageInput) map[string]a
 
 func writeCompatImageSuccess(w http.ResponseWriter, req *http.Request, input compatImageInput, urls []string, responseMode compatImageResponseMode, accessLogID string) {
 	data := make([]map[string]string, 0, len(urls))
+	asBase64 := compatWantsBase64ImageResponse(input.ResponseFormat)
 	for _, url := range urls {
+		if asBase64 {
+			data = append(data, map[string]string{"b64_json": compatStripImageDataURL(url)})
+			continue
+		}
 		if strings.HasPrefix(url, "/") {
 			url = absoluteURL(req, url)
 		}
@@ -407,6 +427,25 @@ func writeCompatImageSuccess(w http.ResponseWriter, req *http.Request, input com
 		"created": created,
 		"data":    data,
 	})
+}
+
+func compatWantsBase64ImageResponse(format string) bool {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "b64_json", "base64", "b64":
+		return true
+	default:
+		return false
+	}
+}
+
+func compatStripImageDataURL(value string) string {
+	value = strings.TrimSpace(value)
+	if strings.HasPrefix(strings.ToLower(value), "data:image/") {
+		if _, payload, ok := strings.Cut(value, ","); ok {
+			return strings.TrimSpace(payload)
+		}
+	}
+	return value
 }
 
 func writeCompatImageChatCompletion(w http.ResponseWriter, input compatImageInput, data []map[string]string, created int64, responseID string) {
@@ -559,7 +598,7 @@ func (r *Router) dynamicAPIKeyConcurrencyLimit(key apiaccess.AccessKey) int {
 	return apiaccess.DynamicConcurrencyLimitWithConfig(key.ConcurrencyLimit, windowRequestCount, config)
 }
 
-func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string) compatTaskResult {
+func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, preferProxyResults bool, preferBase64Results bool) compatTaskResult {
 	ctx, cancel := context.WithTimeout(context.Background(), compatTaskLogWaitTimeout)
 	defer cancel()
 	finalTask, err := r.waitForCompatTask(ctx, taskID)
@@ -586,9 +625,78 @@ func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string) compat
 			err:        errors.New(message),
 		}
 	}
-	urls := tasks.ToPublic(finalTask).ResultURLs
+	urls, err := compatResultValuesForAPI(ctx, finalTask, preferProxyResults, preferBase64Results)
+	if err != nil {
+		message := err.Error()
+		r.finishCompatAccessLog(accessLogID, "failed", 0, message)
+		return compatTaskResult{
+			message:    message,
+			statusCode: http.StatusInternalServerError,
+			errorType:  "api_error",
+			err:        errors.New(message),
+		}
+	}
+	if preferBase64Results && len(urls) == 0 {
+		message := "图片生成结果缺少可转为 base64 的数据"
+		r.finishCompatAccessLog(accessLogID, "failed", 0, message)
+		return compatTaskResult{
+			message:    message,
+			statusCode: http.StatusInternalServerError,
+			errorType:  "api_error",
+			err:        errors.New(message),
+		}
+	}
 	r.finishCompatAccessLog(accessLogID, "success", len(urls), "")
 	return compatTaskResult{urls: urls}
+}
+
+func compatResultValuesForAPI(ctx context.Context, task *tasks.Task, preferProxyResults bool, preferBase64Results bool) ([]string, error) {
+	if task == nil {
+		return nil, nil
+	}
+	if preferBase64Results {
+		images := generation.ExtractImages(task.ResultJSON)
+		for index := range images {
+			if strings.TrimSpace(images[index].URL) != "" {
+				images[index].URL = tasks.RewriteImageURL(task.ProviderBaseURL, images[index].URL)
+			}
+		}
+		images, err := generation.EnsureBase64Images(ctx, images)
+		if err != nil {
+			return nil, err
+		}
+		values := []string{}
+		for _, image := range images {
+			if text := strings.TrimSpace(image.B64); text != "" {
+				values = append(values, text)
+			}
+		}
+		return values, nil
+	}
+	return compatResultURLsForAPI(task, preferProxyResults, false), nil
+}
+
+func compatResultURLsForAPI(task *tasks.Task, preferProxyResults bool, preferBase64Results bool) []string {
+	if task == nil {
+		return nil
+	}
+	if preferBase64Results {
+		values := []string{}
+		for _, image := range generation.ExtractImages(task.ResultJSON) {
+			if text := strings.TrimSpace(image.B64); text != "" {
+				values = append(values, text)
+			}
+		}
+		return values
+	}
+	publicTask := tasks.ToPublic(task)
+	if preferProxyResults && len(publicTask.ResultURLs) > 0 {
+		return publicTask.ResultURLs
+	}
+	if len(publicTask.DirectResultURLs) > 0 {
+		return publicTask.DirectResultURLs
+	}
+	return publicTask.ResultURLs
 }
 
 func compatTaskFailureResponse(message string) (int, string) {
@@ -674,7 +782,7 @@ func uniqueCompatModels(items []models.Model) []models.Model {
 	return result
 }
 
-func resolveCompatSize(input compatImageInput, modelName string) (string, string) {
+func resolveCompatSize(input compatImageInput, model models.Model) (string, string) {
 	tier := normalizeSizeTier(input.SizeTier)
 	if tier == "" {
 		tier = normalizeSizeTier(input.Resolution)
@@ -693,13 +801,10 @@ func resolveCompatSize(input compatImageInput, modelName string) (string, string
 		ratio = normalizeRatio(input.Ratio)
 	}
 	if ratio == "" {
-		ratio = ratioFromModelName(modelName)
-	}
-	if ratio == "" {
 		ratio = "1:1"
 	}
 	if tier == "" {
-		tier = tierFromModelName(modelName)
+		tier = defaultEnabledSizeTier(model.EnabledSizeTiers)
 	}
 	if tier == "" {
 		tier = "1k"
@@ -747,26 +852,12 @@ func normalizeRatio(value string) string {
 	return strconv.Itoa(left) + ":" + strconv.Itoa(right)
 }
 
-func tierFromModelName(value string) string {
-	lower := strings.ToLower(value)
-	for _, tier := range []string{"4k", "2k", "1k"} {
-		if strings.Contains(lower, "-"+tier) || strings.Contains(lower, "_"+tier) || strings.Contains(lower, " "+tier) {
-			return tier
-		}
+func defaultEnabledSizeTier(tiers []string) string {
+	normalized := models.ParseEnabledSizeTiersFromStrings(tiers)
+	if len(normalized) == 0 {
+		return ""
 	}
-	return ""
-}
-
-func ratioFromModelName(value string) string {
-	parts := strings.FieldsFunc(value, func(r rune) bool {
-		return r == '-' || r == '_' || r == ' '
-	})
-	for i := len(parts) - 1; i >= 0; i-- {
-		if ratio := normalizeRatio(parts[i]); ratio != "" {
-			return ratio
-		}
-	}
-	return ""
+	return normalized[0]
 }
 
 func compatSizeForRatio(ratio string, tier string) string {

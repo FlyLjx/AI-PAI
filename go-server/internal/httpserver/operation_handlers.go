@@ -731,7 +731,7 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 		writeError(w, newAppError(http.StatusNotFound, "订阅订单不存在"))
 		return
 	}
-	if order.Status != "pending" {
+	if order.Status == "paid" {
 		writeJSON(w, http.StatusOK, map[string]any{"data": order})
 		return
 	}

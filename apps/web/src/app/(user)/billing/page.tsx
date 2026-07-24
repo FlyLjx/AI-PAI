@@ -281,7 +281,11 @@ export default function BillingPage() {
         toast.success(nextOrder.orderType === 'subscription' ? '订阅已生效' : '余额已到账');
         await Promise.all([loadBilling(), loadOrderHistory(1, user)]);
       } else if (showFeedback) {
-        toast.info('订单仍在等待支付');
+        if (failedStatus(nextOrder.status)) {
+          toast.error('订单已关闭，请重新创建支付订单');
+        } else {
+          toast.info('订单仍在等待支付');
+        }
       }
     } catch (syncError) {
       const message = errorMessage(syncError);
@@ -615,7 +619,13 @@ export default function BillingPage() {
                   <XCircle size={48} className="mx-auto text-red-600" />
                   <strong className="mt-3 block text-base">订单已关闭</strong>
                   <p className="mt-1 text-xs text-zinc-500">请关闭窗口后重新创建支付订单。</p>
-                  <button className="btn mt-5" type="button" onClick={() => setPaymentOpen(false)}>关闭</button>
+                  <div className="mt-5 flex justify-center gap-2">
+                    <button className="btn" type="button" onClick={() => void syncPayment(true)} disabled={syncing}>
+                      {syncing ? <LoaderCircle size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                      重新查询到账
+                    </button>
+                    <button className="btn" type="button" onClick={() => setPaymentOpen(false)}>关闭</button>
+                  </div>
                 </div>
               ) : (
                 <>

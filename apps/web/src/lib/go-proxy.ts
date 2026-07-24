@@ -1,6 +1,6 @@
 const FORWARDED_HEADERS = [
   'accept', 'authorization', 'content-type', 'idempotency-key',
-  'x-api-key', 'x-request-id', 'user-agent', 'origin',
+  'x-api-key', 'x-request-id', 'x-aipi-image-result-mode', 'user-agent', 'origin',
 ];
 
 export async function proxyToGo(request: Request, path: string): Promise<Response> {

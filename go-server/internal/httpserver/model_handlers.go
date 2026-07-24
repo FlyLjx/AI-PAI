@@ -250,6 +250,9 @@ func (r *Router) syncModels(w http.ResponseWriter, req *http.Request) {
 			Status:             "active",
 		})
 		if err != nil {
+			if writeModelRepositoryError(w, err) {
+				return
+			}
 			writeError(w, err)
 			return
 		}
@@ -280,14 +283,13 @@ func (r *Router) deleteModels(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 	if len(ids) == 0 {
-		writeError(w, newAppError(http.StatusBadRequest, "请选择要删除的模型"))
+		writeError(w, newAppError(http.StatusBadRequest, "请选择要隐藏的模型"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
 	defer cancel()
 	repo := models.NewRepository(r.db)
 	deletedCount := 0
-	disabledCount := 0
 	usedCount := int64(0)
 	for _, id := range ids {
 		count, err := repo.CountTaskReferences(ctx, id)
@@ -296,16 +298,7 @@ func (r *Router) deleteModels(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		if count > 0 {
-			if _, err := repo.Disable(ctx, id); err != nil {
-				if errors.Is(err, sql.ErrNoRows) {
-					continue
-				}
-				writeError(w, err)
-				return
-			}
-			disabledCount++
 			usedCount += count
-			continue
 		}
 		deleted, err := repo.Delete(ctx, id)
 		if err != nil {
@@ -318,7 +311,7 @@ func (r *Router) deleteModels(w http.ResponseWriter, req *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 		"deletedCount":  deletedCount,
-		"disabledCount": disabledCount,
+		"disabledCount": 0,
 		"usedCount":     usedCount,
 	}})
 }
@@ -332,6 +325,9 @@ func (r *Router) createModel(w http.ResponseWriter, req *http.Request) {
 	defer cancel()
 	item, err := models.NewRepository(r.db).Create(ctx, modelFromInput(newID(), input))
 	if err != nil {
+		if writeModelRepositoryError(w, err) {
+			return
+		}
 		writeError(w, err)
 		return
 	}
@@ -397,6 +393,9 @@ func (r *Router) updateModel(w http.ResponseWriter, req *http.Request, id string
 		return
 	}
 	if err != nil {
+		if writeModelRepositoryError(w, err) {
+			return
+		}
 		writeError(w, err)
 		return
 	}
@@ -416,21 +415,6 @@ func (r *Router) deleteModel(w http.ResponseWriter, req *http.Request, id string
 		writeError(w, err)
 		return
 	}
-	if count > 0 {
-		item, err := repo.Disable(ctx, id)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"data": map[string]any{
-				"action": "disabled",
-				"model":  models.ToPublic(*item),
-			},
-			"message": "模型已有历史任务，已自动改为禁用",
-		})
-		return
-	}
 	deleted, err := repo.Delete(ctx, id)
 	if err != nil {
 		writeError(w, err)
@@ -440,9 +424,22 @@ func (r *Router) deleteModel(w http.ResponseWriter, req *http.Request, id string
 		writeError(w, newAppError(http.StatusNotFound, "模型不存在"))
 		return
 	}
+	item, err := repo.FindByID(ctx, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data":    map[string]any{"action": "deleted"},
-		"message": "模型已删除",
+		"data": map[string]any{
+			"action": "hidden",
+			"model":  models.ToPublic(*item),
+		},
+		"message": func() string {
+			if count > 0 {
+				return "模型已有历史任务，已隐藏并保留记录"
+			}
+			return "模型已隐藏"
+		}(),
 	})
 }
 
@@ -541,4 +538,12 @@ func isSupportedModelCapability(value string) bool {
 	default:
 		return false
 	}
+}
+
+func writeModelRepositoryError(w http.ResponseWriter, err error) bool {
+	if errors.Is(err, models.ErrDuplicateModelDisplayName) {
+		writeError(w, newAppError(http.StatusConflict, err.Error()))
+		return true
+	}
+	return false
 }

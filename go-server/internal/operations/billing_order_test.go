@@ -72,6 +72,43 @@ func TestCompleteBalanceOrderSkipsAlreadyPaidOrder(t *testing.T) {
 	}
 }
 
+func TestCompleteBalanceOrderCreditsClosedPaidOrder(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+	repo := NewRepository(database.Wrap(rawDB))
+	now := time.Now()
+
+	mock.ExpectBegin()
+	expectOrder(mock, "closed", "recharge", nil, 10, now)
+	mock.ExpectQuery(`SELECT credits FROM users WHERE id=\? FOR UPDATE`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"credits"}).AddRow(5.0))
+	mock.ExpectExec(`UPDATE users SET credits=\? WHERE id=\?`).
+		WithArgs(15.0, "user-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO credit_logs`).
+		WithArgs(sqlmock.AnyArg(), "user-1", 10.0, 15.0, "支付宝充值 out-1").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`UPDATE recharge_orders SET status='paid', trade_no=\?, paid_at=\?, updated_at=CURRENT_TIMESTAMP WHERE id=\?`).
+		WithArgs("trade-1", sqlmock.AnyArg(), "order-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	order, changed, err := repo.CompleteOrder(context.Background(), "out-1", "trade-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !changed || order == nil || order.Status != "paid" {
+		t.Fatalf("unexpected completion result: changed=%v order=%#v", changed, order)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCompleteBalanceOrderAwardsInviteRechargeRebateAtomically(t *testing.T) {
 	rawDB, mock, err := sqlmock.New()
 	if err != nil {
