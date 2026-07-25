@@ -58,7 +58,7 @@ const (
 )
 
 const (
-	compatTaskClientWaitTimeout = 8 * time.Minute
+	compatTaskClientWaitTimeout = 290 * time.Second
 	compatTaskLogWaitTimeout    = 30 * time.Minute
 	maxCompatReferenceImages    = 4
 	compatImageResultModeHeader = "X-Aipi-Image-Result-Mode"

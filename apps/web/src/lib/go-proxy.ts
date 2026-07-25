@@ -53,7 +53,29 @@ export async function proxyToGo(request: Request, path: string): Promise<Respons
       if (value) responseHeaders.set(name, value);
     }
     return new Response(upstream.body, { status: upstream.status, headers: responseHeaders });
-  } catch {
-    return Response.json({ message: 'Go 后端服务暂不可用' }, { status: 502 });
+  } catch (error) {
+    return proxyUnavailableResponse(path, error);
   }
+}
+
+function proxyUnavailableResponse(path: string, error: unknown): Response {
+  const detail = error instanceof Error ? error.message : String(error || '');
+  const isTimeout = /timeout|timed out|aborted|terminated|econnreset|socket|fetch failed/i.test(detail);
+  const message = isTimeout
+    ? '请求超时或连接中断，请稍后重试'
+    : 'Go 后端服务暂不可用';
+  const status = isTimeout ? 504 : 502;
+  if (path.startsWith('/v1/')) {
+    return Response.json({
+      error: {
+        message: detail ? `${message}：${detail}` : message,
+        type: 'api_error',
+        code: null,
+      },
+    }, { status });
+  }
+  return Response.json({
+    message,
+    detail: detail || undefined,
+  }, { status });
 }
