@@ -126,14 +126,14 @@ export default function BillingPage() {
   const [historyError, setHistoryError] = useState('');
   const [reopeningOrderId, setReopeningOrderId] = useState('');
 
-  const loadBilling = useCallback(async () => {
+  const loadBilling = useCallback(async (silent = false) => {
     const current = getSession();
     if (!current) {
       setError('登录状态已失效，请重新登录');
-      setLoading(false);
+      if (!silent) setLoading(false);
       return;
     }
-    setLoading(true);
+    if (!silent) setLoading(true);
     setError('');
     const results = await Promise.allSettled([
       refreshSession(current),
@@ -148,17 +148,17 @@ export default function BillingPage() {
     if (settingsResult.status === 'fulfilled') setSettings(settingsResult.value.data || {});
     const failure = results.find((result) => result.status === 'rejected');
     if (failure?.status === 'rejected') setError(errorMessage(failure.reason));
-    setLoading(false);
+    if (!silent) setLoading(false);
   }, []);
 
-  const loadOrderHistory = useCallback(async (page = 1, current = getSession()) => {
+  const loadOrderHistory = useCallback(async (page = 1, current = getSession(), silent = false) => {
     if (!current) {
       setHistoryError('登录状态已失效，请重新登录');
-      setHistoryLoading(false);
+      if (!silent) setHistoryLoading(false);
       return;
     }
     setHistoryPage(page);
-    setHistoryLoading(true);
+    if (!silent) setHistoryLoading(true);
     setHistoryError('');
     setOrderHistory([]);
     try {
@@ -169,7 +169,7 @@ export default function BillingPage() {
     } catch (historyLoadError) {
       setHistoryError(errorMessage(historyLoadError));
     } finally {
-      setHistoryLoading(false);
+      if (!silent) setHistoryLoading(false);
     }
   }, []);
 
@@ -237,12 +237,12 @@ export default function BillingPage() {
       if (!currentOrder.id) throw new Error('支付订单读取失败');
       if (paidStatus(currentOrder.status)) {
         toast.success(currentOrder.orderType === 'subscription' ? '订阅订单已支付' : '充值订单已支付');
-        await Promise.all([loadBilling(), loadOrderHistory(historyPage, user)]);
+        await Promise.all([loadBilling(true), loadOrderHistory(historyPage, user, true)]);
         return;
       }
       if (failedStatus(currentOrder.status)) {
         toast.error('订单已关闭，请重新创建支付订单');
-        await loadOrderHistory(historyPage, user);
+        await loadOrderHistory(historyPage, user, true);
         return;
       }
 
@@ -261,7 +261,7 @@ export default function BillingPage() {
       setPaymentTitle(`${nextOrder.orderType === 'subscription' ? '订阅订单' : '余额充值'} ${formatCNY(nextOrder.amount)}`);
       setPaymentOpen(true);
       toast.success('已生成新的支付二维码');
-      void loadOrderHistory(1, user);
+      void loadOrderHistory(1, user, true);
     } catch (reopenError) {
       toast.error(errorMessage(reopenError));
     } finally {
@@ -279,7 +279,7 @@ export default function BillingPage() {
       setPaymentError('');
       if (paidStatus(nextOrder.status)) {
         toast.success(nextOrder.orderType === 'subscription' ? '订阅已生效' : '余额已到账');
-        await Promise.all([loadBilling(), loadOrderHistory(1, user)]);
+        await Promise.all([loadBilling(true), loadOrderHistory(1, user, true)]);
       } else if (showFeedback) {
         if (failedStatus(nextOrder.status)) {
           toast.error('订单已关闭，请重新创建支付订单');
@@ -301,6 +301,12 @@ export default function BillingPage() {
     const timer = window.setInterval(() => void syncPayment(false), 3000);
     return () => window.clearInterval(timer);
   }, [paymentOrder, syncPayment]);
+
+  useEffect(() => {
+    if (!paymentOpen || !paymentOrder || !paidStatus(paymentOrder.status)) return;
+    const timer = window.setTimeout(() => setPaymentOpen(false), 1200);
+    return () => window.clearTimeout(timer);
+  }, [paymentOpen, paymentOrder]);
 
   const paymentState = paymentOrder
     ? paidStatus(paymentOrder.status) ? 'paid' : failedStatus(paymentOrder.status) ? 'failed' : 'pending'
