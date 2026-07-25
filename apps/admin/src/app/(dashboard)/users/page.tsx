@@ -230,6 +230,7 @@ export default function AdminUsersPage() {
   }, [billingFilter, search, statusFilter, users]);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const creditLogTotalPages = Math.max(1, Math.ceil(creditLogTotal / creditLogPageSize));
   const visible = filtered.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize);
   const activePlans = plans.filter((plan) => plan.status === 'active');
   const currentBalance = Number(balanceUser?.credits || 0);
@@ -734,9 +735,9 @@ export default function AdminUsersPage() {
               )}
             </div>
 
-            <div className="flex items-center justify-between gap-3 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3">
-              <span className="text-[10px] text-zinc-400">第 {creditLogPage} / {Math.max(1, Math.ceil(creditLogTotal / creditLogPageSize))} 页</span>
-              <div className="flex items-center gap-2"><button type="button" onClick={() => setCreditLogPage((value) => Math.max(1, value - 1))} disabled={creditLogPage <= 1 || creditLogLoading} title="上一页" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white text-zinc-600 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button><button type="button" onClick={() => setCreditLogPage((value) => value + 1)} disabled={creditLogPage >= Math.ceil(creditLogTotal / creditLogPageSize) || creditLogLoading} title="下一页" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white text-zinc-600 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button><button type="button" onClick={() => setCreditLogUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">关闭</button></div>
+            <div className="flex flex-col gap-3 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-[10px] text-zinc-400">第 {creditLogPage} / {creditLogTotalPages} 页</span>
+              <div className="flex flex-wrap items-center gap-2"><AppSelect compact value={String(creditLogPage)} options={Array.from({ length: creditLogTotalPages }, (_, index) => ({ value: String(index + 1), label: `第 ${index + 1} 页` }))} onValueChange={(value) => setCreditLogPage(Number(value))} disabled={creditLogLoading} ariaLabel="选择积分明细页码" /><button type="button" onClick={() => setCreditLogPage((value) => Math.max(1, value - 1))} disabled={creditLogPage <= 1 || creditLogLoading} title="上一页" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white text-zinc-600 disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button><button type="button" onClick={() => setCreditLogPage((value) => value + 1)} disabled={creditLogPage >= creditLogTotalPages || creditLogLoading} title="下一页" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white text-zinc-600 disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button><button type="button" onClick={() => setCreditLogUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">关闭</button></div>
             </div>
           </section>
         </div>

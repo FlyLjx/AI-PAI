@@ -38,6 +38,8 @@ const MODE_OPTIONS = [
   { value: 'banner', label: '页面横幅' },
 ];
 
+const PAGE_SIZE = 15;
+
 function toDraft(item: Announcement): AnnouncementDraft {
   return {
     title: item.title,
@@ -64,6 +66,7 @@ export default function AnnouncementsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [modeFilter, setModeFilter] = useState('all');
+  const [page, setPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Announcement | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<Announcement | null>(null);
@@ -102,17 +105,24 @@ export default function AnnouncementsPage() {
     });
   }, [items, modeFilter, search, statusFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const visible = useMemo(
+    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [currentPage, filtered],
+  );
+
   const visibleUsers = useMemo(() => {
     const keyword = userSearch.trim().toLowerCase();
     return users.filter((user) => !keyword || `${user.email} ${user.id}`.toLowerCase().includes(keyword));
   }, [userSearch, users]);
 
   const summary = useMemo(() => ({
-    total: items.length,
-    active: items.filter((item) => item.status === 'active').length,
-    popup: items.filter((item) => item.displayMode === 'popup').length,
-    banner: items.filter((item) => item.displayMode === 'banner').length,
-  }), [items]);
+    total: filtered.length,
+    active: filtered.filter((item) => item.status === 'active').length,
+    popup: filtered.filter((item) => item.displayMode === 'popup').length,
+    banner: filtered.filter((item) => item.displayMode === 'banner').length,
+  }), [filtered]);
 
   const openCreate = () => {
     setEditing(null);
@@ -244,11 +254,14 @@ export default function AnnouncementsPage() {
             { key: 'updated', label: '更新时间' },
             { key: 'actions', label: '操作', className: 'text-right' },
           ]}
-          data={filtered}
+          data={visible}
           searchPlaceholder="搜索公告标题或内容"
           searchValue={search}
-          onSearchChange={setSearch}
-          filterControls={<><AppSelect compact value={modeFilter} onValueChange={setModeFilter} ariaLabel="筛选展示方式" options={MODE_OPTIONS} /><AppSelect compact value={statusFilter} onValueChange={setStatusFilter} ariaLabel="筛选公告状态" options={STATUS_OPTIONS} /><span className="text-[11px] text-zinc-400">{filtered.length} 条</span></>}
+          onSearchChange={(value) => { setSearch(value); setPage(1); }}
+          filterControls={<><AppSelect compact value={modeFilter} onValueChange={(value) => { setModeFilter(value); setPage(1); }} ariaLabel="筛选展示方式" options={MODE_OPTIONS} /><AppSelect compact value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }} ariaLabel="筛选公告状态" options={STATUS_OPTIONS} /><span className="text-[11px] text-zinc-400">{filtered.length} 条</span></>}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={setPage}
           emptyState={<EmptyState title="暂无公告" description="创建公告后，可通过横幅或弹窗通知用户。" icon={Megaphone} />}
           renderRow={(item) => (
             <tr key={item.id} className="hover:bg-[#FAFBFA]">

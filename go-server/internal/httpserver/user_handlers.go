@@ -49,6 +49,9 @@ func (r *Router) userLogin(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusForbidden, "用户已被禁用"))
 		return
 	}
+	if err := users.NewRepository(r.db).RecordIPEvidence(ctx, user.ID, users.IPSourceLogin, requestIP(req), ""); err != nil && r.logger != nil {
+		r.logger.Warn("user login IP recording failed", "userId", user.ID, "error", err)
+	}
 	user = r.settleInviteRewards(ctx, user)
 	token, err := r.tokens.CreateUserToken(user.ID)
 	if err != nil {

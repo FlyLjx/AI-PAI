@@ -1,28 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Loader2, ReceiptText, RefreshCw } from 'lucide-react';
 import { AppSelect } from '@/components/common/AppSelect';
 import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
-import { portalApi } from '@/lib/admin-api';
+import { portalApi, type RechargeOrder, type RechargeSummary } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
-
-type RechargeOrder = {
-  id: string;
-  userId: string;
-  userEmail?: string;
-  outTradeNo: string;
-  tradeNo?: string | null;
-  orderType: 'recharge' | 'subscription';
-  subscriptionPlanId?: string | null;
-  amount: number;
-  status: string;
-  paidAt?: string | null;
-  createdAt: string;
-  updatedAt?: string;
-};
 
 const pageSize = 30;
 const ORDER_TYPE_OPTIONS = [
@@ -55,43 +40,45 @@ export default function AdminRechargesPage() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [summary, setSummary] = useState<RechargeSummary>({ total: 0, paidAmount: 0, paidCount: 0, pendingCount: 0, subscriptionCount: 0 });
+  const requestSequence = useRef(0);
 
   const load = useCallback(async (nextPage: number) => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError('');
     try {
-      const response = await portalApi.recharges(nextPage);
-      setOrders(response.data as unknown as RechargeOrder[]);
-      setTotal(response.pagination?.total || response.data.length);
+      const response = await portalApi.recharges({
+        page: nextPage,
+        pageSize,
+        keyword: search.trim() || undefined,
+        orderType: typeFilter === 'all' ? undefined : typeFilter,
+        status: statusFilter === 'all' ? undefined : statusFilter,
+      });
+      if (sequence !== requestSequence.current) return;
+      const responseTotal = response.pagination?.total ?? response.data.length;
+      setOrders(response.data || []);
+      setTotal(responseTotal);
+      setSummary(response.summary || {
+        total: responseTotal,
+        paidAmount: response.data.filter((order) => order.status === 'paid').reduce((sum, order) => sum + Number(order.amount || 0), 0),
+        paidCount: response.data.filter((order) => order.status === 'paid').length,
+        pendingCount: response.data.filter((order) => order.status === 'pending').length,
+        subscriptionCount: response.data.filter((order) => order.orderType === 'subscription').length,
+      });
       setPage(nextPage);
     } catch (requestError) {
+      if (sequence !== requestSequence.current) return;
       setError(requestError instanceof Error ? requestError.message : '充值流水加载失败');
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
-  }, []);
+  }, [search, statusFilter, typeFilter]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void load(1), 0);
+    const timer = window.setTimeout(() => void load(1), 300);
     return () => window.clearTimeout(timer);
   }, [load]);
-
-  const filtered = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-    return orders.filter((order) => {
-      const matchesKeyword = !keyword || `${order.userEmail || ''} ${order.userId} ${order.outTradeNo} ${order.tradeNo || ''}`.toLowerCase().includes(keyword);
-      const matchesType = typeFilter === 'all' || order.orderType === typeFilter;
-      const matchesStatus = statusFilter === 'all' || order.status === statusFilter;
-      return matchesKeyword && matchesType && matchesStatus;
-    });
-  }, [orders, search, statusFilter, typeFilter]);
-
-  const summary = useMemo(() => ({
-    paid: orders.filter((order) => order.status === 'paid').reduce((sum, order) => sum + Number(order.amount || 0), 0),
-    paidCount: orders.filter((order) => order.status === 'paid').length,
-    pending: orders.filter((order) => order.status === 'pending').length,
-    subscriptions: orders.filter((order) => order.orderType === 'subscription').length,
-  }), [orders]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -103,16 +90,16 @@ export default function AdminRechargesPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          ['本页已收金额', formatCNY(summary.paid), `${summary.paidCount} 笔已支付`],
-          ['待支付订单', summary.pending, '等待支付结果'],
-          ['订阅订单', summary.subscriptions, '本页订阅购买'],
-          ['全部流水', total.toLocaleString('zh-CN'), '服务器记录总数'],
+          ['已收金额', formatCNY(summary.paidAmount), `${summary.paidCount} 笔已支付`],
+          ['待支付订单', summary.pendingCount, '当前筛选范围'],
+          ['订阅订单', summary.subscriptionCount, '当前筛选范围'],
+          ['订单总数', summary.total.toLocaleString('zh-CN'), '当前筛选范围'],
         ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
       </div>
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load(page)} className="font-semibold underline">重试</button></div>}
 
-      {loading ? (
+      {loading && orders.length === 0 ? (
         <div className="grid min-h-[300px] place-items-center rounded-md border border-[#DCE4DF] bg-white"><Loader2 className="h-6 w-6 animate-spin text-[#12B76A]" /></div>
       ) : (
         <DataTable
@@ -126,15 +113,15 @@ export default function AdminRechargesPage() {
             { key: 'created', label: '创建时间' },
             { key: 'paid', label: '支付时间' },
           ]}
-          data={filtered}
+          data={orders}
           searchPlaceholder="搜索用户、商户订单号或支付流水号"
           searchValue={search}
-          onSearchChange={setSearch}
+          onSearchChange={(value) => { setSearch(value); setPage(1); }}
           filterControls={(
             <>
-              <AppSelect value={typeFilter} options={ORDER_TYPE_OPTIONS} onValueChange={setTypeFilter} compact ariaLabel="筛选订单类型" />
-              <AppSelect value={statusFilter} options={ORDER_STATUS_OPTIONS} onValueChange={setStatusFilter} compact ariaLabel="筛选支付状态" />
-              <span className="text-[11px] text-zinc-400">本页 {filtered.length} 条</span>
+              <AppSelect value={typeFilter} options={ORDER_TYPE_OPTIONS} onValueChange={(value) => { setTypeFilter(value); setPage(1); }} compact ariaLabel="筛选订单类型" />
+              <AppSelect value={statusFilter} options={ORDER_STATUS_OPTIONS} onValueChange={(value) => { setStatusFilter(value); setPage(1); }} compact ariaLabel="筛选支付状态" />
+              <span className="text-[11px] text-zinc-400">{loading ? '正在查询...' : `共 ${total} 条 · 本页 ${orders.length} 条`}</span>
             </>
           )}
           currentPage={page}

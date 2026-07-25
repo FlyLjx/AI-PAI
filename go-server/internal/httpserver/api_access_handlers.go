@@ -361,19 +361,41 @@ func (r *Router) adminAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	items, total, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).ListAdminLogs(ctx, apiaccess.ListLogsInput{
+	page := queryInt(req, "page", 1)
+	if page < 1 {
+		page = 1
+	}
+	pageSize := queryInt(req, "pageSize", 20)
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	input := apiaccess.ListLogsInput{
 		UserID:   req.URL.Query().Get("userId"),
 		APIKeyID: req.URL.Query().Get("apiKeyId"),
 		Status:   req.URL.Query().Get("status"),
 		Keyword:  req.URL.Query().Get("keyword"),
-		Page:     queryInt(req, "page", 1),
-		PageSize: queryInt(req, "pageSize", 20),
-	})
+		Page:     page,
+		PageSize: pageSize,
+	}
+	service := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db))
+	items, total, err := service.ListAdminLogs(ctx, input)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": items, "pagination": map[string]any{"total": total, "page": queryInt(req, "page", 1), "pageSize": queryInt(req, "pageSize", 20)}})
+	stats, err := service.ListLogStats(ctx, input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":       items,
+		"pagination": map[string]any{"total": total, "page": page, "pageSize": pageSize},
+		"summary":    stats,
+	})
 }
 
 func (r *Router) adminAPIAccessOperations(w http.ResponseWriter, req *http.Request) {

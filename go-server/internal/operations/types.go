@@ -82,7 +82,12 @@ type Invite struct {
 	Status                string  `json:"status"`
 	RiskReason            *string `json:"riskReason,omitempty"`
 	InviterIP             *string `json:"inviterIp,omitempty"`
+	InviterLoginIP        *string `json:"inviterLoginIp,omitempty"`
+	InviterAPIIP          *string `json:"inviterApiIp,omitempty"`
 	InviteeIP             *string `json:"inviteeIp"`
+	InviteeLoginIP        *string `json:"inviteeLoginIp,omitempty"`
+	InviteeAPIIP          *string `json:"inviteeApiIp,omitempty"`
+	SharedIP              bool    `json:"sharedIp"`
 	VerifiedAt            *string `json:"verifiedAt,omitempty"`
 	RewardedAt            *string `json:"rewardedAt,omitempty"`
 	RechargeRebateCount   int     `json:"rechargeRebateCount"`
@@ -215,6 +220,21 @@ type RechargeOrder struct {
 	CreatedAt          string                `json:"createdAt"`
 	UpdatedAt          string                `json:"updatedAt"`
 	InviteRebate       *InviteRechargeRebate `json:"-"`
+}
+
+type RechargeOrderSummary struct {
+	Total             int     `json:"total"`
+	PaidAmount        float64 `json:"paidAmount"`
+	PaidCount         int     `json:"paidCount"`
+	PendingCount      int     `json:"pendingCount"`
+	SubscriptionCount int     `json:"subscriptionCount"`
+}
+
+type AdminInviteSummary struct {
+	Total    int `json:"total"`
+	Rewarded int `json:"rewarded"`
+	Pending  int `json:"pending"`
+	Blocked  int `json:"blocked"`
 }
 
 type DashboardTaskSummary struct {

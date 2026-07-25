@@ -34,6 +34,9 @@ func TestUserLoginAllowsUnverifiedEmail(t *testing.T) {
 			"user-1", "user@example.com", nil, nil, nil, auth.HashPassword("password123"),
 			0, "user", "active", nil, now, now,
 		))
+	mock.ExpectExec(`INSERT INTO user_ip_evidence`).
+		WithArgs("user-1", sqlmock.AnyArg(), "198.51.100.16", "login", nil).
+		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectQuery(`SELECT setting_key, setting_value FROM system_settings`).
 		WillReturnError(errors.New("subscription settings unavailable"))
 
@@ -42,6 +45,7 @@ func TestUserLoginAllowsUnverifiedEmail(t *testing.T) {
 		tokens: auth.NewTokenManager(config.DatabaseConfig{}),
 	}
 	req := httptest.NewRequest(http.MethodPost, "http://example.test/api/users/login", strings.NewReader(`{"email":"user@example.com","password":"password123"}`))
+	req.Header.Set("X-Forwarded-For", "198.51.100.16")
 	recorder := httptest.NewRecorder()
 	router.userLogin(recorder, req)
 

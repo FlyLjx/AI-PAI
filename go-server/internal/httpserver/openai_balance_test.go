@@ -47,10 +47,14 @@ func TestCompatBalanceReturnsAuthenticatedUserBalance(t *testing.T) {
 	mock.ExpectExec(`UPDATE api_access_keys SET last_used_at`).
 		WithArgs("key-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`INSERT INTO user_ip_evidence`).
+		WithArgs("user-1", sqlmock.AnyArg(), "203.0.113.24", "api", "key-1").
+		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	router := &Router{db: database.Wrap(rawDB)}
 	req := httptest.NewRequest(http.MethodGet, "http://example.test/v1/balance", nil)
 	req.Header.Set("Authorization", "Bearer "+rawKey)
+	req.Header.Set("X-Forwarded-For", "203.0.113.24")
 	recorder := httptest.NewRecorder()
 
 	router.compatBalance(recorder, req)

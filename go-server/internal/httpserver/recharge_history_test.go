@@ -69,6 +69,7 @@ func TestRechargeHistoryReturnsOnlyAuthenticatedUserOrders(t *testing.T) {
 			Page     int `json:"page"`
 			PageSize int `json:"pageSize"`
 		} `json:"pagination"`
+		Summary json.RawMessage `json:"summary"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
@@ -78,6 +79,9 @@ func TestRechargeHistoryReturnsOnlyAuthenticatedUserOrders(t *testing.T) {
 	}
 	if response.Pagination.Total != 1 || response.Pagination.Page != 1 || response.Pagination.PageSize != 10 {
 		t.Fatalf("unexpected pagination: %+v", response.Pagination)
+	}
+	if len(response.Summary) != 0 {
+		t.Fatalf("front recharge history exposed admin summary: %s", response.Summary)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

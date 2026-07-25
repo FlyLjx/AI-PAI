@@ -42,11 +42,12 @@ func NewRepository(db *database.DB) *Repository {
 }
 
 type PageInput struct {
-	Page     int
-	PageSize int
-	Keyword  string
-	Status   string
-	UserID   string
+	Page      int
+	PageSize  int
+	Keyword   string
+	Status    string
+	UserID    string
+	OrderType string
 }
 
 type dashboardBalanceMetrics struct {
@@ -871,7 +872,12 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 		return nil, 0, err
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT user_invites.id, user_invites.inviter_id, inviter.email, inviter.invited_ip, user_invites.invitee_id, invitee.email,
+		SELECT user_invites.id, user_invites.inviter_id, inviter.email, inviter.invited_ip,
+			(SELECT ip_address FROM user_ip_evidence WHERE user_id=user_invites.inviter_id AND source_type='login' ORDER BY last_seen_at DESC LIMIT 1),
+			(SELECT ip_address FROM user_ip_evidence WHERE user_id=user_invites.inviter_id AND source_type='api' ORDER BY last_seen_at DESC LIMIT 1),
+			user_invites.invitee_id, invitee.email,
+			(SELECT ip_address FROM user_ip_evidence WHERE user_id=user_invites.invitee_id AND source_type='login' ORDER BY last_seen_at DESC LIMIT 1),
+			(SELECT ip_address FROM user_ip_evidence WHERE user_id=user_invites.invitee_id AND source_type='api' ORDER BY last_seen_at DESC LIMIT 1),
 			user_invites.reward_credits,
 			COALESCE(user_invites.reward_type, 'subscription') AS reward_type,
 			user_invites.reward_plan_id,
@@ -887,6 +893,11 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 			user_invites.rewarded_at,
 			COALESCE(rebates.rebate_count, 0),
 			COALESCE(rebates.rebate_credits, 0),
+			CASE WHEN EXISTS (
+				SELECT 1 FROM user_ip_evidence inviter_evidence
+				INNER JOIN user_ip_evidence invitee_evidence ON invitee_evidence.ip_hash=inviter_evidence.ip_hash
+				WHERE inviter_evidence.user_id=user_invites.inviter_id AND invitee_evidence.user_id=user_invites.invitee_id
+			) THEN 1 ELSE 0 END,
 			user_invites.created_at
 		FROM user_invites
 		LEFT JOIN users inviter ON inviter.id=user_invites.inviter_id
@@ -910,6 +921,19 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
+}
+
+func (r *Repository) AdminInviteSummary(ctx context.Context) (AdminInviteSummary, error) {
+	var summary AdminInviteSummary
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN COALESCE(status, 'rewarded')='rewarded' THEN 1 ELSE 0 END), 0) AS rewarded,
+			COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0) AS pending,
+			COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END), 0) AS blocked
+		FROM user_invites
+	`).Scan(&summary.Total, &summary.Rewarded, &summary.Pending, &summary.Blocked)
+	return summary, err
 }
 
 func (r *Repository) InviteSummary(ctx context.Context, userID string) (map[string]any, error) {
@@ -1021,7 +1045,12 @@ func (r *Repository) inviteRechargeRebateRecords(ctx context.Context, inviterID 
 
 func (r *Repository) inviteRecords(ctx context.Context, where string, arg any, limit int) ([]Invite, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT user_invites.id, user_invites.inviter_id, inviter.email, inviter.invited_ip, user_invites.invitee_id, invitee.email,
+		SELECT user_invites.id, user_invites.inviter_id, inviter.email, inviter.invited_ip,
+			(SELECT ip_address FROM user_ip_evidence WHERE user_id=user_invites.inviter_id AND source_type='login' ORDER BY last_seen_at DESC LIMIT 1),
+			(SELECT ip_address FROM user_ip_evidence WHERE user_id=user_invites.inviter_id AND source_type='api' ORDER BY last_seen_at DESC LIMIT 1),
+			user_invites.invitee_id, invitee.email,
+			(SELECT ip_address FROM user_ip_evidence WHERE user_id=user_invites.invitee_id AND source_type='login' ORDER BY last_seen_at DESC LIMIT 1),
+			(SELECT ip_address FROM user_ip_evidence WHERE user_id=user_invites.invitee_id AND source_type='api' ORDER BY last_seen_at DESC LIMIT 1),
 			user_invites.reward_credits,
 			COALESCE(user_invites.reward_type, 'subscription') AS reward_type,
 			user_invites.reward_plan_id,
@@ -1037,6 +1066,11 @@ func (r *Repository) inviteRecords(ctx context.Context, where string, arg any, l
 			user_invites.rewarded_at,
 			COALESCE(rebates.rebate_count, 0),
 			COALESCE(rebates.rebate_credits, 0),
+			CASE WHEN EXISTS (
+				SELECT 1 FROM user_ip_evidence inviter_evidence
+				INNER JOIN user_ip_evidence invitee_evidence ON invitee_evidence.ip_hash=inviter_evidence.ip_hash
+				WHERE inviter_evidence.user_id=user_invites.inviter_id AND invitee_evidence.user_id=user_invites.invitee_id
+			) THEN 1 ELSE 0 END,
 			user_invites.created_at
 		FROM user_invites
 		LEFT JOIN users inviter ON inviter.id=user_invites.inviter_id
@@ -1168,7 +1202,7 @@ func (r *Repository) BindInvite(ctx context.Context, input InviteBindingInput) (
 		riskReason = "邀请奖励配置不完整"
 	}
 	if riskReason == "" {
-		riskReason, err = inviteRiskReason(ctx, tx, "", input.InviterID, input.InviteeIP, input.IPHash, input.DeviceHash, input.Risk)
+		riskReason, err = inviteRiskReason(ctx, tx, "", input.InviterID, input.InviteeID, input.InviteeIP, input.IPHash, input.DeviceHash, input.Risk)
 		if err != nil {
 			return nil, err
 		}
@@ -1258,7 +1292,7 @@ func (r *Repository) FinalizeInviteRewards(ctx context.Context, inviteeID string
 		return nil, err
 	}
 
-	riskReason, err := inviteRiskReason(ctx, tx, inviteID, inviterID, inviteeIP.String, ipHash.String, deviceHash.String, risk)
+	riskReason, err := inviteRiskReason(ctx, tx, inviteID, inviterID, storedInviteeID, inviteeIP.String, ipHash.String, deviceHash.String, risk)
 	if err != nil {
 		return nil, err
 	}
@@ -1328,7 +1362,7 @@ func prepareInviteReward(ctx context.Context, tx *database.Tx, input InviteRewar
 	}
 }
 
-func inviteRiskReason(ctx context.Context, tx *database.Tx, excludeInviteID string, inviterID string, inviteeIP string, ipHash string, deviceHash string, risk InviteRiskLimits) (string, error) {
+func inviteRiskReason(ctx context.Context, tx *database.Tx, excludeInviteID string, inviterID string, inviteeID string, inviteeIP string, ipHash string, deviceHash string, risk InviteRiskLimits) (string, error) {
 	if !risk.Enabled {
 		return "", nil
 	}
@@ -1341,12 +1375,29 @@ func inviteRiskReason(ctx context.Context, tx *database.Tx, excludeInviteID stri
 			SELECT COUNT(*)
 			FROM users
 			LEFT JOIN user_registration_fingerprints ON user_registration_fingerprints.user_id=users.id
-			WHERE users.id=? AND (user_registration_fingerprints.ip_hash=? OR users.invited_ip=?)
-		`, inviterID, ipHash, strings.TrimSpace(inviteeIP)).Scan(&sameIP); err != nil {
+			WHERE users.id=? AND (
+				user_registration_fingerprints.ip_hash=?
+				OR users.invited_ip=?
+				OR EXISTS (SELECT 1 FROM user_ip_evidence WHERE user_id=users.id AND ip_hash=?)
+			)
+		`, inviterID, ipHash, strings.TrimSpace(inviteeIP), ipHash).Scan(&sameIP); err != nil {
 			return "", err
 		}
 		if sameIP > 0 {
 			return "邀请人与被邀请人使用相同网络地址", nil
+		}
+		if strings.TrimSpace(inviteeID) != "" {
+			if err := tx.QueryRowContext(ctx, `
+				SELECT COUNT(*)
+				FROM user_ip_evidence inviter_evidence
+				INNER JOIN user_ip_evidence invitee_evidence ON invitee_evidence.ip_hash=inviter_evidence.ip_hash
+				WHERE inviter_evidence.user_id=? AND invitee_evidence.user_id=?
+			`, inviterID, inviteeID).Scan(&sameIP); err != nil {
+				return "", err
+			}
+			if sameIP > 0 {
+				return "邀请人与被邀请人的登录或 API 调用存在相同网络地址", nil
+			}
 		}
 	}
 	if risk.BlockSameDevice && strings.TrimSpace(deviceHash) != "" {
@@ -2312,17 +2363,7 @@ func sqlDateString(value any) string {
 
 func (r *Repository) Orders(ctx context.Context, input PageInput) ([]RechargeOrder, int, error) {
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	where := []string{}
-	args := []any{}
-	if userID := strings.TrimSpace(input.UserID); userID != "" {
-		where = append(where, "recharge_orders.user_id=?")
-		args = append(args, userID)
-	}
-	if input.Status != "" && input.Status != "all" {
-		where = append(where, "recharge_orders.status=?")
-		args = append(args, input.Status)
-	}
-	whereSQL := buildWhere(where)
+	whereSQL, args := buildOrderWhere(input)
 	total, err := r.countWithArgs(ctx, `SELECT COUNT(*) FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id `+whereSQL, args)
 	if err != nil {
 		return nil, 0, err
@@ -2347,6 +2388,63 @@ func (r *Repository) Orders(ctx context.Context, input PageInput) ([]RechargeOrd
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
+}
+
+func (r *Repository) OrderSummary(ctx context.Context, input PageInput) (RechargeOrderSummary, error) {
+	whereSQL, args := buildOrderWhere(input)
+	var summary RechargeOrderSummary
+	err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN recharge_orders.status='paid' THEN recharge_orders.amount ELSE 0 END), 0) AS paid_amount,
+			COALESCE(SUM(CASE WHEN recharge_orders.status='paid' THEN 1 ELSE 0 END), 0) AS paid_count,
+			COALESCE(SUM(CASE WHEN recharge_orders.status='pending' THEN 1 ELSE 0 END), 0) AS pending_count,
+			COALESCE(SUM(CASE WHEN recharge_orders.order_type='subscription' THEN 1 ELSE 0 END), 0) AS subscription_count
+		FROM recharge_orders
+		LEFT JOIN users ON users.id=recharge_orders.user_id
+		`+whereSQL, args...).Scan(
+		&summary.Total,
+		&summary.PaidAmount,
+		&summary.PaidCount,
+		&summary.PendingCount,
+		&summary.SubscriptionCount,
+	)
+	return summary, err
+}
+
+func buildOrderWhere(input PageInput) (string, []any) {
+	where := []string{}
+	args := []any{}
+	if userID := strings.TrimSpace(input.UserID); userID != "" {
+		where = append(where, "recharge_orders.user_id=?")
+		args = append(args, userID)
+	}
+	status := strings.ToLower(strings.TrimSpace(input.Status))
+	if status != "" && status != "all" {
+		where = append(where, "recharge_orders.status=?")
+		args = append(args, status)
+	}
+	orderType := strings.ToLower(strings.TrimSpace(input.OrderType))
+	if orderType != "" && orderType != "all" {
+		where = append(where, "recharge_orders.order_type=?")
+		args = append(args, orderType)
+	}
+	if keyword := strings.ToLower(strings.TrimSpace(input.Keyword)); keyword != "" {
+		like := "%" + keyword + "%"
+		where = append(where, `(
+			LOWER(COALESCE(recharge_orders.id, '')) LIKE ?
+			OR LOWER(COALESCE(recharge_orders.user_id, '')) LIKE ?
+			OR LOWER(COALESCE(users.email, '')) LIKE ?
+			OR LOWER(COALESCE(recharge_orders.out_trade_no, '')) LIKE ?
+			OR LOWER(COALESCE(recharge_orders.trade_no, '')) LIKE ?
+			OR LOWER(COALESCE(recharge_orders.subscription_plan_id, '')) LIKE ?
+			OR LOWER(COALESCE(recharge_orders.pay_url, '')) LIKE ?
+		)`)
+		for range 7 {
+			args = append(args, like)
+		}
+	}
+	return buildWhere(where), args
 }
 
 func (r *Repository) CreateOrder(ctx context.Context, order RechargeOrder) (*RechargeOrder, error) {
@@ -2632,17 +2730,22 @@ func scanPlanWithPrefix(row interface{ Scan(dest ...any) error }, prefix ...any)
 
 func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 	var item Invite
-	var inviter, inviterIP, invitee, rewardType, planID, label sql.NullString
+	var inviter, inviterIP, inviterLoginIP, inviterAPIIP, invitee, inviteeLoginIP, inviteeAPIIP, rewardType, planID, label sql.NullString
 	var inviteeRewardType, inviteePlanID, inviteeLabel, riskReason, inviteeAddr sql.NullString
 	var verifiedAt, rewardedAt sql.NullTime
+	var sharedIP int
 	var created time.Time
 	err := row.Scan(
 		&item.ID,
 		&item.InviterID,
 		&inviter,
 		&inviterIP,
+		&inviterLoginIP,
+		&inviterAPIIP,
 		&item.InviteeID,
 		&invitee,
+		&inviteeLoginIP,
+		&inviteeAPIIP,
 		&item.RewardCredits,
 		&rewardType,
 		&planID,
@@ -2658,6 +2761,7 @@ func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 		&rewardedAt,
 		&item.RechargeRebateCount,
 		&item.RechargeRebateCredits,
+		&sharedIP,
 		&created,
 	)
 	item.InviterEmail = nullString(inviter)
@@ -2676,7 +2780,12 @@ func scanInvite(row interface{ Scan(dest ...any) error }) (Invite, error) {
 	item.InviteeRewardLabel = nullString(inviteeLabel)
 	item.RiskReason = nullString(riskReason)
 	item.InviterIP = nullString(inviterIP)
+	item.InviterLoginIP = nullString(inviterLoginIP)
+	item.InviterAPIIP = nullString(inviterAPIIP)
 	item.InviteeIP = nullString(inviteeAddr)
+	item.InviteeLoginIP = nullString(inviteeLoginIP)
+	item.InviteeAPIIP = nullString(inviteeAPIIP)
+	item.SharedIP = sharedIP > 0
 	if verifiedAt.Valid {
 		value := appclock.DatabaseTime(verifiedAt.Time).Format(time.RFC3339)
 		item.VerifiedAt = &value

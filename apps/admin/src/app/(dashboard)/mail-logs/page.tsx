@@ -280,9 +280,10 @@ export default function AdminMailLogsPage() {
                   </tbody>
                 </table>
               </div>
-              <footer className="flex items-center justify-between border-t border-[#EDF0EE] bg-[#FAFBFA] px-4 py-3">
+              <footer className="flex flex-col gap-2 border-t border-[#EDF0EE] bg-[#FAFBFA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
                 <span className="text-[10px] text-zinc-400">第 {page} / {totalPages} 页，共 {total} 条</span>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
+                  <AppSelect compact value={String(page)} options={Array.from({ length: totalPages }, (_, index) => ({ value: String(index + 1), label: `第 ${index + 1} 页` }))} onValueChange={(value) => setPage(Number(value))} disabled={loading} ariaLabel="选择邮件记录页码" />
                   <button type="button" onClick={() => setPage((value) => Math.max(1, value - 1))} disabled={page <= 1 || loading} title="上一页" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white disabled:opacity-40"><ChevronLeft className="h-4 w-4" /></button>
                   <button type="button" onClick={() => setPage((value) => value + 1)} disabled={page >= totalPages || loading} title="下一页" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white disabled:opacity-40"><ChevronRight className="h-4 w-4" /></button>
                 </div>

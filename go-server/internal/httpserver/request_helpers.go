@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -29,14 +30,31 @@ func defaultString(value string, fallback string) string {
 }
 
 func requestIP(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
 	for _, header := range []string{"X-Forwarded-For", "X-Real-IP"} {
 		value := strings.TrimSpace(req.Header.Get(header))
 		if value == "" {
 			continue
 		}
-		return strings.TrimSpace(strings.Split(value, ",")[0])
+		if ip := normalizeRequestIP(strings.Split(value, ",")[0]); ip != "" {
+			return ip
+		}
 	}
-	return req.RemoteAddr
+	return normalizeRequestIP(req.RemoteAddr)
+}
+
+func normalizeRequestIP(value string) string {
+	value = strings.Trim(strings.TrimSpace(value), "\"")
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	value = strings.Trim(strings.TrimSpace(value), "[]")
+	if parsed := net.ParseIP(value); parsed != nil {
+		return parsed.String()
+	}
+	return ""
 }
 
 func queryInt(req *http.Request, key string, fallback int) int {

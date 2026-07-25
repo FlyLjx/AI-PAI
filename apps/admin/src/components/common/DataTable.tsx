@@ -2,6 +2,28 @@
 
 import React from 'react';
 import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { AppSelect } from './AppSelect';
+
+type PaginationItem = number | 'ellipsis-left' | 'ellipsis-right';
+
+function paginationItems(currentPage: number, totalPages: number): PaginationItem[] {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+
+  const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  if (currentPage <= 4) [2, 3, 4, 5].forEach((page) => pages.add(page));
+  if (currentPage >= totalPages - 3) {
+    [totalPages - 4, totalPages - 3, totalPages - 2, totalPages - 1].forEach((page) => pages.add(page));
+  }
+
+  const sorted = [...pages].filter((page) => page >= 1 && page <= totalPages).sort((a, b) => a - b);
+  const items: PaginationItem[] = [];
+  sorted.forEach((page, index) => {
+    const previous = sorted[index - 1];
+    if (previous && page - previous > 1) items.push(previous === 1 ? 'ellipsis-left' : 'ellipsis-right');
+    items.push(page);
+  });
+  return items;
+}
 
 interface Header {
   key: string;
@@ -46,6 +68,10 @@ export function DataTable<T>({
   emptyState
 }: DataTableProps<T>) {
   const showPagination = !!(currentPage && totalPages && totalPages > 1);
+  const pageOptions = showPagination && totalPages
+    ? Array.from({ length: totalPages }, (_, index) => ({ value: String(index + 1), label: `第 ${index + 1} 页` }))
+    : [];
+  const visiblePages = showPagination && currentPage && totalPages ? paginationItems(currentPage, totalPages) : [];
 
   return (
     <div className="space-y-4">
@@ -111,23 +137,52 @@ export function DataTable<T>({
 
       {/* Pagination Footer */}
       {showPagination && currentPage && totalPages && onPageChange && (
-        <div className="flex items-center justify-between bg-white px-4 py-3 border border-[#DCE4DF] rounded-md text-xs shadow-sm">
+        <div className="flex flex-col gap-3 bg-white px-4 py-3 border border-[#DCE4DF] rounded-md text-xs shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="text-[#17201B]/60 font-sans">
             第 <span className="font-mono font-semibold text-[#17201B]">{currentPage}</span> 页，共{' '}
             <span className="font-mono font-semibold text-[#17201B]">{totalPages}</span> 页
           </div>
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <AppSelect
+              compact
+              value={String(currentPage)}
+              options={pageOptions}
+              onValueChange={(value) => onPageChange(Number(value))}
+              ariaLabel="选择页码"
+            />
             <button
+              type="button"
+              title="上一页"
+              aria-label="上一页"
               onClick={() => onPageChange(currentPage - 1)}
               disabled={currentPage === 1}
-              className="p-1 border border-[#DCE4DF] rounded-md bg-white text-[#17201B] hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="grid h-8 w-8 place-items-center border border-[#DCE4DF] rounded-md bg-white text-[#17201B] hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronLeft className="w-4 h-4" />
             </button>
+            <div className="hidden items-center gap-1 sm:flex" aria-label="分页页码">
+              {visiblePages.map((item) => typeof item === 'number' ? (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => onPageChange(item)}
+                  aria-label={`第 ${item} 页`}
+                  aria-current={item === currentPage ? 'page' : undefined}
+                  className={`grid h-8 min-w-8 place-items-center rounded-md border px-2 font-mono text-[11px] font-semibold transition-colors ${item === currentPage ? 'border-[#12B76A] bg-[#F0FDF4] text-[#047857]' : 'border-[#DCE4DF] bg-white text-zinc-600 hover:border-[#86EFAC] hover:text-[#047857]'}`}
+                >
+                  {item}
+                </button>
+              ) : (
+                <span key={item} className="grid h-8 w-5 place-items-center text-zinc-400" aria-hidden="true">...</span>
+              ))}
+            </div>
             <button
+              type="button"
+              title="下一页"
+              aria-label="下一页"
               onClick={() => onPageChange(currentPage + 1)}
               disabled={currentPage === totalPages}
-              className="p-1 border border-[#DCE4DF] rounded-md bg-white text-[#17201B] hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              className="grid h-8 w-8 place-items-center border border-[#DCE4DF] rounded-md bg-white text-[#17201B] hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
             >
               <ChevronRight className="w-4 h-4" />
             </button>

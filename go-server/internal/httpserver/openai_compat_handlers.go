@@ -723,7 +723,14 @@ func (r *Router) authenticateAPIKey(req *http.Request) (*apiaccess.Authenticated
 	token := bearerToken(req)
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	return apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).Authenticate(ctx, token)
+	authenticated, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).Authenticate(ctx, token)
+	if err != nil || authenticated == nil {
+		return authenticated, err
+	}
+	if err := users.NewRepository(r.db).RecordIPEvidence(ctx, authenticated.User.ID, users.IPSourceAPI, requestIP(req), authenticated.APIKey.ID); err != nil && r.logger != nil {
+		r.logger.Warn("API client IP recording failed", "userId", authenticated.User.ID, "apiKeyId", authenticated.APIKey.ID, "error", err)
+	}
+	return authenticated, nil
 }
 
 func (r *Router) waitForCompatTask(ctx context.Context, id string) (*tasks.Task, error) {

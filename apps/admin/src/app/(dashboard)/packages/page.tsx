@@ -48,6 +48,8 @@ const emptyDraft: PlanDraft = {
   status: 'active',
 };
 
+const PAGE_SIZE = 15;
+
 function planInput(plan: AdminPlan, overrides: Partial<PlanDraft> = {}): PlanDraft {
   return {
     name: plan.name,
@@ -73,6 +75,7 @@ export default function AdminPackagesPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AdminPlan | null>(null);
   const [draft, setDraft] = useState<PlanDraft>(emptyDraft);
@@ -111,12 +114,19 @@ export default function AdminPackagesPage() {
     }).sort((a, b) => Number(a.sortOrder || 100) - Number(b.sortOrder || 100));
   }, [plans, search, statusFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const visible = useMemo(
+    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [currentPage, filtered],
+  );
+
   const summary = useMemo(() => ({
-    total: plans.length,
-    active: plans.filter((plan) => plan.status === 'active').length,
-    quota: plans.reduce((sum, plan) => sum + Number(plan.quotaImages || 0), 0),
-    avgPrice: plans.length ? plans.reduce((sum, plan) => sum + Number(plan.amount || 0), 0) / plans.length : 0,
-  }), [plans]);
+    total: filtered.length,
+    active: filtered.filter((plan) => plan.status === 'active').length,
+    quota: filtered.reduce((sum, plan) => sum + Number(plan.quotaImages || 0), 0),
+    avgPrice: filtered.length ? filtered.reduce((sum, plan) => sum + Number(plan.amount || 0), 0) / filtered.length : 0,
+  }), [filtered]);
 
   const updateDraft = <K extends keyof PlanDraft>(key: K, value: PlanDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
 
@@ -233,11 +243,14 @@ export default function AdminPackagesPage() {
             { key: 'status', label: '状态' },
             { key: 'actions', label: '操作', className: 'text-right' },
           ]}
-          data={filtered}
+          data={visible}
           searchPlaceholder="搜索套餐名称、说明或标签"
           searchValue={search}
-          onSearchChange={setSearch}
-          filterControls={<><AppSelect compact value={statusFilter} onValueChange={setStatusFilter} ariaLabel="筛选套餐状态" options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已上架' }, { value: 'disabled', label: '已下架' }]} /><span className="text-[11px] text-zinc-400">{filtered.length} 条</span></>}
+          onSearchChange={(value) => { setSearch(value); setPage(1); }}
+          filterControls={<><AppSelect compact value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }} ariaLabel="筛选套餐状态" options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已上架' }, { value: 'disabled', label: '已下架' }]} /><span className="text-[11px] text-zinc-400">{filtered.length} 条</span></>}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={setPage}
           emptyState={<EmptyState title="暂无订阅套餐" description="创建一个套餐后即可向 API 客户发放或销售订阅。" icon={Package} />}
           renderRow={(plan) => (
             <tr key={plan.id} className="hover:bg-[#FAFBFA]">

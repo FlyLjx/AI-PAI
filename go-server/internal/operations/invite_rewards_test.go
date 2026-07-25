@@ -70,7 +70,7 @@ func TestFinalizeInviteRewardsBlocksSameIP(t *testing.T) {
 	mock.ExpectBegin()
 	expectPendingBalanceInvite(mock, "pending")
 	mock.ExpectQuery(`SELECT id FROM users`).WithArgs("invitee-1").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("invitee-1"))
-	mock.ExpectQuery(`SELECT COUNT\(\*\)`).WithArgs("inviter-1", "ip-hash", "203.0.113.8").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT COUNT\(\*\)`).WithArgs("inviter-1", "ip-hash", "203.0.113.8", "ip-hash").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	mock.ExpectExec(`UPDATE user_invites SET status='blocked'`).WithArgs("邀请人与被邀请人使用相同网络地址", "invite-1").WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -82,6 +82,39 @@ func TestFinalizeInviteRewardsBlocksSameIP(t *testing.T) {
 	}
 	if result == nil || result.Status != "blocked" || result.RiskReason == "" {
 		t.Fatalf("result = %#v, want blocked with reason", result)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFinalizeInviteRewardsBlocksSharedLoginOrAPIIP(t *testing.T) {
+	previousDialect := database.CurrentDialect()
+	database.SetDialect("mysql")
+	defer database.SetDialect(string(previousDialect))
+
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+
+	mock.ExpectBegin()
+	expectPendingBalanceInvite(mock, "pending")
+	mock.ExpectQuery(`SELECT id FROM users`).WithArgs("invitee-1").WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("invitee-1"))
+	mock.ExpectQuery(`SELECT COUNT\(\*\)`).WithArgs("inviter-1", "ip-hash", "203.0.113.8", "ip-hash").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectQuery(`FROM user_ip_evidence inviter_evidence`).WithArgs("inviter-1", "invitee-1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectExec(`UPDATE user_invites SET status='blocked'`).WithArgs("邀请人与被邀请人的登录或 API 调用存在相同网络地址", "invite-1").WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	result, err := NewRepository(database.Wrap(rawDB)).FinalizeInviteRewards(context.Background(), "invitee-1", InviteRiskLimits{
+		Enabled: true, BlockSameIP: true, MaxPerIP24h: 2, MaxPerDevice24h: 1, MaxPerInviter24h: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result == nil || result.Status != "blocked" || result.RiskReason != "邀请人与被邀请人的登录或 API 调用存在相同网络地址" {
+		t.Fatalf("result = %#v, want shared IP block", result)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

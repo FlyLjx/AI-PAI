@@ -173,10 +173,12 @@ type ListLogsInput struct {
 }
 
 type UsageStats struct {
-	Total      int `json:"total"`
-	Success    int `json:"success"`
-	Failed     int `json:"failed"`
-	ImageCount int `json:"imageCount"`
+	Total            int     `json:"total"`
+	Success          int     `json:"success"`
+	Failed           int     `json:"failed"`
+	ImageCount       int     `json:"imageCount"`
+	ChargedCredits   float64 `json:"chargedCredits"`
+	ModelCostCredits float64 `json:"modelCostCredits"`
 }
 
 type UsageTrendPoint struct {

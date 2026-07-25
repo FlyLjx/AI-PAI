@@ -154,12 +154,20 @@ func (r *Router) invites(w http.ResponseWriter, req *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	items, total, err := operations.NewRepository(r.db).Invites(ctx, operationPage(req))
+	repo := operations.NewRepository(r.db)
+	items, total, err := repo.Invites(ctx, operationPage(req))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, paginated(items, total, req))
+	summary, err := repo.AdminInviteSummary(ctx)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response := paginated(items, total, req)
+	response["summary"] = summary
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (r *Router) inviteSummary(w http.ResponseWriter, req *http.Request) {
@@ -632,18 +640,32 @@ func (r *Router) alipayNotify(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) rechargeOrders(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
 	if _, err := r.requireAdmin(req); err != nil {
 		writeError(w, err)
 		return
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	items, total, err := operations.NewRepository(r.db).Orders(ctx, operationPage(req))
+	input := operationPage(req)
+	input.OrderType = strings.TrimSpace(req.URL.Query().Get("orderType"))
+	repo := operations.NewRepository(r.db)
+	items, total, err := repo.Orders(ctx, input)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, paginated(items, total, req))
+	summary, err := repo.OrderSummary(ctx, input)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	response := paginated(items, total, req)
+	response["summary"] = summary
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (r *Router) rechargeHistory(w http.ResponseWriter, req *http.Request) {

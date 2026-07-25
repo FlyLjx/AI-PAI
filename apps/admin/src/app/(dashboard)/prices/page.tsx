@@ -64,6 +64,8 @@ const emptyDraft: ModelDraft = {
   status: 'active',
 };
 
+const PAGE_SIZE = 15;
+
 function money(value: number) {
   return `¥${Number(value || 0).toFixed(4)}`;
 }
@@ -99,6 +101,7 @@ export default function AdminPricesPage() {
   const [search, setSearch] = useState('');
   const [providerFilter, setProviderFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [page, setPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Model | null>(null);
   const [draft, setDraft] = useState<ModelDraft>(emptyDraft);
@@ -164,12 +167,19 @@ export default function AdminPricesPage() {
     }).sort((a, b) => Number(a.sortOrder || 100) - Number(b.sortOrder || 100));
   }, [models, providerFilter, search, statusFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const visible = useMemo(
+    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [currentPage, filtered],
+  );
+
   const summary = useMemo(() => ({
-    total: models.length,
-    active: models.filter((model) => model.status === 'active').length,
-    providers: new Set(models.map((model) => model.providerId)).size,
-    avgMarkup: models.length ? models.reduce((sum, model) => sum + Number(model.markupPercent || 0), 0) / models.length : 0,
-  }), [models]);
+    total: filtered.length,
+    active: filtered.filter((model) => model.status === 'active').length,
+    providers: new Set(filtered.map((model) => model.providerId)).size,
+    avgMarkup: filtered.length ? filtered.reduce((sum, model) => sum + Number(model.markupPercent || 0), 0) / filtered.length : 0,
+  }), [filtered]);
 
   const updateDraft = <K extends keyof ModelDraft>(key: K, value: ModelDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
 
@@ -333,17 +343,20 @@ export default function AdminPricesPage() {
             { key: 'status', label: '状态' },
             { key: 'actions', label: '操作', className: 'text-right' },
           ]}
-          data={filtered}
+          data={visible}
           searchPlaceholder="搜索模型、展示名或上游"
           searchValue={search}
-          onSearchChange={setSearch}
+          onSearchChange={(value) => { setSearch(value); setPage(1); }}
           filterControls={(
             <>
-              <AppSelect compact value={providerFilter} onValueChange={setProviderFilter} ariaLabel="筛选上游接口" className="max-w-[180px]" options={[{ value: 'all', label: '全部上游' }, ...providers.map((provider) => ({ value: provider.id, label: provider.name }))]} />
-              <AppSelect compact value={statusFilter} onValueChange={setStatusFilter} ariaLabel="筛选模型状态" options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已启用' }, { value: 'disabled', label: '已停用' }]} />
+              <AppSelect compact value={providerFilter} onValueChange={(value) => { setProviderFilter(value); setPage(1); }} ariaLabel="筛选上游接口" className="max-w-[180px]" options={[{ value: 'all', label: '全部上游' }, ...providers.map((provider) => ({ value: provider.id, label: provider.name }))]} />
+              <AppSelect compact value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }} ariaLabel="筛选模型状态" options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已启用' }, { value: 'disabled', label: '已停用' }]} />
               <span className="text-[11px] text-zinc-400">{filtered.length} 条</span>
             </>
           )}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={setPage}
           emptyState={<EmptyState title="暂无模型价格" description="先添加上游接口，再创建可对外调用的模型。" icon={CircleDollarSign} />}
           renderRow={(model) => (
             <tr key={model.id} className="hover:bg-[#FAFBFA]">

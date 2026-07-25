@@ -111,6 +111,43 @@ export type UsageLog = {
   finishedAt?: string;
 };
 
+export type UsageSummary = {
+  total: number;
+  success: number;
+  failed: number;
+  imageCount: number;
+};
+
+export type RechargeOrder = {
+  id: string;
+  userId: string;
+  userEmail?: string;
+  outTradeNo: string;
+  tradeNo?: string | null;
+  orderType: 'recharge' | 'subscription';
+  subscriptionPlanId?: string | null;
+  amount: number;
+  status: string;
+  paidAt?: string | null;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type RechargeSummary = {
+  total: number;
+  paidAmount: number;
+  paidCount: number;
+  pendingCount: number;
+  subscriptionCount: number;
+};
+
+export type AdminInviteSummary = {
+  total: number;
+  rewarded: number;
+  pending: number;
+  blocked: number;
+};
+
 export type AdminInviteRecord = {
   id: string;
   inviterId: string;
@@ -128,7 +165,12 @@ export type AdminInviteRecord = {
   status: string;
   riskReason?: string;
   inviterIp?: string;
+  inviterLoginIp?: string;
+  inviterApiIp?: string;
   inviteeIp?: string;
+  inviteeLoginIp?: string;
+  inviteeApiIp?: string;
+  sharedIp: boolean;
   verifiedAt?: string;
   rewardedAt?: string;
   rechargeRebateCount: number;
@@ -477,9 +519,10 @@ export type UpstreamMaintenanceState = {
   fetchedAt: string;
 };
 
-type Envelope<T> = {
+type Envelope<T, TSummary = never> = {
   data: T;
   pagination?: { total: number; page: number; pageSize: number };
+  summary?: TSummary;
   mailDelivery?: MailBroadcastResult;
 };
 
@@ -489,7 +532,7 @@ export class APIError extends Error {
   }
 }
 
-async function request<T>(url: string, options: RequestInit = {}): Promise<Envelope<T>> {
+async function request<T, TSummary = never>(url: string, options: RequestInit = {}): Promise<Envelope<T, TSummary>> {
   const headers = new Headers(options.headers);
   if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   const response = await fetch(url, { ...options, headers, cache: 'no-store' });
@@ -498,7 +541,7 @@ async function request<T>(url: string, options: RequestInit = {}): Promise<Envel
     throw new APIError(payload?.message || payload?.error?.message || `请求失败 (${response.status})`, response.status);
   }
   if (response.status === 204) return { data: undefined as T };
-  return response.json() as Promise<Envelope<T>>;
+  return response.json() as Promise<Envelope<T, TSummary>>;
 }
 
 function query(params: Record<string, unknown>): string {
@@ -509,8 +552,8 @@ function query(params: Record<string, unknown>): string {
   return search.size ? `?${search.toString()}` : '';
 }
 
-function api<T>(path: string, options: RequestInit = {}) {
-  return request<T>(`${API_BASE}${path}`, options);
+function api<T, TSummary = never>(path: string, options: RequestInit = {}) {
+  return request<T, TSummary>(`${API_BASE}${path}`, options);
 }
 
 export const adminAuth = {
@@ -550,11 +593,11 @@ export const portalApi = {
   createPlan: (input: Partial<Plan>) => api<Plan>('/api/subscriptions/plans', { method: 'POST', body: JSON.stringify(input) }),
   updatePlan: (id: string, input: Partial<Plan>) => api<Plan>(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deletePlan: (id: string) => api(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  recharges: (page = 1) => api<Record<string, unknown>[]>(`/api/recharge/orders${query({ page, pageSize: 30 })}`),
+  recharges: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; orderType?: string } = {}) => api<RechargeOrder[], RechargeSummary>(`/api/recharge/orders${query(input)}`),
   adminKeys: () => api<{ items: APIKey[]; stats: Record<string, number>; dynamicConcurrency: DynamicConcurrencyConfig }>('/api/admin/api-access/keys'),
   updateAdminKey: (id: string, input: { status?: string; concurrencyLimit?: number }) => api<APIKey>(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  adminUsage: (page = 1) => api<UsageLog[]>(`/api/admin/api-access/logs${query({ page, pageSize: 30 })}`),
+  adminUsage: (input: { page?: number; pageSize?: number; keyword?: string; status?: string } = {}) => api<UsageLog[], UsageSummary>(`/api/admin/api-access/logs${query(input)}`),
   adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
   sendMailBroadcast: (input: MailBroadcastInput) => api<MailBroadcastResult>('/api/admin/mail-broadcast', { method: 'POST', body: JSON.stringify(input) }),
   adminMailLogs: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; category?: string } = {}) => api<MailDeliveryLogPage>(`/api/admin/mail-logs${query(input)}`),
@@ -563,7 +606,7 @@ export const portalApi = {
   updateAnnouncement: (id: string, input: AnnouncementMutationInput) => api<Announcement>(`/api/announcements/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAnnouncement: (id: string) => api(`/api/announcements/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   requestMonitor: (input: { range?: RequestMonitorRange; page?: number; pageSize?: number; keyword?: string; method?: string; status?: string } = {}) => api<RequestMonitorSnapshot>(`/api/admin/request-monitor${query(input)}`),
-  adminInvites: (page = 1, pageSize = 30) => api<AdminInviteRecord[]>(`/api/invites${query({ page, pageSize })}`),
+  adminInvites: (page = 1, pageSize = 30) => api<AdminInviteRecord[], AdminInviteSummary>(`/api/invites${query({ page, pageSize })}`),
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),
   settings: () => api<Record<string, unknown>>('/api/settings'),
   updateSettings: (input: Record<string, unknown>) => api('/api/settings', { method: 'PATCH', body: JSON.stringify(input) }),

@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Check, CircleStop, Clipboard, Eye, KeyRound, Loader2, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
@@ -9,7 +9,7 @@ import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { type APIKey, type APIKeyBillingMode, type DynamicConcurrencyConfig, type UsageLog, portalApi } from '@/lib/admin-api';
+import { type APIKey, type APIKeyBillingMode, type DynamicConcurrencyConfig, type UsageLog, type UsageSummary, portalApi } from '@/lib/admin-api';
 import { formatDate } from '@/lib/common/utils';
 
 type DetailedUsageLog = UsageLog & {
@@ -17,6 +17,7 @@ type DetailedUsageLog = UsageLog & {
 };
 
 const logPageSize = 30;
+const keyPageSize = 20;
 const KEY_STATUS_OPTIONS = [
   { value: 'all', label: '全部状态' },
   { value: 'active', label: '已启用' },
@@ -137,10 +138,12 @@ export default function AdminAPIAccessPage() {
   const [error, setError] = useState('');
   const [keySearch, setKeySearch] = useState('');
   const [keyStatus, setKeyStatus] = useState('all');
+  const [keyPage, setKeyPage] = useState(1);
   const [logSearch, setLogSearch] = useState('');
   const [logStatusFilter, setLogStatusFilter] = useState('all');
   const [logPage, setLogPage] = useState(1);
   const [logTotal, setLogTotal] = useState(0);
+  const [logSummary, setLogSummary] = useState<UsageSummary>({ total: 0, success: 0, failed: 0, imageCount: 0 });
   const [concurrencyDraft, setConcurrencyDraft] = useState<Record<string, number>>({});
   const [actionId, setActionId] = useState('');
   const [deleteCandidate, setDeleteCandidate] = useState<APIKey | null>(null);
@@ -148,6 +151,7 @@ export default function AdminAPIAccessPage() {
   const [cancelingTaskId, setCancelingTaskId] = useState('');
   const [detailLog, setDetailLog] = useState<DetailedUsageLog | null>(null);
   const [detailTab, setDetailTab] = useState<'request' | 'response'>('request');
+  const logRequestSequence = useRef(0);
 
   const loadKeys = useCallback(async () => {
     setKeysLoading(true);
@@ -166,28 +170,48 @@ export default function AdminAPIAccessPage() {
   }, []);
 
   const loadLogs = useCallback(async (page = 1) => {
+    const requestSequence = ++logRequestSequence.current;
     setLogsLoading(true);
     setError('');
     try {
-      const response = await portalApi.adminUsage(page);
+      const response = await portalApi.adminUsage({
+        page,
+        pageSize: logPageSize,
+        keyword: logSearch.trim() || undefined,
+        status: logStatusFilter === 'all' ? undefined : logStatusFilter,
+      });
+      if (requestSequence !== logRequestSequence.current) return;
       setLogs(response.data as DetailedUsageLog[]);
-      setLogTotal(response.pagination?.total || response.data.length);
+      const responseTotal = response.pagination?.total ?? response.data.length;
+      setLogTotal(responseTotal);
+      setLogSummary(response.summary || {
+        total: responseTotal,
+        success: response.data.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase())).length,
+        failed: response.data.filter((log) => log.status.toLowerCase() === 'failed').length,
+        imageCount: response.data.reduce((total, log) => total + Number(log.imageCount || 0), 0),
+      });
       setLogPage(page);
     } catch (requestError) {
+      if (requestSequence !== logRequestSequence.current) return;
       setError(requestError instanceof Error ? requestError.message : 'API 调用日志加载失败');
     } finally {
-      setLogsLoading(false);
+      if (requestSequence === logRequestSequence.current) setLogsLoading(false);
     }
-  }, []);
+  }, [logSearch, logStatusFilter]);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([loadKeys(), loadLogs(logPage)]);
   }, [loadKeys, loadLogs, logPage]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void Promise.all([loadKeys(), loadLogs(1)]), 0);
+    const timer = window.setTimeout(() => void loadKeys(), 0);
     return () => window.clearTimeout(timer);
-  }, [loadKeys, loadLogs]);
+  }, [loadKeys]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => void loadLogs(1), 300);
+    return () => window.clearTimeout(timer);
+  }, [loadLogs]);
 
   useEffect(() => {
     if (!detailLog) return;
@@ -211,13 +235,10 @@ export default function AdminAPIAccessPage() {
     });
   }, [keySearch, keyStatus, keys]);
 
-  const filteredLogs = useMemo(() => {
-    const keyword = logSearch.trim().toLowerCase();
-    return logs.filter((log) => {
-      const matchesKeyword = !keyword || `${log.userEmail || log.userId} ${log.keyName || log.keyPrefix || ''} ${log.endpoint} ${log.model} ${log.prompt || ''}`.toLowerCase().includes(keyword);
-      return matchesKeyword && (logStatusFilter === 'all' || log.status === logStatusFilter);
-    });
-  }, [logSearch, logStatusFilter, logs]);
+  const keyTotalPages = Math.max(1, Math.ceil(filteredKeys.length / keyPageSize));
+  const effectiveKeyPage = Math.min(keyPage, keyTotalPages);
+  const pagedKeys = useMemo(() => filteredKeys.slice((effectiveKeyPage - 1) * keyPageSize, effectiveKeyPage * keyPageSize), [effectiveKeyPage, filteredKeys]);
+  const logSuccessRate = logSummary.total > 0 ? `${((logSummary.success / logSummary.total) * 100).toFixed(1)}%` : '0.0%';
 
   const toggleKey = async (key: APIKey) => {
     setActionId(key.id);
@@ -307,13 +328,19 @@ export default function AdminAPIAccessPage() {
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        {[
+        {(tab === 'logs' ? [
+          ['筛选请求', logSummary.total, '全部匹配记录'],
+          ['成功请求', logSummary.success, '全部匹配记录'],
+          ['失败请求', logSummary.failed, '全部匹配记录'],
+          ['成功率', logSuccessRate, '成功 / 请求总数'],
+          ['输出图片', logSummary.imageCount, '全部匹配记录'],
+        ] : [
           ['Key 总数', stats.totalKeys ?? keys.length, '用户创建'],
           ['启用 Key', stats.activeKeys ?? keys.filter((key) => key.status === 'active').length, '可正常调用'],
           ['今日请求', stats.todayRequests ?? 0, 'OpenAI 图片接口'],
           ['今日成功', stats.todaySuccess ?? 0, '完成请求'],
           ['今日图片', stats.todayImageCount ?? 0, '返回图片数'],
-        ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{Number(value || 0).toLocaleString('zh-CN')}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
+        ]).map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{typeof value === 'number' ? Number(value || 0).toLocaleString('zh-CN') : value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
       </div>
 
       <div className="inline-flex rounded-md border border-[#DCE4DF] bg-[#F6F8F6] p-0.5">
@@ -338,11 +365,14 @@ export default function AdminAPIAccessPage() {
             { key: 'used', label: '最近使用' },
             { key: 'actions', label: '操作', className: 'text-right' },
           ]}
-          data={filteredKeys}
+          data={pagedKeys}
           searchPlaceholder="搜索用户、Key 名称或前缀"
           searchValue={keySearch}
-          onSearchChange={setKeySearch}
-          filterControls={<><AppSelect value={keyStatus} options={KEY_STATUS_OPTIONS} onValueChange={setKeyStatus} compact ariaLabel="筛选 API Key 状态" /><span className="text-[11px] text-zinc-400">{filteredKeys.length} 条</span></>}
+          onSearchChange={(value) => { setKeySearch(value); setKeyPage(1); }}
+          filterControls={<><AppSelect value={keyStatus} options={KEY_STATUS_OPTIONS} onValueChange={(value) => { setKeyStatus(value); setKeyPage(1); }} compact ariaLabel="筛选 API Key 状态" /><span className="text-[11px] text-zinc-400">共 {filteredKeys.length} 条 · 本页 {pagedKeys.length} 条</span></>}
+          currentPage={effectiveKeyPage}
+          totalPages={keyTotalPages}
+          onPageChange={setKeyPage}
           emptyState={<EmptyState title="暂无 API Key" description="客户在开发者工作台创建 Key 后会显示在这里。" icon={KeyRound} />}
           renderRow={(key) => (
             <tr key={key.id} className="hover:bg-[#FAFBFA]">
@@ -368,7 +398,7 @@ export default function AdminAPIAccessPage() {
         />
       ))}
 
-      {tab === 'logs' && (logsLoading ? (
+      {tab === 'logs' && (logsLoading && logs.length === 0 ? (
         <div className="grid min-h-[300px] place-items-center rounded-md border border-[#DCE4DF] bg-white"><Loader2 className="h-6 w-6 animate-spin text-[#12B76A]" /></div>
       ) : (
         <DataTable
@@ -384,11 +414,11 @@ export default function AdminAPIAccessPage() {
             { key: 'error', label: '错误信息' },
             { key: 'actions', label: '操作', className: 'text-right' },
           ]}
-          data={filteredLogs}
+          data={logs}
           searchPlaceholder="搜索用户、Key、接口、模型或提示词"
           searchValue={logSearch}
-          onSearchChange={setLogSearch}
-          filterControls={<><AppSelect value={logStatusFilter} options={LOG_STATUS_OPTIONS} onValueChange={setLogStatusFilter} compact ariaLabel="筛选调用状态" /><span className="text-[11px] text-zinc-400">本页 {filteredLogs.length} 条</span></>}
+          onSearchChange={(value) => { setLogSearch(value); setLogPage(1); }}
+          filterControls={<><AppSelect value={logStatusFilter} options={LOG_STATUS_OPTIONS} onValueChange={(value) => { setLogStatusFilter(value); setLogPage(1); }} compact ariaLabel="筛选调用状态" /><span className="text-[11px] text-zinc-400">{logsLoading ? '正在查询...' : `共 ${logTotal} 条 · 本页 ${logs.length} 条`}</span></>}
           currentPage={logPage}
           totalPages={Math.max(1, Math.ceil(logTotal / logPageSize))}
           onPageChange={(page) => void loadLogs(page)}

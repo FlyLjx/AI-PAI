@@ -151,3 +151,89 @@ func TestFinishLogSnapshotsChargeAndModelCost(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBuildLogWhereSupportsAdminLogFilters(t *testing.T) {
+	previousDialect := database.CurrentDialect()
+	database.SetDialect("mysql")
+	defer database.SetDialect(string(previousDialect))
+
+	where, args := buildLogWhere(ListLogsInput{
+		UserID:   " user-1 ",
+		APIKeyID: " key-1 ",
+		Status:   " SUCCESS ",
+		Keyword:  " Example@MAIL.COM ",
+	})
+
+	for _, fragment := range []string{
+		"api_access_logs.user_id = ?",
+		"api_access_logs.api_key_id = ?",
+		"api_access_logs.status IN ('success', 'succeeded')",
+		"api_access_logs.id",
+		"api_access_logs.task_id",
+		"api_access_logs.error_message",
+		"api_access_logs.request_params AS CHAR",
+		"users.email",
+		"api_access_keys.name",
+		"api_access_keys.key_prefix",
+	} {
+		if !strings.Contains(where, fragment) {
+			t.Fatalf("where clause omitted %q: %s", fragment, where)
+		}
+	}
+	if len(args) != 17 {
+		t.Fatalf("args length = %d, want 17: %#v", len(args), args)
+	}
+	if args[0] != "user-1" || args[1] != "key-1" {
+		t.Fatalf("exact filter args = %#v, want trimmed user and key IDs", args[:2])
+	}
+	for index, arg := range args[2:] {
+		if arg != "%example@mail.com%" {
+			t.Fatalf("keyword arg %d = %#v, want lowercase search pattern", index, arg)
+		}
+	}
+}
+
+func TestBuildLogWhereUsesPostgresJSONTextSearch(t *testing.T) {
+	previousDialect := database.CurrentDialect()
+	database.SetDialect("postgres")
+	defer database.SetDialect(string(previousDialect))
+
+	where, args := buildLogWhere(ListLogsInput{Keyword: "response_format"})
+	if !strings.Contains(where, "CAST(api_access_logs.request_params AS TEXT)") {
+		t.Fatalf("postgres keyword filter omitted JSON text cast: %s", where)
+	}
+	if len(args) != 15 {
+		t.Fatalf("args length = %d, want 15", len(args))
+	}
+}
+
+func TestBuildLogWhereNormalizesStatusAliases(t *testing.T) {
+	tests := []struct {
+		name          string
+		status        string
+		wantCondition string
+		wantArgs      int
+	}{
+		{name: "succeeded", status: "succeeded", wantCondition: "status IN ('success', 'succeeded')"},
+		{name: "cancelled", status: "cancelled", wantCondition: "status IN ('canceled', 'cancelled')"},
+		{name: "failed", status: "FAILED", wantCondition: "status = ?", wantArgs: 1},
+		{name: "all", status: "ALL"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			where, args := buildLogWhere(ListLogsInput{Status: test.status})
+			if test.wantCondition != "" && !strings.Contains(where, test.wantCondition) {
+				t.Fatalf("where = %q, want condition %q", where, test.wantCondition)
+			}
+			if len(args) != test.wantArgs {
+				t.Fatalf("args = %#v, want %d values", args, test.wantArgs)
+			}
+			if test.name == "failed" && args[0] != "failed" {
+				t.Fatalf("status arg = %#v, want failed", args[0])
+			}
+			if test.name == "all" && where != "" {
+				t.Fatalf("all status should not add a filter: %q", where)
+			}
+		})
+	}
+}

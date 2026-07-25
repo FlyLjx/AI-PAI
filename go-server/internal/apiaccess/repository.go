@@ -486,11 +486,20 @@ func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageSt
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
 			COALESCE(SUM(CASE WHEN api_access_logs.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
-			COALESCE(SUM(api_access_logs.image_count), 0) AS image_count
+			COALESCE(SUM(api_access_logs.image_count), 0) AS image_count,
+			COALESCE(SUM(api_access_logs.charged_credits), 0) AS charged_credits,
+			COALESCE(SUM(api_access_logs.model_cost_credits), 0) AS model_cost_credits
 		FROM api_access_logs
 		LEFT JOIN users ON users.id = api_access_logs.user_id
 		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
-		`+where, args...).Scan(&stats.Total, &stats.Success, &stats.Failed, &stats.ImageCount)
+		`+where, args...).Scan(
+		&stats.Total,
+		&stats.Success,
+		&stats.Failed,
+		&stats.ImageCount,
+		&stats.ChargedCredits,
+		&stats.ModelCostCredits,
+	)
 	return stats, err
 }
 
@@ -568,15 +577,44 @@ func buildLogWhere(input ListLogsInput) (string, []any) {
 		conditions = append(conditions, "api_access_logs.api_key_id = ?")
 		args = append(args, strings.TrimSpace(input.APIKeyID))
 	}
-	if strings.TrimSpace(input.Status) != "" && strings.TrimSpace(input.Status) != "all" {
+	status := strings.ToLower(strings.TrimSpace(input.Status))
+	switch status {
+	case "", "all":
+	case "success", "succeeded":
+		conditions = append(conditions, "api_access_logs.status IN ('success', 'succeeded')")
+	case "canceled", "cancelled":
+		conditions = append(conditions, "api_access_logs.status IN ('canceled', 'cancelled')")
+	default:
 		conditions = append(conditions, "api_access_logs.status = ?")
-		args = append(args, strings.TrimSpace(input.Status))
+		args = append(args, status)
 	}
-	keyword := strings.TrimSpace(input.Keyword)
+	keyword := strings.ToLower(strings.TrimSpace(input.Keyword))
 	if keyword != "" {
 		like := "%" + keyword + "%"
-		conditions = append(conditions, "(api_access_logs.model LIKE ? OR api_access_logs.prompt LIKE ? OR api_access_logs.endpoint LIKE ? OR users.email LIKE ? OR api_access_keys.key_prefix LIKE ?)")
-		args = append(args, like, like, like, like, like)
+		requestParamsCondition := "LOWER(COALESCE(CAST(api_access_logs.request_params AS CHAR), '')) LIKE ?"
+		if database.CurrentDialect() == database.DialectPostgres {
+			requestParamsCondition = "LOWER(COALESCE(CAST(api_access_logs.request_params AS TEXT), '')) LIKE ?"
+		}
+		conditions = append(conditions, `(
+			LOWER(COALESCE(api_access_logs.id, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.user_id, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.api_key_id, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.task_id, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.endpoint, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.model, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.prompt, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.size, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.quality, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.response_format, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_logs.error_message, '')) LIKE ?
+			OR `+requestParamsCondition+`
+			OR LOWER(COALESCE(users.email, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_keys.name, '')) LIKE ?
+			OR LOWER(COALESCE(api_access_keys.key_prefix, '')) LIKE ?
+		)`)
+		for range 15 {
+			args = append(args, like)
+		}
 	}
 	if len(conditions) == 0 {
 		return "", args

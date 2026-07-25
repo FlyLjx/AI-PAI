@@ -35,6 +35,8 @@ const emptyDraft: ProviderDraft = {
   status: 'active',
 };
 
+const PAGE_SIZE = 15;
+
 function maskKey(value: string) {
   const key = String(value || '');
   if (!key) return '-';
@@ -56,6 +58,7 @@ export default function UpstreamAPIsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [page, setPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Provider | null>(null);
   const [draft, setDraft] = useState<ProviderDraft>(emptyDraft);
@@ -110,12 +113,19 @@ export default function UpstreamAPIsPage() {
     });
   }, [providers, search, statusFilter, typeFilter]);
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const visible = useMemo(
+    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
+    [currentPage, filtered],
+  );
+
   const summary = useMemo(() => ({
-    total: providers.length,
-    active: providers.filter((provider) => provider.status === 'active').length,
-    disabled: providers.filter((provider) => provider.status === 'disabled').length,
-    newapi: providers.filter((provider) => provider.type === 'newapi').length,
-  }), [providers]);
+    total: filtered.length,
+    active: filtered.filter((provider) => provider.status === 'active').length,
+    disabled: filtered.filter((provider) => provider.status === 'disabled').length,
+    newapi: filtered.filter((provider) => provider.type === 'newapi').length,
+  }), [filtered]);
 
   const updateDraft = <K extends keyof ProviderDraft>(key: K, value: ProviderDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
 
@@ -334,16 +344,16 @@ export default function UpstreamAPIsPage() {
             { key: 'updated', label: '更新时间' },
             { key: 'actions', label: '操作', className: 'text-right' },
           ]}
-          data={filtered}
+          data={visible}
           searchPlaceholder="搜索名称、地址或类型"
           searchValue={search}
-          onSearchChange={setSearch}
+          onSearchChange={(value) => { setSearch(value); setPage(1); }}
           filterControls={(
             <>
               <AppSelect
                 compact
                 value={typeFilter}
-                onValueChange={setTypeFilter}
+                onValueChange={(value) => { setTypeFilter(value); setPage(1); }}
                 ariaLabel="接口类型筛选"
                 options={[
                   { value: 'all', label: '全部类型' },
@@ -355,7 +365,7 @@ export default function UpstreamAPIsPage() {
               <AppSelect
                 compact
                 value={statusFilter}
-                onValueChange={setStatusFilter}
+                onValueChange={(value) => { setStatusFilter(value); setPage(1); }}
                 ariaLabel="接口状态筛选"
                 options={[
                   { value: 'all', label: '全部状态' },
@@ -366,6 +376,9 @@ export default function UpstreamAPIsPage() {
               <span className="text-[11px] text-zinc-400">{filtered.length} 条</span>
             </>
           )}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={setPage}
           emptyState={<EmptyState title="暂无上游接口" description="添加第一个兼容 OpenAI 图片接口的上游。" icon={Cable} />}
           renderRow={(provider) => (
             <tr key={provider.id} className="hover:bg-[#FAFBFA]">

@@ -160,6 +160,8 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_invite_rebate_records_invite_created", `CREATE INDEX idx_invite_rebate_records_invite_created ON invite_rebate_records (invite_id, created_at)`},
 		{"idx_registration_fingerprints_ip_created", `CREATE INDEX idx_registration_fingerprints_ip_created ON user_registration_fingerprints (ip_hash, created_at)`},
 		{"idx_registration_fingerprints_device_created", `CREATE INDEX idx_registration_fingerprints_device_created ON user_registration_fingerprints (device_hash, created_at)`},
+		{"idx_user_ip_evidence_user_last_seen", `CREATE INDEX idx_user_ip_evidence_user_last_seen ON user_ip_evidence (user_id, last_seen_at)`},
+		{"idx_user_ip_evidence_hash_last_seen", `CREATE INDEX idx_user_ip_evidence_hash_last_seen ON user_ip_evidence (ip_hash, last_seen_at)`},
 		{"idx_registration_challenges_ip_created", `CREATE INDEX idx_registration_challenges_ip_created ON registration_challenges (ip_hash, created_at)`},
 		{"idx_email_delivery_logs_created_at", `CREATE INDEX idx_email_delivery_logs_created_at ON email_delivery_logs (created_at)`},
 		{"idx_email_delivery_logs_status_created", `CREATE INDEX idx_email_delivery_logs_status_created ON email_delivery_logs (status, created_at)`},
@@ -698,6 +700,17 @@ func schemaBootstrapStatements() []string {
 				user_agent_hash VARCHAR(64) NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
+			`CREATE TABLE IF NOT EXISTS user_ip_evidence (
+				user_id VARCHAR(36) NOT NULL,
+				ip_hash VARCHAR(64) NOT NULL,
+				ip_address VARCHAR(64) NOT NULL,
+				source_type VARCHAR(16) NOT NULL,
+				api_key_id VARCHAR(36) NULL,
+				first_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				hit_count BIGINT NOT NULL DEFAULT 1,
+				PRIMARY KEY (user_id, ip_hash, source_type)
+			)`,
 			`CREATE TABLE IF NOT EXISTS registration_challenges (
 				token_hash VARCHAR(64) PRIMARY KEY,
 				ip_hash VARCHAR(64) NOT NULL,
@@ -869,6 +882,19 @@ func schemaBootstrapStatements() []string {
 		}
 	}
 	return []string{
+		`CREATE TABLE IF NOT EXISTS user_ip_evidence (
+			user_id VARCHAR(36) NOT NULL,
+			ip_hash VARCHAR(64) NOT NULL,
+			ip_address VARCHAR(64) NOT NULL,
+			source_type VARCHAR(16) NOT NULL,
+			api_key_id VARCHAR(36) NULL,
+			first_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			last_seen_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			hit_count BIGINT NOT NULL DEFAULT 1,
+			PRIMARY KEY (user_id, ip_hash, source_type),
+			INDEX idx_user_ip_evidence_user_last_seen (user_id, last_seen_at),
+			INDEX idx_user_ip_evidence_hash_last_seen (ip_hash, last_seen_at)
+		)`,
 		`CREATE TABLE IF NOT EXISTS invite_rebate_records (
 			id VARCHAR(36) PRIMARY KEY,
 			invite_id VARCHAR(36) NOT NULL,

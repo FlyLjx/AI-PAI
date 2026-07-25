@@ -7,7 +7,6 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
-	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -193,15 +192,7 @@ func registrationFingerprintForRequest(req *http.Request, deviceID string) regis
 }
 
 func normalizedRegistrationIP(value string) string {
-	value = strings.TrimSpace(strings.Split(value, ",")[0])
-	if host, _, err := net.SplitHostPort(value); err == nil {
-		value = host
-	}
-	value = strings.Trim(value, "[]")
-	if parsed := net.ParseIP(value); parsed != nil {
-		return parsed.String()
-	}
-	return value
+	return normalizeRequestIP(strings.TrimSpace(strings.Split(value, ",")[0]))
 }
 
 func hashOptionalRegistrationValue(value string) string {
