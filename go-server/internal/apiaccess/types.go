@@ -1,6 +1,7 @@
 package apiaccess
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
 	"time"
@@ -103,6 +104,7 @@ type UsageLog struct {
 	ChargedCredits   float64
 	ModelCostCredits float64
 	DurationSeconds  float64
+	TaskUsage        map[string]any
 	CreatedAt        time.Time
 	FinishedAt       *time.Time
 }
@@ -362,7 +364,7 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 			for _, item := range data {
 				links = append(links, "![image]("+item["url"]+")")
 			}
-			return map[string]any{
+			response := map[string]any{
 				"id":      "chatcmpl-" + strings.ReplaceAll(strings.TrimSpace(log.ID), "-", ""),
 				"object":  "chat.completion",
 				"created": createdAt.Unix(),
@@ -375,17 +377,20 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 					},
 					"finish_reason": "stop",
 				}},
-				"usage": map[string]int{
-					"prompt_tokens":     0,
-					"completion_tokens": 0,
-					"total_tokens":      0,
-				},
 			}
+			if usage := usageLogChatUsage(log.TaskUsage); len(usage) > 0 {
+				response["usage"] = usage
+			}
+			return response
 		}
-		return map[string]any{
+		response := map[string]any{
 			"created": createdAt.Unix(),
 			"data":    data,
 		}
+		if usage := usageLogImageUsage(log.TaskUsage); len(usage) > 0 {
+			response["usage"] = usage
+		}
+		return response
 	case "failed", "canceled", "cancelled":
 		message := "图片生成失败"
 		if status == "canceled" || status == "cancelled" {
@@ -408,6 +413,69 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 		}
 	default:
 		return nil
+	}
+}
+
+func usageLogImageUsage(usage map[string]any) map[string]int {
+	if len(usage) == 0 {
+		return nil
+	}
+	result := map[string]int{}
+	copyUsageLogToken(result, usage, "input_tokens", "input_tokens", "prompt_tokens")
+	copyUsageLogToken(result, usage, "output_tokens", "output_tokens", "completion_tokens")
+	copyUsageLogToken(result, usage, "total_tokens", "total_tokens")
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func usageLogChatUsage(usage map[string]any) map[string]int {
+	imageUsage := usageLogImageUsage(usage)
+	if len(imageUsage) == 0 {
+		return nil
+	}
+	result := map[string]int{}
+	if count, ok := imageUsage["input_tokens"]; ok {
+		result["prompt_tokens"] = count
+	}
+	if count, ok := imageUsage["output_tokens"]; ok {
+		result["completion_tokens"] = count
+	}
+	if count, ok := imageUsage["total_tokens"]; ok {
+		result["total_tokens"] = count
+	}
+	return result
+}
+
+func copyUsageLogToken(result map[string]int, usage map[string]any, outputKey string, aliases ...string) {
+	for _, key := range aliases {
+		if count, ok := usageLogTokenCount(usage[key]); ok {
+			result[outputKey] = count
+			return
+		}
+	}
+}
+
+func usageLogTokenCount(value any) (int, bool) {
+	switch number := value.(type) {
+	case int:
+		return number, number >= 0
+	case int32:
+		return int(number), number >= 0
+	case int64:
+		return int(number), number >= 0 && int64(int(number)) == number
+	case float64:
+		count := int(number)
+		return count, number >= 0 && float64(count) == number
+	case json.Number:
+		count, err := strconv.Atoi(number.String())
+		return count, err == nil && count >= 0
+	case string:
+		count, err := strconv.Atoi(strings.TrimSpace(number))
+		return count, err == nil && count >= 0
+	default:
+		return 0, false
 	}
 }
 

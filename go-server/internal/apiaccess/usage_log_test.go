@@ -26,6 +26,11 @@ func TestToPublicLogIncludesRequestAndSuccessResponseParameters(t *testing.T) {
 			"model": "image-model",
 			"n":     2,
 		},
+		TaskUsage: map[string]any{
+			"input_tokens":  float64(55531),
+			"output_tokens": float64(24576),
+			"total_tokens":  float64(80107),
+		},
 		CreatedAt:  createdAt,
 		FinishedAt: &finishedAt,
 	})
@@ -45,6 +50,10 @@ func TestToPublicLogIncludesRequestAndSuccessResponseParameters(t *testing.T) {
 	}
 	if data[0]["url"] != "/api/tasks/task-1/images/0" || data[1]["url"] != "/api/tasks/task-1/images/1" {
 		t.Fatalf("unexpected response URLs: %#v", data)
+	}
+	usage, ok := publicLog.ResponseParams["usage"].(map[string]int)
+	if !ok || usage["input_tokens"] != 55531 || usage["output_tokens"] != 24576 || usage["total_tokens"] != 80107 {
+		t.Fatalf("unexpected response usage: %#v", publicLog.ResponseParams["usage"])
 	}
 }
 
@@ -79,6 +88,11 @@ func TestToPublicLogBuildsChatCompletionForImageChatCompatibility(t *testing.T) 
 		Model:      "gpt-image-2",
 		Status:     "success",
 		ImageCount: 1,
+		TaskUsage: map[string]any{
+			"input_tokens":  9690,
+			"output_tokens": 6563,
+			"total_tokens":  16253,
+		},
 		CreatedAt:  createdAt,
 		FinishedAt: &finishedAt,
 	})
@@ -93,6 +107,10 @@ func TestToPublicLogBuildsChatCompletionForImageChatCompatibility(t *testing.T) 
 	message, ok := choices[0]["message"].(map[string]any)
 	if !ok || message["content"] != "![image](/api/tasks/task-chat/images/0)" {
 		t.Fatalf("unexpected chat message: %#v", choices[0]["message"])
+	}
+	usage, ok := publicLog.ResponseParams["usage"].(map[string]int)
+	if !ok || usage["prompt_tokens"] != 9690 || usage["completion_tokens"] != 6563 || usage["total_tokens"] != 16253 {
+		t.Fatalf("unexpected chat response usage: %#v", publicLog.ResponseParams["usage"])
 	}
 }
 
@@ -190,6 +208,26 @@ func TestBuildLogWhereSupportsAdminLogFilters(t *testing.T) {
 		if arg != "%example@mail.com%" {
 			t.Fatalf("keyword arg %d = %#v, want lowercase search pattern", index, arg)
 		}
+	}
+}
+
+func TestUsageLogSelectReadsOnlyTaskUsage(t *testing.T) {
+	previousDialect := database.CurrentDialect()
+	defer database.SetDialect(string(previousDialect))
+
+	database.SetDialect("postgres")
+	postgresQuery := usageLogSelect()
+	if !strings.Contains(postgresQuery, "generation_tasks.result_json -> 'usage'") {
+		t.Fatalf("postgres usage query missing JSONB extraction: %s", postgresQuery)
+	}
+	if strings.Contains(postgresQuery, "generation_tasks.result_json,") {
+		t.Fatalf("postgres usage query should not load the complete task result: %s", postgresQuery)
+	}
+
+	database.SetDialect("mysql")
+	mysqlQuery := usageLogSelect()
+	if !strings.Contains(mysqlQuery, "JSON_EXTRACT(generation_tasks.result_json, '$.usage')") {
+		t.Fatalf("mysql usage query missing JSON extraction: %s", mysqlQuery)
 	}
 }
 

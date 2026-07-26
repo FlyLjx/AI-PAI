@@ -557,6 +557,7 @@ func usageLogSelect() string {
 			COALESCE(api_access_logs.charged_credits, 0),
 			COALESCE(api_access_logs.model_cost_credits, 0),
 			COALESCE(generation_tasks.duration_seconds, 0),
+			` + usageLogTaskUsageSelect() + `,
 			api_access_logs.created_at,
 			api_access_logs.finished_at
 		FROM api_access_logs
@@ -564,6 +565,13 @@ func usageLogSelect() string {
 		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
 		LEFT JOIN generation_tasks ON generation_tasks.id = api_access_logs.task_id
 	`
+}
+
+func usageLogTaskUsageSelect() string {
+	if database.CurrentDialect() == database.DialectPostgres {
+		return "generation_tasks.result_json -> 'usage'"
+	}
+	return "JSON_EXTRACT(generation_tasks.result_json, '$.usage')"
 }
 
 func buildLogWhere(input ListLogsInput) (string, []any) {
@@ -925,7 +933,7 @@ type usageLogScanner interface {
 
 func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	var item UsageLog
-	var userEmail, keyName, keyPrefix, taskID, requestParams, errorMessage sql.NullString
+	var userEmail, keyName, keyPrefix, taskID, requestParams, taskUsage, errorMessage sql.NullString
 	var finishedAt sql.NullTime
 	if err := row.Scan(
 		&item.ID,
@@ -949,6 +957,7 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 		&item.ChargedCredits,
 		&item.ModelCostCredits,
 		&item.DurationSeconds,
+		&taskUsage,
 		&item.CreatedAt,
 		&finishedAt,
 	); err != nil {
@@ -968,6 +977,11 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	}
 	if requestParams.Valid && strings.TrimSpace(requestParams.String) != "" {
 		if err := json.Unmarshal([]byte(requestParams.String), &item.RequestParams); err != nil {
+			return nil, err
+		}
+	}
+	if taskUsage.Valid && strings.TrimSpace(taskUsage.String) != "" {
+		if err := json.Unmarshal([]byte(taskUsage.String), &item.TaskUsage); err != nil {
 			return nil, err
 		}
 	}
