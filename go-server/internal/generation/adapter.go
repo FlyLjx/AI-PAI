@@ -35,6 +35,7 @@ func (s *Service) callImageGeneration(ctx context.Context, input ImageRequest) (
 	}
 
 	images := []ExtractedImage{}
+	var usage map[string]int
 	requestCount := 0
 	maxRequests := expectedQuantity + maxUpstreamImageBatch
 	if maxRequests < 3 {
@@ -62,6 +63,7 @@ func (s *Service) callImageGeneration(ctx context.Context, input ImageRequest) (
 			return nil, err
 		}
 		batchImages := ExtractImages(payload)
+		usage = AddImageUsage(usage, payload)
 		beforeCount := len(images)
 		images = uniqueImages(append(images, batchImages...))
 		if len(batchImages) < batchQuantity || len(images)-beforeCount < batchQuantity {
@@ -78,7 +80,7 @@ func (s *Service) callImageGeneration(ctx context.Context, input ImageRequest) (
 			return nil, err
 		}
 	}
-	return map[string]any{"data": images}, nil
+	return normalizedImageResult(images, usage), nil
 }
 
 func (s *Service) logPartialImageBatch(taskID string, batchIndex int, requested int, returned int, total int, expected int) {

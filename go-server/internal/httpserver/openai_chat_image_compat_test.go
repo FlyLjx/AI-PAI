@@ -44,7 +44,7 @@ func TestWriteCompatImageChatCompletionReturnsNewAPICompatibleJSON(t *testing.T)
 	recorder := httptest.NewRecorder()
 	writeCompatImageChatCompletion(recorder, compatImageInput{Model: "gpt-image-2"}, []map[string]string{{
 		"url": "https://aipi.example.test/api/tasks/task-1/images/0",
-	}}, 1784430000, "chatcmpl-log1")
+	}}, map[string]int{"input_tokens": 9690, "output_tokens": 6563, "total_tokens": 16253}, 1784430000, "chatcmpl-log1")
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -75,7 +75,10 @@ func TestWriteCompatImageChatCompletionReturnsNewAPICompatibleJSON(t *testing.T)
 		t.Fatalf("unexpected content: %q", response.Choices[0].Message.Content)
 	}
 	if response.Usage == nil {
-		t.Fatal("usage is required by new-api channel tests")
+		t.Fatal("usage is required when the upstream returned token counts")
+	}
+	if response.Usage["prompt_tokens"] != 9690 || response.Usage["completion_tokens"] != 6563 || response.Usage["total_tokens"] != 16253 {
+		t.Fatalf("unexpected mapped usage: %#v", response.Usage)
 	}
 }
 
@@ -84,7 +87,7 @@ func TestWriteCompatImageSuccessKeepsOpenAIImagesResponse(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "https://aipi.example.test/v1/images/generations", nil)
 	writeCompatImageSuccess(recorder, request, compatImageInput{Model: "gpt-image-2"}, []string{
 		"/api/tasks/task-1/images/0",
-	}, compatImageResponseOpenAI, "log-1")
+	}, map[string]int{"input_tokens": 9690, "output_tokens": 6563, "total_tokens": 16253}, compatImageResponseOpenAI, "log-1")
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -95,6 +98,7 @@ func TestWriteCompatImageSuccessKeepsOpenAIImagesResponse(t *testing.T) {
 			URL string `json:"url"`
 		} `json:"data"`
 		Choices json.RawMessage `json:"choices"`
+		Usage   map[string]int  `json:"usage"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
@@ -104,6 +108,25 @@ func TestWriteCompatImageSuccessKeepsOpenAIImagesResponse(t *testing.T) {
 	}
 	if len(response.Choices) != 0 {
 		t.Fatalf("standard image response must not include chat choices: %s", response.Choices)
+	}
+	if response.Usage["input_tokens"] != 9690 || response.Usage["output_tokens"] != 6563 || response.Usage["total_tokens"] != 16253 {
+		t.Fatalf("unexpected image usage: %#v", response.Usage)
+	}
+}
+
+func TestWriteCompatImageSuccessOmitsMissingUsage(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "https://aipi.example.test/v1/images/generations", nil)
+	writeCompatImageSuccess(recorder, request, compatImageInput{Model: "gpt-image-2"}, []string{
+		"/api/tasks/task-1/images/0",
+	}, nil, compatImageResponseOpenAI, "log-1")
+
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := response["usage"]; ok {
+		t.Fatalf("response invented usage: %s", recorder.Body.String())
 	}
 }
 
@@ -198,7 +221,7 @@ func TestWriteCompatImageSuccessReturnsBase64JSON(t *testing.T) {
 	request := httptest.NewRequest(http.MethodPost, "https://aipi.example.test/v1/images/generations", nil)
 	writeCompatImageSuccess(recorder, request, compatImageInput{Model: "gpt-image-2", ResponseFormat: "b64_json"}, []string{
 		"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lYV0ZQAAAABJRU5ErkJggg==",
-	}, compatImageResponseOpenAI, "log-1")
+	}, nil, compatImageResponseOpenAI, "log-1")
 
 	if recorder.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusOK)
@@ -221,13 +244,13 @@ func TestWriteCompatImageChatCompletionSupportsStreaming(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	writeCompatImageChatCompletion(recorder, compatImageInput{Model: "gpt-image-2", Stream: true}, []map[string]string{{
 		"url": "https://aipi.example.test/api/tasks/task-1/images/0",
-	}}, 1784430000, "chatcmpl-log1")
+	}}, map[string]int{"input_tokens": 12, "output_tokens": 34, "total_tokens": 46}, 1784430000, "chatcmpl-log1")
 
 	if contentType := recorder.Header().Get("Content-Type"); !strings.Contains(contentType, "text/event-stream") {
 		t.Fatalf("content type = %q", contentType)
 	}
 	body := recorder.Body.String()
-	for _, expected := range []string{"chat.completion.chunk", "![image](https://aipi.example.test/api/tasks/task-1/images/0)", `"finish_reason":"stop"`, "data: [DONE]"} {
+	for _, expected := range []string{"chat.completion.chunk", "![image](https://aipi.example.test/api/tasks/task-1/images/0)", `"finish_reason":"stop"`, `"completion_tokens":34`, "data: [DONE]"} {
 		if !strings.Contains(body, expected) {
 			t.Fatalf("stream response is missing %q: %s", expected, body)
 		}

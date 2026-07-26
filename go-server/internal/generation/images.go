@@ -2,7 +2,10 @@ package generation
 
 import (
 	"encoding/base64"
+	"encoding/json"
+	"math"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"aipi-go/internal/providers"
@@ -16,12 +19,139 @@ type ExtractedImage struct {
 
 func NormalizeImageResult(value any) any {
 	images := uniqueImages(ExtractImages(value))
-	return map[string]any{"data": images}
+	return normalizedImageResult(images, ExtractImageUsage(value))
 }
 
 func NormalizeImageResultForProvider(value any, provider providers.Provider) any {
 	images := uniqueImages(ExtractImages(rewriteUpstreamResultURLs(value, provider, 0)))
-	return map[string]any{"data": images}
+	return normalizedImageResult(images, ExtractImageUsage(value))
+}
+
+func normalizedImageResult(images []ExtractedImage, usage map[string]int) map[string]any {
+	result := map[string]any{"data": images}
+	if len(usage) > 0 {
+		result["usage"] = usage
+	}
+	return result
+}
+
+// ExtractImageUsage normalizes image and chat token names without inventing
+// values when the upstream response omits usage or individual fields.
+func ExtractImageUsage(value any) map[string]int {
+	payload, ok := stringAnyMap(value)
+	if !ok {
+		return nil
+	}
+	usage, ok := stringAnyMap(payload["usage"])
+	if !ok {
+		return nil
+	}
+	result := map[string]int{}
+	copyUsageField(result, usage, "input_tokens", "input_tokens", "prompt_tokens", "inputTokens", "promptTokens")
+	copyUsageField(result, usage, "output_tokens", "output_tokens", "completion_tokens", "outputTokens", "completionTokens")
+	copyUsageField(result, usage, "total_tokens", "total_tokens", "totalTokens")
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func AddImageUsage(total map[string]int, value any) map[string]int {
+	usage := ExtractImageUsage(value)
+	if len(usage) == 0 {
+		return total
+	}
+	if total == nil {
+		total = map[string]int{}
+	}
+	for key, count := range usage {
+		total[key] += count
+	}
+	return total
+}
+
+func copyUsageField(result map[string]int, usage map[string]any, outputKey string, aliases ...string) {
+	for _, key := range aliases {
+		if count, ok := imageTokenCount(usage[key]); ok {
+			result[outputKey] = count
+			return
+		}
+	}
+}
+
+func stringAnyMap(value any) (map[string]any, bool) {
+	switch payload := value.(type) {
+	case map[string]any:
+		return payload, true
+	case map[string]int:
+		result := make(map[string]any, len(payload))
+		for key, item := range payload {
+			result[key] = item
+		}
+		return result, true
+	case map[string]float64:
+		result := make(map[string]any, len(payload))
+		for key, item := range payload {
+			result[key] = item
+		}
+		return result, true
+	default:
+		return nil, false
+	}
+}
+
+func imageTokenCount(value any) (int, bool) {
+	var count int64
+	switch number := value.(type) {
+	case int:
+		if number < 0 {
+			return 0, false
+		}
+		return number, true
+	case int32:
+		count = int64(number)
+	case int64:
+		count = number
+	case uint:
+		if uint64(number) > uint64(math.MaxInt) {
+			return 0, false
+		}
+		return int(number), true
+	case uint64:
+		if number > uint64(math.MaxInt) {
+			return 0, false
+		}
+		return int(number), true
+	case float32:
+		return imageFloatTokenCount(float64(number))
+	case float64:
+		return imageFloatTokenCount(number)
+	case json.Number:
+		parsed, err := number.Int64()
+		if err != nil {
+			return 0, false
+		}
+		count = parsed
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(number), 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		count = parsed
+	default:
+		return 0, false
+	}
+	if count < 0 || uint64(count) > uint64(math.MaxInt) {
+		return 0, false
+	}
+	return int(count), true
+}
+
+func imageFloatTokenCount(value float64) (int, bool) {
+	if value < 0 || value > float64(math.MaxInt) || math.Trunc(value) != value {
+		return 0, false
+	}
+	return int(value), true
 }
 
 func ExtractImages(value any) []ExtractedImage {

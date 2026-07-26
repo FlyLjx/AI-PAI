@@ -106,6 +106,38 @@ func TestNormalizeImageResultForProviderKeepsRawJPEGBase64(t *testing.T) {
 	}
 }
 
+func TestNormalizeImageResultForProviderPreservesCanonicalUsage(t *testing.T) {
+	result := NormalizeImageResultForProvider(map[string]any{
+		"data": []any{map[string]any{"url": "https://cdn.example.test/out.png"}},
+		"usage": map[string]any{
+			"input_tokens":  9690,
+			"output_tokens": 6563,
+			"total_tokens":  16253,
+		},
+	}, providers.Provider{BaseURL: "https://upstream.example.test/v1"})
+
+	usage := ExtractImageUsage(result)
+	if usage["input_tokens"] != 9690 || usage["output_tokens"] != 6563 || usage["total_tokens"] != 16253 {
+		t.Fatalf("unexpected canonical usage: %#v", usage)
+	}
+}
+
+func TestNormalizeImageResultForProviderMapsChatUsage(t *testing.T) {
+	result := NormalizeImageResultForProvider(map[string]any{
+		"data": []any{map[string]any{"url": "https://cdn.example.test/out.png"}},
+		"usage": map[string]any{
+			"prompt_tokens":     90,
+			"completion_tokens": 60,
+			"total_tokens":      150,
+		},
+	}, providers.Provider{BaseURL: "https://upstream.example.test/v1"})
+
+	usage := ExtractImageUsage(result)
+	if usage["input_tokens"] != 90 || usage["output_tokens"] != 60 || usage["total_tokens"] != 150 {
+		t.Fatalf("unexpected mapped usage: %#v", usage)
+	}
+}
+
 func TestCacheTaskResultImagesRejectsUnavailableURL(t *testing.T) {
 	t.Setenv("LOG_DIR", t.TempDir())
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -431,7 +463,14 @@ func TestCallImageGenerationBatchesQuantityByUpstreamLimit(t *testing.T) {
 		for index := 0; index < n; index++ {
 			data = append(data, map[string]string{"url": fmt.Sprintf("https://cdn.example.test/batch-%d-%d.png", len(receivedN), index+1)})
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"data": data})
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": data,
+			"usage": map[string]int{
+				"input_tokens":  n * 10,
+				"output_tokens": n * 20,
+				"total_tokens":  n * 30,
+			},
+		})
 	}))
 	defer server.Close()
 
@@ -449,6 +488,10 @@ func TestCallImageGenerationBatchesQuantityByUpstreamLimit(t *testing.T) {
 	images := ExtractImages(result)
 	if len(images) != input.Quantity {
 		t.Fatalf("expected %d aggregated images, got %#v", input.Quantity, images)
+	}
+	usage := ExtractImageUsage(result)
+	if usage["input_tokens"] != 100 || usage["output_tokens"] != 200 || usage["total_tokens"] != 300 {
+		t.Fatalf("expected aggregated usage, got %#v", usage)
 	}
 }
 

@@ -66,6 +66,7 @@ const (
 
 type compatTaskResult struct {
 	urls       []string
+	usage      map[string]int
 	message    string
 	statusCode int
 	errorType  string
@@ -328,7 +329,7 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		return
 	}
 
-	writeCompatImageSuccess(w, req, input, result.urls, responseMode, accessLogID)
+	writeCompatImageSuccess(w, req, input, result.urls, result.usage, responseMode, accessLogID)
 }
 
 func compatRequestParams(req *http.Request, input compatImageInput) map[string]any {
@@ -405,7 +406,7 @@ func compatRequestParams(req *http.Request, input compatImageInput) map[string]a
 	return params
 }
 
-func writeCompatImageSuccess(w http.ResponseWriter, req *http.Request, input compatImageInput, urls []string, responseMode compatImageResponseMode, accessLogID string) {
+func writeCompatImageSuccess(w http.ResponseWriter, req *http.Request, input compatImageInput, urls []string, usage map[string]int, responseMode compatImageResponseMode, accessLogID string) {
 	data := make([]map[string]string, 0, len(urls))
 	asBase64 := compatWantsBase64ImageResponse(input.ResponseFormat)
 	for _, url := range urls {
@@ -420,13 +421,17 @@ func writeCompatImageSuccess(w http.ResponseWriter, req *http.Request, input com
 	}
 	created := time.Now().Unix()
 	if responseMode == compatImageResponseChatCompletion {
-		writeCompatImageChatCompletion(w, input, data, created, compatChatCompletionID(accessLogID))
+		writeCompatImageChatCompletion(w, input, data, usage, created, compatChatCompletionID(accessLogID))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"created": created,
 		"data":    data,
-	})
+	}
+	if len(usage) > 0 {
+		response["usage"] = usage
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func compatWantsBase64ImageResponse(format string) bool {
@@ -448,7 +453,7 @@ func compatStripImageDataURL(value string) string {
 	return value
 }
 
-func writeCompatImageChatCompletion(w http.ResponseWriter, input compatImageInput, data []map[string]string, created int64, responseID string) {
+func writeCompatImageChatCompletion(w http.ResponseWriter, input compatImageInput, data []map[string]string, imageUsage map[string]int, created int64, responseID string) {
 	links := make([]string, 0, len(data))
 	for _, item := range data {
 		if url := strings.TrimSpace(item["url"]); url != "" {
@@ -459,11 +464,7 @@ func writeCompatImageChatCompletion(w http.ResponseWriter, input compatImageInpu
 	if strings.TrimSpace(responseID) == "" {
 		responseID = compatChatCompletionID(newID())
 	}
-	usage := map[string]int{
-		"prompt_tokens":     0,
-		"completion_tokens": 0,
-		"total_tokens":      0,
-	}
+	usage := compatChatImageUsage(imageUsage)
 	if input.Stream {
 		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache, no-transform")
@@ -481,7 +482,7 @@ func writeCompatImageChatCompletion(w http.ResponseWriter, input compatImageInpu
 				"finish_reason": nil,
 			}},
 		})
-		writeCompatSSEData(w, map[string]any{
+		finalChunk := map[string]any{
 			"id":      responseID,
 			"object":  "chat.completion.chunk",
 			"created": created,
@@ -491,15 +492,18 @@ func writeCompatImageChatCompletion(w http.ResponseWriter, input compatImageInpu
 				"delta":         map[string]any{},
 				"finish_reason": "stop",
 			}},
-			"usage": usage,
-		})
+		}
+		if len(usage) > 0 {
+			finalChunk["usage"] = usage
+		}
+		writeCompatSSEData(w, finalChunk)
 		_, _ = io.WriteString(w, "data: [DONE]\n\n")
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
+	response := map[string]any{
 		"id":      responseID,
 		"object":  "chat.completion",
 		"created": created,
@@ -512,8 +516,28 @@ func writeCompatImageChatCompletion(w http.ResponseWriter, input compatImageInpu
 			},
 			"finish_reason": "stop",
 		}},
-		"usage": usage,
-	})
+	}
+	if len(usage) > 0 {
+		response["usage"] = usage
+	}
+	writeJSON(w, http.StatusOK, response)
+}
+
+func compatChatImageUsage(imageUsage map[string]int) map[string]int {
+	if len(imageUsage) == 0 {
+		return nil
+	}
+	usage := map[string]int{}
+	if count, ok := imageUsage["input_tokens"]; ok {
+		usage["prompt_tokens"] = count
+	}
+	if count, ok := imageUsage["output_tokens"]; ok {
+		usage["completion_tokens"] = count
+	}
+	if count, ok := imageUsage["total_tokens"]; ok {
+		usage["total_tokens"] = count
+	}
+	return usage
 }
 
 func compatChatCompletionID(value string) string {
@@ -647,7 +671,7 @@ func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, prefer
 		}
 	}
 	r.finishCompatAccessLog(accessLogID, "success", len(urls), "")
-	return compatTaskResult{urls: urls}
+	return compatTaskResult{urls: urls, usage: generation.ExtractImageUsage(finalTask.ResultJSON)}
 }
 
 func compatResultValuesForAPI(ctx context.Context, task *tasks.Task, preferProxyResults bool, preferBase64Results bool) ([]string, error) {
