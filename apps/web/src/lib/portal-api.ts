@@ -196,6 +196,8 @@ export type UsageLog = {
   id: string;
   userId: string;
   userEmail?: string;
+  taskId?: string;
+  apiKeyId?: string;
   keyName?: string;
   keyPrefix?: string;
   endpoint: string;
@@ -205,6 +207,9 @@ export type UsageLog = {
   quality: string;
   quantity: number;
   imageCount: number;
+  responseFormat?: string;
+  requestParameters?: Record<string, unknown>;
+  responseParameters?: Record<string, unknown>;
   status: string;
   errorMessage?: string;
   chargedCredits: number;

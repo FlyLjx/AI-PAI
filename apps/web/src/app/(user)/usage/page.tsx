@@ -4,16 +4,20 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   CheckCircle2,
+  Clipboard,
   Clock3,
+  Eye,
   Gauge,
   ImageIcon,
   LoaderCircle,
   RefreshCw,
   RotateCcw,
   Search,
+  X,
   XCircle,
   type LucideIcon,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { AppSelect, type AppSelectOption } from '@/components/common/AppSelect';
@@ -52,6 +56,45 @@ function durationMeta(log: UsageLog): { label: string; className: string } {
   return { label: `${seconds.toFixed(2)}s`, className: 'failed' };
 }
 
+function requestParameters(log: UsageLog): Record<string, unknown> {
+  if (log.requestParameters && Object.keys(log.requestParameters).length > 0) return log.requestParameters;
+  return {
+    model: log.model,
+    prompt: log.prompt || '',
+    size: log.size,
+    quality: log.quality,
+    n: log.quantity,
+    response_format: log.responseFormat || 'url',
+  };
+}
+
+function responseParameters(log: UsageLog): Record<string, unknown> {
+  if (log.responseParameters && Object.keys(log.responseParameters).length > 0) return log.responseParameters;
+  const normalizedStatus = log.status.toLowerCase();
+  if (['failed', 'canceled', 'cancelled'].includes(normalizedStatus)) {
+    return {
+      error: {
+        message: log.errorMessage || (normalizedStatus === 'failed' ? '图片生成失败' : '任务已取消'),
+        type: log.errorMessage?.includes('用户余额不足') ? 'insufficient_quota' : 'api_error',
+        param: null,
+        code: null,
+      },
+    };
+  }
+  if (['success', 'succeeded'].includes(normalizedStatus) && log.taskId) {
+    const imageCount = Math.max(0, Number(log.imageCount || log.quantity || 0));
+    const finishedAt = Date.parse(log.finishedAt || log.createdAt);
+    return {
+      created: Number.isFinite(finishedAt) ? Math.floor(finishedAt / 1000) : 0,
+      data: Array.from({ length: imageCount }, (_, index) => ({ url: `/api/tasks/${log.taskId}/images/${index}` })),
+    };
+  }
+  return {
+    status: normalizedStatus || 'queued',
+    message: '请求尚未完成，暂无返回参数',
+  };
+}
+
 const STATUS_OPTIONS: readonly AppSelectOption[] = [
   { value: '', label: '全部状态' },
   { value: 'success', label: '成功' },
@@ -77,6 +120,8 @@ export default function UsagePage() {
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [detailLog, setDetailLog] = useState<UsageLog | null>(null);
+  const [detailTab, setDetailTab] = useState<'request' | 'response'>('request');
 
   const loadUsage = useCallback(async () => {
     const current = getSession();
@@ -111,6 +156,20 @@ export default function UsagePage() {
     return () => window.clearTimeout(timer);
   }, [loadUsage]);
 
+  useEffect(() => {
+    if (!detailLog) return;
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDetailLog(null);
+    };
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [detailLog]);
+
   const successRate = useMemo(() => summary.total > 0 ? `${((summary.success / summary.total) * 100).toFixed(1)}%` : '0.0%', [summary.success, summary.total]);
   const pending = Math.max(0, summary.total - summary.success - summary.failed);
 
@@ -129,6 +188,22 @@ export default function UsagePage() {
     setPage(1);
   };
 
+  const openDetail = (log: UsageLog) => {
+    setDetailTab('request');
+    setDetailLog(log);
+  };
+
+  const copyDetailParameters = async () => {
+    if (!detailLog) return;
+    const parameters = detailTab === 'request' ? requestParameters(detailLog) : responseParameters(detailLog);
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(parameters, null, 2));
+      toast.success(`${detailTab === 'request' ? '请求' : '返回'}参数已复制`);
+    } catch {
+      toast.error('复制失败，请手动选择内容');
+    }
+  };
+
   const headers = [
     { key: 'status', label: '状态' },
     { key: 'endpoint', label: '接口' },
@@ -140,6 +215,7 @@ export default function UsagePage() {
     { key: 'chargedCredits', label: '扣费金额' },
     { key: 'durationSeconds', label: '响应时间' },
     { key: 'createdAt', label: '请求时间' },
+    { key: 'actions', label: '操作', className: 'text-right' },
   ];
 
   return (
@@ -220,6 +296,11 @@ export default function UsagePage() {
                 <td className="px-4 py-3 mono text-[#047857]">{Number(log.chargedCredits || 0).toFixed(4)}</td>
                 <td className="px-4 py-3"><span className={`status-pill mono min-w-[58px] justify-center ${duration.className}`}>{duration.label}</span></td>
                 <td className="px-4 py-3 mono text-zinc-500">{formatDate(log.createdAt)}</td>
+                <td className="px-4 py-3 text-right">
+                  <button type="button" onClick={() => openDetail(log)} title="查看调用明细" aria-label="查看调用明细" className="btn icon">
+                    <Eye size={14} />
+                  </button>
+                </td>
               </tr>
             );
           }}
@@ -258,6 +339,11 @@ export default function UsagePage() {
                     <XCircle size={13} className="shrink-0" />{log.errorMessage}
                   </p>
                 )}
+                <div className="mt-3 flex justify-end border-t border-[#edf0ee] pt-3">
+                  <button type="button" onClick={() => openDetail(log)} className="btn">
+                    <Eye size={13} />调用明细
+                  </button>
+                </div>
               </article>
             );
           }}
@@ -270,6 +356,71 @@ export default function UsagePage() {
           )}
         />
       )}
+
+      {detailLog && (() => {
+        const meta = statusMeta(detailLog.status);
+        const duration = durationMeta(detailLog);
+        const StatusIcon = meta.icon;
+        const parameters = detailTab === 'request' ? requestParameters(detailLog) : responseParameters(detailLog);
+        return (
+          <div
+            className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-2 sm:grid sm:place-items-center sm:p-4"
+            role="presentation"
+            onMouseDown={(event) => { if (event.target === event.currentTarget) setDetailLog(null); }}
+          >
+            <section
+              className="mx-auto flex max-h-[calc(100dvh-16px)] w-full max-w-4xl flex-col overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl sm:max-h-[calc(100dvh-32px)]"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="usage-detail-title"
+            >
+              <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[#DCE4DF] px-4 py-3.5 sm:px-5 sm:py-4">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 id="usage-detail-title" className="text-sm font-semibold">API 调用明细</h2>
+                    <span className={`status-pill gap-1 ${meta.className}`}><StatusIcon size={11} className={meta.className === 'processing' ? 'animate-spin' : ''} />{meta.label}</span>
+                  </div>
+                  <p className="mt-1 truncate font-mono text-[10px] text-zinc-500" title={detailLog.endpoint}>{detailLog.endpoint || '-'}</p>
+                </div>
+                <button type="button" onClick={() => setDetailLog(null)} title="关闭" aria-label="关闭调用明细" className="btn icon shrink-0 border-0">
+                  <X size={16} />
+                </button>
+              </header>
+
+              <div className="grid shrink-0 grid-cols-2 border-b border-[#EDF0EE] bg-[#FAFBFA] sm:grid-cols-3 lg:grid-cols-6">
+                <div className="border-b border-r border-[#EDF0EE] px-3 py-2.5 sm:border-b-0 sm:px-4 sm:py-3"><span className="block text-[10px] text-zinc-400">请求时间</span><strong className="mt-1 block whitespace-nowrap text-[11px] font-medium">{formatDate(detailLog.createdAt)}</strong></div>
+                <div className="border-b border-[#EDF0EE] px-3 py-2.5 sm:border-b-0 sm:border-r sm:px-4 sm:py-3"><span className="block text-[10px] text-zinc-400">响应时间</span><span className={`status-pill mono mt-1 min-w-[58px] justify-center ${duration.className}`}>{duration.label}</span></div>
+                <div className="border-b border-r border-[#EDF0EE] px-3 py-2.5 sm:border-b-0 sm:px-4 sm:py-3"><span className="block text-[10px] text-zinc-400">模型</span><strong className="mt-1 block truncate text-[11px] font-medium" title={detailLog.model}>{detailLog.model || '-'}</strong></div>
+                <div className="border-b border-[#EDF0EE] px-3 py-2.5 sm:border-b-0 sm:border-r sm:px-4 sm:py-3"><span className="block text-[10px] text-zinc-400">API Key</span><strong className="mt-1 block truncate text-[11px] font-medium" title={detailLog.keyName || detailLog.keyPrefix || ''}>{detailLog.keyName || detailLog.keyPrefix || '-'}</strong></div>
+                <div className="border-r border-[#EDF0EE] px-3 py-2.5 sm:px-4 sm:py-3"><span className="block text-[10px] text-zinc-400">请求 / 输出</span><strong className="mono mt-1 block text-[11px] font-medium">{Number(detailLog.quantity || 0)} / {Number(detailLog.imageCount || 0)}</strong></div>
+                <div className="px-3 py-2.5 sm:px-4 sm:py-3"><span className="block text-[10px] text-zinc-400">扣费金额</span><strong className="mono mt-1 block text-[11px] font-semibold text-[#047857]">{Number(detailLog.chargedCredits || 0).toFixed(4)}</strong></div>
+              </div>
+
+              {detailLog.errorMessage && (
+                <div className="shrink-0 border-b border-red-100 bg-red-50 px-4 py-2.5 text-[11px] leading-5 text-red-700 sm:px-5">
+                  <span className="flex items-start gap-1.5"><XCircle size={13} className="mt-0.5 shrink-0" />{detailLog.errorMessage}</span>
+                </div>
+              )}
+
+              <div className="shrink-0 border-b border-[#DCE4DF] px-4 pt-3 sm:px-5" role="tablist" aria-label="调用参数类型">
+                <button type="button" role="tab" aria-selected={detailTab === 'request'} onClick={() => setDetailTab('request')} className={`mr-5 border-b-2 px-0.5 pb-2.5 text-xs font-semibold ${detailTab === 'request' ? 'border-[#12B76A] text-[#047857]' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>请求参数</button>
+                <button type="button" role="tab" aria-selected={detailTab === 'response'} onClick={() => setDetailTab('response')} className={`border-b-2 px-0.5 pb-2.5 text-xs font-semibold ${detailTab === 'response' ? 'border-[#12B76A] text-[#047857]' : 'border-transparent text-zinc-500 hover:text-zinc-800'}`}>返回参数</button>
+              </div>
+
+              <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-5">
+                <pre className="min-h-[220px] overflow-auto rounded-md border border-[#26332C] bg-[#111814] p-3 font-mono text-[11px] leading-5 text-[#DDF5E6] sm:p-4">{JSON.stringify(parameters, null, 2)}</pre>
+              </div>
+
+              <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-[#DCE4DF] bg-[#F6F8F6] px-4 py-3 sm:px-5">
+                <code className="hidden min-w-0 truncate text-[9px] text-zinc-400 sm:block" title={detailLog.id}>{detailLog.id}</code>
+                <button type="button" onClick={() => void copyDetailParameters()} className="btn ml-auto border-[#BDE8CC] text-[#047857]">
+                  <Clipboard size={14} />复制 JSON
+                </button>
+              </footer>
+            </section>
+          </div>
+        );
+      })()}
     </div>
   );
 }
