@@ -28,6 +28,9 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "generation_tasks", "output_format", "VARCHAR(20) NULL", "size"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "generation_tasks", "subscription_quota_units", "INTEGER NOT NULL DEFAULT 1", "quantity"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "ai_models", "deleted_at", "TIMESTAMP NULL", "status"); err != nil {
 		return err
 	}
@@ -523,6 +526,7 @@ func schemaBootstrapStatements() []string {
 				output_format VARCHAR(20) NOT NULL DEFAULT 'jpeg',
 				transparent_background BOOLEAN NOT NULL DEFAULT FALSE,
 				quantity INTEGER NOT NULL DEFAULT 1,
+				subscription_quota_units INTEGER NOT NULL DEFAULT 1,
 				user_ip VARCHAR(64) NOT NULL,
 				cost_credits NUMERIC(12,4) NOT NULL DEFAULT 0.0000,
 				model_cost_credits NUMERIC(12,4) NOT NULL DEFAULT 0.0000,

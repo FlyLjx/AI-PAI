@@ -30,6 +30,8 @@ var (
 	ErrInvalidRechargeOrder      = errors.New("充值订单的余额数量不正确")
 	ErrRechargeOrderClosed       = errors.New("充值或订阅订单已关闭")
 	ErrInvalidCustomSubscription = errors.New("自定义订阅参数不正确")
+	ErrInvalidSubscriptionQuota  = errors.New("订阅额度参数不正确")
+	ErrNoActiveSubscription      = errors.New("用户没有生效中的订阅")
 )
 
 const adminCustomSubscriptionBadge = "__admin_custom__"
@@ -530,6 +532,87 @@ func (r *Repository) GrantCustomSubscription(ctx context.Context, userID string,
 	return tx.Commit()
 }
 
+func (r *Repository) AdjustSubscriptionQuota(ctx context.Context, userID string, input SubscriptionQuotaAdjustment) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" || (input.QuotaRemaining == nil && !input.ResetUsage) {
+		return ErrInvalidSubscriptionQuota
+	}
+	if input.QuotaRemaining != nil && (*input.QuotaRemaining < 0 || *input.QuotaRemaining > 100000000) {
+		return ErrInvalidSubscriptionQuota
+	}
+
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var planID, status string
+	var snapshot sql.NullString
+	var startedAt, expiresAt time.Time
+	if err := tx.QueryRowContext(ctx, `
+		SELECT plan_id, plan_snapshot, status, started_at, expires_at
+		FROM user_subscriptions
+		WHERE user_id=?
+		FOR UPDATE
+	`, userID).Scan(&planID, &snapshot, &status, &startedAt, &expiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNoActiveSubscription
+		}
+		return err
+	}
+	now := time.Now()
+	if status != "active" || !expiresAt.After(now) {
+		return ErrNoActiveSubscription
+	}
+
+	plan := subscriptionPlanFromSnapshot(snapshot.String, nil)
+	if plan == nil {
+		fallback, err := scanPlan(tx.QueryRowContext(ctx, `
+			SELECT id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent,
+				allowed_provider_ids, allowed_model_ids, badge, sort_order, status, created_at, updated_at
+			FROM subscription_plans
+			WHERE id=?
+		`, planID))
+		if err != nil {
+			return err
+		}
+		plan = &fallback
+	}
+
+	nextStartedAt := startedAt
+	if input.ResetUsage {
+		nextStartedAt = now
+		if input.QuotaRemaining != nil {
+			plan.QuotaImages = *input.QuotaRemaining
+		}
+	} else {
+		used, err := generationUsage(ctx, tx, userID, startedAt, expiresAt)
+		if err != nil {
+			return err
+		}
+		if used > math.MaxInt-*input.QuotaRemaining {
+			return ErrInvalidSubscriptionQuota
+		}
+		plan.QuotaImages = used + *input.QuotaRemaining
+	}
+	if plan.QuotaImages < 0 {
+		return ErrInvalidSubscriptionQuota
+	}
+	nextSnapshot, err := encodeSubscriptionPlanSnapshot(plan)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE user_subscriptions
+		SET plan_snapshot=?, started_at=?, updated_at=CURRENT_TIMESTAMP
+		WHERE user_id=?
+	`, nextSnapshot, nextStartedAt, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func IsAdminCustomSubscriptionPlan(plan *SubscriptionPlan) bool {
 	return plan != nil && plan.Badge != nil && strings.TrimSpace(*plan.Badge) == adminCustomSubscriptionBadge
 }
@@ -601,8 +684,16 @@ func (r *Repository) CurrentSubscriptionPlan(ctx context.Context, userID string)
 }
 
 func (r *Repository) GenerationUsage(ctx context.Context, userID string, start time.Time, end time.Time) (int, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT status, quantity, result_json
+	return generationUsage(ctx, r.db, userID, start, end)
+}
+
+type generationUsageQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func generationUsage(ctx context.Context, querier generationUsageQuerier, userID string, start time.Time, end time.Time) (int, error) {
+	rows, err := querier.QueryContext(ctx, `
+		SELECT status, quantity, result_json, COALESCE(subscription_quota_units, 1)
 		FROM generation_tasks
 		WHERE user_id=?
 			AND status IN ('queued', 'pending', 'processing', 'success')
@@ -625,11 +716,15 @@ func (r *Repository) GenerationUsage(ctx context.Context, userID string, start t
 	for rows.Next() {
 		var status string
 		var quantity int
+		var quotaUnits int
 		var resultJSON sql.NullString
-		if err := rows.Scan(&status, &quantity, &resultJSON); err != nil {
+		if err := rows.Scan(&status, &quantity, &resultJSON, &quotaUnits); err != nil {
 			return 0, err
 		}
-		used += generationUsageQuantity(status, quantity, resultJSON.String)
+		if quotaUnits < 0 {
+			quotaUnits = 0
+		}
+		used += generationUsageQuantity(status, quantity, resultJSON.String) * quotaUnits
 	}
 	return used, rows.Err()
 }
@@ -1472,29 +1567,7 @@ func grantSubscriptionSnapshotInTx(ctx context.Context, tx *database.Tx, userID 
 	if strings.TrimSpace(planID) == "" {
 		planID = plan.ID
 	}
-	baseTime := now
-	var currentExpires sql.NullTime
-	err := tx.QueryRowContext(ctx, `SELECT expires_at FROM user_subscriptions WHERE user_id=? FOR UPDATE`, userID).Scan(&currentExpires)
-	if err != nil && err != sql.ErrNoRows {
-		return err
-	}
-	if currentExpires.Valid && currentExpires.Time.After(now) {
-		baseTime = currentExpires.Time
-	}
-	expiresAt := baseTime.AddDate(0, 0, plan.DurationDays)
-	if err == sql.ErrNoRows {
-		_, err = tx.ExecContext(ctx, `
-			INSERT INTO user_subscriptions (id, user_id, plan_id, plan_snapshot, status, started_at, expires_at)
-			VALUES (?, ?, ?, ?, 'active', ?, ?)
-		`, newOperationID(), userID, planID, snapshot, now, expiresAt)
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `
-		UPDATE user_subscriptions
-		SET plan_id=?, plan_snapshot=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
-		WHERE user_id=?
-	`, planID, snapshot, now, expiresAt, userID)
-	return err
+	return grantSubscriptionPlanInTx(ctx, tx, userID, planID, plan, plan.DurationDays, now)
 }
 
 func optionalOperationString(value string) any {
@@ -2319,21 +2392,57 @@ func grantSubscriptionInTx(ctx context.Context, tx *database.Tx, userID string, 
 	if durationDays <= 0 {
 		return ErrNoLotteryPrize
 	}
-	snapshot, err := encodeSubscriptionPlanSnapshot(&plan)
-	if err != nil {
-		return err
+	return grantSubscriptionPlanInTx(ctx, tx, userID, planID, &plan, durationDays, now)
+}
+
+func grantSubscriptionPlanInTx(ctx context.Context, tx *database.Tx, userID string, planID string, plan *SubscriptionPlan, durationDays int, now time.Time) error {
+	userID = strings.TrimSpace(userID)
+	planID = strings.TrimSpace(planID)
+	if userID == "" || planID == "" || plan == nil || durationDays <= 0 {
+		return sql.ErrNoRows
 	}
-	baseTime := now
-	var currentExpires sql.NullTime
-	err = tx.QueryRowContext(ctx, `SELECT expires_at FROM user_subscriptions WHERE user_id=? FOR UPDATE`, userID).Scan(&currentExpires)
+
+	var currentPlanID, currentStatus string
+	var currentSnapshot sql.NullString
+	var currentStarted, currentExpires time.Time
+	err := tx.QueryRowContext(ctx, `
+		SELECT plan_id, plan_snapshot, status, started_at, expires_at
+		FROM user_subscriptions
+		WHERE user_id=?
+		FOR UPDATE
+	`, userID).Scan(&currentPlanID, &currentSnapshot, &currentStatus, &currentStarted, &currentExpires)
 	if err != nil && err != sql.ErrNoRows {
 		return err
 	}
-	if currentExpires.Valid && currentExpires.Time.After(now) {
-		baseTime = currentExpires.Time
+	subscriptionMissing := err == sql.ErrNoRows
+
+	grantPlan := *plan
+	baseTime := now
+	if err == nil && currentStatus == "active" && currentExpires.After(now) {
+		baseTime = currentExpires
+		currentQuota, quotaErr := subscriptionQuotaInTx(ctx, tx, currentPlanID, currentSnapshot.String)
+		if quotaErr != nil {
+			return quotaErr
+		}
+		used, usageErr := generationUsage(ctx, tx, userID, currentStarted, currentExpires)
+		if usageErr != nil {
+			return usageErr
+		}
+		remaining := currentQuota - used
+		if remaining > 0 {
+			if remaining > math.MaxInt-grantPlan.QuotaImages {
+				return errors.New("订阅结转额度超出范围")
+			}
+			grantPlan.QuotaImages += remaining
+		}
+	}
+
+	snapshot, err := encodeSubscriptionPlanSnapshot(&grantPlan)
+	if err != nil {
+		return err
 	}
 	expiresAt := baseTime.AddDate(0, 0, durationDays)
-	if err == sql.ErrNoRows {
+	if subscriptionMissing {
 		_, err = tx.ExecContext(ctx, `
 			INSERT INTO user_subscriptions (id, user_id, plan_id, plan_snapshot, status, started_at, expires_at)
 			VALUES (?, ?, ?, ?, 'active', ?, ?)
@@ -2346,6 +2455,23 @@ func grantSubscriptionInTx(ctx context.Context, tx *database.Tx, userID string, 
 		WHERE user_id=?
 	`, planID, snapshot, now, expiresAt, userID)
 	return err
+}
+
+func subscriptionQuotaInTx(ctx context.Context, tx *database.Tx, planID string, snapshot string) (int, error) {
+	if plan := subscriptionPlanFromSnapshot(snapshot, nil); plan != nil {
+		if plan.QuotaImages < 0 {
+			return 0, nil
+		}
+		return plan.QuotaImages, nil
+	}
+	var quota int
+	if err := tx.QueryRowContext(ctx, `SELECT quota_images FROM subscription_plans WHERE id=?`, strings.TrimSpace(planID)).Scan(&quota); err != nil {
+		return 0, err
+	}
+	if quota < 0 {
+		quota = 0
+	}
+	return quota, nil
 }
 
 func sqlDateString(value any) string {

@@ -14,39 +14,40 @@ const (
 )
 
 type Task struct {
-	ID                    string
-	UserID                string
-	ModelID               string
-	ProviderID            string
-	Capability            string
-	Prompt                string
-	ReferenceImageURL     *string
-	SizeTier              string
-	Size                  *string
-	OutputFormat          string
-	TransparentBackground bool
-	Quantity              int
-	UserIP                string
-	CostCredits           float64
-	ModelCostCredits      float64
-	RemainingCredits      float64
-	DurationSeconds       float64
-	Status                Status
-	ErrorMessage          *string
-	ResultJSON            any
-	FavoriteEnabled       bool
-	PublicStatus          string
-	DisplayEnabled        bool
-	DisplayNote           *string
-	PublicRequestedAt     *time.Time
-	PublicReviewedAt      *time.Time
-	CreatedAt             time.Time
-	UpdatedAt             time.Time
-	UserEmail             *string
-	ModelName             *string
-	ModelDisplayName      *string
-	ProviderName          *string
-	ProviderBaseURL       *string
+	ID                     string
+	UserID                 string
+	ModelID                string
+	ProviderID             string
+	Capability             string
+	Prompt                 string
+	ReferenceImageURL      *string
+	SizeTier               string
+	Size                   *string
+	OutputFormat           string
+	TransparentBackground  bool
+	Quantity               int
+	SubscriptionQuotaUnits int
+	UserIP                 string
+	CostCredits            float64
+	ModelCostCredits       float64
+	RemainingCredits       float64
+	DurationSeconds        float64
+	Status                 Status
+	ErrorMessage           *string
+	ResultJSON             any
+	FavoriteEnabled        bool
+	PublicStatus           string
+	DisplayEnabled         bool
+	DisplayNote            *string
+	PublicRequestedAt      *time.Time
+	PublicReviewedAt       *time.Time
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	UserEmail              *string
+	ModelName              *string
+	ModelDisplayName       *string
+	ProviderName           *string
+	ProviderBaseURL        *string
 }
 
 type PublicTask struct {

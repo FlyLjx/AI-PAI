@@ -186,7 +186,7 @@ func TestCompleteSubscriptionOrderGrantsQuotaAndBonusBalance(t *testing.T) {
 	mock.ExpectQuery(`SELECT id, name, description, amount, duration_days, quota_images, bonus_credits, discount_percent,`).
 		WithArgs("plan-1").
 		WillReturnRows(testSubscriptionPlanRows(now, "plan-1", "专业版", 30, 1000, "active"))
-	mock.ExpectQuery(`SELECT expires_at FROM user_subscriptions WHERE user_id=\? FOR UPDATE`).
+	mock.ExpectQuery(`SELECT plan_id, plan_snapshot, status, started_at, expires_at FROM user_subscriptions WHERE user_id=\? FOR UPDATE`).
 		WithArgs("user-1").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO user_subscriptions`).

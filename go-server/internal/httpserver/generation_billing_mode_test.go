@@ -74,6 +74,27 @@ func TestBalanceModeInsufficientMessageDoesNotSuggestSubscription(t *testing.T) 
 	}
 }
 
+func TestTwoCentModelUsesMoneyForBalanceAndImagesForSubscription(t *testing.T) {
+	if cost := generationBalanceCost(0.02, 3); cost != 0.06 {
+		t.Fatalf("balance cost = %v, want 0.06", cost)
+	}
+	if units := subscriptionQuotaUnitsPerImage(0.02); units != 2 {
+		t.Fatalf("subscription units per image = %d, want 2", units)
+	}
+
+	entitlement := &operations.SubscriptionEntitlement{
+		IsPaid:         true,
+		QuotaRemaining: 2,
+	}
+	model := models.Model{Price1K: 0.02}
+	handled, err := generationSubscriptionBillingQuote(entitlement, model, 2, true)
+	if !handled || err != nil {
+		t.Fatalf("one 0.02 image should use two subscription units: handled=%v err=%v", handled, err)
+	}
+	_, err = generationSubscriptionBillingQuote(entitlement, model, 4, true)
+	assertBillingAppErrorStatus(t, err, http.StatusPaymentRequired)
+}
+
 func TestBalanceBillingQuoteUsesOnlyAccountBalance(t *testing.T) {
 	previousDialect := database.CurrentDialect()
 	database.SetDialect("mysql")
@@ -100,7 +121,7 @@ func TestBalanceBillingQuoteUsesOnlyAccountBalance(t *testing.T) {
 	mock.ExpectRollback()
 
 	router := &Router{db: db}
-	cost, err := router.generationBillingQuote(
+	cost, quotaUnits, err := router.generationBillingQuote(
 		context.Background(),
 		tx,
 		"user-1",
@@ -114,6 +135,9 @@ func TestBalanceBillingQuoteUsesOnlyAccountBalance(t *testing.T) {
 	}
 	if cost != 2.5 {
 		t.Fatalf("balance quote = %v, want 2.5", cost)
+	}
+	if quotaUnits != 0 {
+		t.Fatalf("balance quote subscription units = %d, want 0", quotaUnits)
 	}
 	if err := tx.Rollback(); err != nil {
 		t.Fatal(err)

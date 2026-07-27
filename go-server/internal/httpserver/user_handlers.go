@@ -126,6 +126,10 @@ func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 		r.updateUserBalance(w, req, strings.TrimSuffix(path, "/balance"))
 		return
 	}
+	if strings.HasSuffix(path, "/subscription-quota") {
+		r.updateUserSubscriptionQuota(w, req, strings.TrimSuffix(path, "/subscription-quota"))
+		return
+	}
 	if strings.HasSuffix(path, "/subscription") {
 		r.grantUserSubscription(w, req, strings.TrimSuffix(path, "/subscription"))
 		return
@@ -574,6 +578,50 @@ func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request,
 			return
 		}
 		writeError(w, grantErr)
+		return
+	}
+	user, err := users.NewRepository(r.db).FindByID(ctx, id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	data := r.publicUserWithSubscription(ctx, user)
+	r.publishCurrentUser(context.Background(), id)
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+func (r *Router) updateUserSubscriptionQuota(w http.ResponseWriter, req *http.Request, id string) {
+	if req.Method != http.MethodPatch {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	var input struct {
+		QuotaRemaining *int `json:"quotaRemaining"`
+		ResetUsage     bool `json:"resetUsage"`
+	}
+	if err := decodeCompatJSON(req, &input); err != nil {
+		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
+		return
+	}
+	id = strings.Trim(id, "/")
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	if err := operations.NewRepository(r.db).AdjustSubscriptionQuota(ctx, id, operations.SubscriptionQuotaAdjustment{
+		QuotaRemaining: input.QuotaRemaining,
+		ResetUsage:     input.ResetUsage,
+	}); err != nil {
+		switch {
+		case errors.Is(err, operations.ErrInvalidSubscriptionQuota):
+			writeError(w, newAppError(http.StatusBadRequest, "订阅额度需要设置为 0-100000000 之间的整数"))
+		case errors.Is(err, operations.ErrNoActiveSubscription):
+			writeError(w, newAppError(http.StatusConflict, "该用户没有生效中的订阅"))
+		default:
+			writeError(w, err)
+		}
 		return
 	}
 	user, err := users.NewRepository(r.db).FindByID(ctx, id)

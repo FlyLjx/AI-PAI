@@ -42,6 +42,7 @@ type UserDraft = {
 };
 
 type GrantMode = 'plan' | 'custom';
+type QuotaAdjustMode = 'remaining' | 'reset';
 type CreditLogFilter = 'all' | 'deduct' | 'recharge' | 'manual_adjust' | 'invite_reward' | 'invite_rebate';
 
 const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active' };
@@ -88,7 +89,7 @@ function BillingModeLabel({ user }: { user: PortalUser }) {
 
 function SubscriptionStatusBadge({ user }: { user: PortalUser }) {
   const status = user.subscription?.status;
-  if (status === 'active') return <span className="inline-flex rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">生效中</span>;
+  if (status === 'active') return <span className="inline-flex flex-col items-start gap-0.5"><span className="inline-flex rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">生效中</span><small className="font-mono text-[10px] text-zinc-400">剩余 {Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0).toLocaleString('zh-CN')} / {Number(user.subscription?.quotaLimit ?? user.subscription?.quotaImages ?? 0).toLocaleString('zh-CN')}</small></span>;
   if (status === 'expired') return <span className="inline-flex rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">已到期</span>;
   if (status === 'canceled' || status === 'cancelled') return <span className="inline-flex rounded border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700">已取消</span>;
   return <span className="inline-flex rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">未订阅</span>;
@@ -115,6 +116,9 @@ export default function AdminUsersPage() {
   const [editing, setEditing] = useState<PortalUser | null>(null);
   const [draft, setDraft] = useState<UserDraft>(emptyDraft);
   const [grantUser, setGrantUser] = useState<PortalUser | null>(null);
+  const [quotaUser, setQuotaUser] = useState<PortalUser | null>(null);
+  const [quotaMode, setQuotaMode] = useState<QuotaAdjustMode>('remaining');
+  const [quotaValue, setQuotaValue] = useState('');
   const [balanceUser, setBalanceUser] = useState<PortalUser | null>(null);
   const [balanceValue, setBalanceValue] = useState('');
   const [balanceRemark, setBalanceRemark] = useState('');
@@ -236,6 +240,10 @@ export default function AdminUsersPage() {
   const currentBalance = Number(balanceUser?.credits || 0);
   const nextBalance = Number(balanceValue);
   const balanceDelta = Number.isFinite(nextBalance) ? nextBalance - currentBalance : 0;
+  const currentQuotaLimit = Number(quotaUser?.subscription?.quotaLimit ?? quotaUser?.subscription?.quotaImages ?? 0);
+  const currentQuotaUsed = Number(quotaUser?.subscription?.quotaUsed ?? 0);
+  const currentQuotaRemaining = Number(quotaUser?.subscription?.effectiveQuotaRemaining ?? quotaUser?.subscription?.quotaRemaining ?? 0);
+  const nextQuotaRemaining = Number(quotaValue);
 
   const summary = useMemo(() => ({
     total: users.length,
@@ -334,6 +342,42 @@ export default function AdminUsersPage() {
     setBalanceRemark('');
   };
 
+  const openQuota = (user: PortalUser) => {
+    if (!subscriptionActive(user)) return;
+    setQuotaUser(user);
+    setQuotaMode('remaining');
+    setQuotaValue(String(Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0)));
+  };
+
+  const changeQuotaMode = (mode: QuotaAdjustMode) => {
+    setQuotaMode(mode);
+    setQuotaValue(String(mode === 'reset' ? currentQuotaLimit : currentQuotaRemaining));
+  };
+
+  const updateSubscriptionQuota = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!quotaUser) return;
+    if (!quotaValue.trim()) return toast.error('请填写调整后的订阅额度');
+    const value = Number(quotaValue);
+    if (!Number.isInteger(value) || value < 0 || value > 100000000) return toast.error('订阅额度必须是 0-100000000 之间的整数');
+    if (quotaMode === 'remaining' && value === currentQuotaRemaining) return toast.error('调整后剩余额度没有变化');
+    if (quotaMode === 'reset' && currentQuotaUsed === 0 && value === currentQuotaLimit) return toast.error('当前订阅额度已经是重置状态');
+    setSaving(true);
+    try {
+      const response = await portalApi.updateSubscriptionQuota(quotaUser.id, {
+        quotaRemaining: value,
+        resetUsage: quotaMode === 'reset',
+      });
+      setUsers((items) => items.map((item) => (item.id === quotaUser.id ? response.data : item)));
+      toast.success(quotaMode === 'reset' ? `已重置 ${quotaUser.email} 的订阅额度` : `已修改 ${quotaUser.email} 的剩余额度`);
+      setQuotaUser(null);
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '订阅额度调整失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const openCreditLogs = (user: PortalUser) => {
     setCreditLogs([]);
     setCreditLogTotal(0);
@@ -417,6 +461,7 @@ export default function AdminUsersPage() {
         </button>
       )}
       <button type="button" onClick={() => openGrant(user)} title="发放订阅" className="rounded p-1.5 text-[#0891B2] hover:bg-cyan-50"><CreditCard className="h-3.5 w-3.5" /></button>
+      {subscriptionActive(user) && <button type="button" onClick={() => openQuota(user)} title="调整订阅额度" aria-label={`调整 ${user.email} 的订阅额度`} className="rounded p-1.5 text-amber-700 hover:bg-amber-50"><Gauge className="h-3.5 w-3.5" /></button>}
       <button type="button" onClick={() => openEdit(user)} title="编辑用户" className="rounded p-1.5 text-zinc-600 hover:bg-zinc-100"><Pencil className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => void toggleStatus(user)} disabled={actionId === user.id} title={user.status === 'active' ? '停用用户' : '启用用户'} className={`rounded p-1.5 ${user.status === 'active' ? 'text-amber-600 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'} disabled:opacity-40`}><ShieldCheck className="h-3.5 w-3.5" /></button>
       <button type="button" onClick={() => setDeleteCandidate(user)} title="删除用户" className="rounded p-1.5 text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /></button>
@@ -669,6 +714,41 @@ export default function AdminUsersPage() {
               )}
             </div>
             <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setGrantUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving || (grantMode === 'plan' && !grantPlanId)} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}确认发放</button></div>
+          </form>
+        </div>
+      )}
+
+      {quotaUser && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4">
+          <form onSubmit={updateSubscriptionQuota} className="w-full max-w-md overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl" role="dialog" aria-modal="true" aria-labelledby="subscription-quota-title">
+            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-amber-50 text-amber-700"><Gauge className="h-4 w-4" /></span>
+                <div className="min-w-0"><h2 id="subscription-quota-title" className="text-sm font-semibold">调整订阅额度</h2><p className="mt-0.5 truncate text-[11px] text-zinc-500">{quotaUser.email} · {quotaUser.subscription?.planName || '订阅套餐'}</p></div>
+              </div>
+              <button type="button" onClick={() => setQuotaUser(null)} title="关闭" className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="space-y-4 p-5">
+              <div className="grid grid-cols-3 divide-x divide-[#E5E9E6] border-y border-[#EDF0EE] bg-[#FAFBFA] py-3 text-center">
+                <span><small className="block text-[10px] font-semibold text-zinc-400">总额度</small><strong className="mt-1 block font-mono text-sm text-[#17201B]">{currentQuotaLimit.toLocaleString('zh-CN')}</strong></span>
+                <span><small className="block text-[10px] font-semibold text-zinc-400">已使用</small><strong className="mt-1 block font-mono text-sm text-amber-700">{currentQuotaUsed.toLocaleString('zh-CN')}</strong></span>
+                <span><small className="block text-[10px] font-semibold text-zinc-400">剩余额度</small><strong className="mt-1 block font-mono text-sm text-[#047857]">{currentQuotaRemaining.toLocaleString('zh-CN')}</strong></span>
+              </div>
+
+              <div className="grid grid-cols-2 gap-1 rounded-md border border-[#DCE4DF] bg-[#F6F8F6] p-1" role="group" aria-label="订阅额度调整方式">
+                <button type="button" onClick={() => changeQuotaMode('remaining')} aria-pressed={quotaMode === 'remaining'} className={`inline-flex h-9 items-center justify-center gap-1.5 rounded border text-[11px] font-semibold ${quotaMode === 'remaining' ? 'border-[#86EFAC] bg-white text-[#047857]' : 'border-transparent text-zinc-500'}`}><Pencil className="h-3.5 w-3.5" />设置剩余额度</button>
+                <button type="button" onClick={() => changeQuotaMode('reset')} aria-pressed={quotaMode === 'reset'} className={`inline-flex h-9 items-center justify-center gap-1.5 rounded border text-[11px] font-semibold ${quotaMode === 'reset' ? 'border-amber-200 bg-white text-amber-700' : 'border-transparent text-zinc-500'}`}><RefreshCw className="h-3.5 w-3.5" />重置周期额度</button>
+              </div>
+
+              <label>
+                <span className="mb-1 block text-[11px] font-semibold text-zinc-500">{quotaMode === 'reset' ? '重置后可用额度' : '调整后剩余额度'}</span>
+                <input required autoFocus min={0} max={100000000} step={1} type="number" value={quotaValue} onChange={(event) => setQuotaValue(event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" />
+                <small className="mt-1.5 block text-[10px] leading-4 text-zinc-400">{quotaMode === 'reset' ? '已用额度会清零，并从当前时间重新统计；订阅到期时间保持不变。' : '只修改当前可用额度，已用量、到期时间和套餐权限保持不变。'}</small>
+              </label>
+
+              <div className="flex items-center justify-between border-t border-[#EDF0EE] pt-3 text-xs"><span className="text-zinc-500">调整后可用</span><strong className="font-mono text-base text-[#047857]">{Number.isInteger(nextQuotaRemaining) && nextQuotaRemaining >= 0 ? nextQuotaRemaining.toLocaleString('zh-CN') : '--'}</strong></div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setQuotaUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving || !quotaValue.trim() || !Number.isInteger(nextQuotaRemaining) || nextQuotaRemaining < 0 || nextQuotaRemaining > 100000000} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{quotaMode === 'reset' ? '确认重置' : '保存额度'}</button></div>
           </form>
         </div>
       )}

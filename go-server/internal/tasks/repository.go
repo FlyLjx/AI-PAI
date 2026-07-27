@@ -45,14 +45,14 @@ func (r *Repository) create(ctx context.Context, store taskStore, task Task) (*T
 	_, err := store.ExecContext(ctx, `
 		INSERT INTO generation_tasks
 			(id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip,
-			 cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json,
+			 subscription_quota_units, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json,
 			 favorite_enabled, public_status, display_enabled, display_note)
 		VALUES
 			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			 ?, ?, ?, ?, ?, ?, ?,
+			 ?, ?, ?, ?, ?, ?, ?, ?,
 			 ?, ?, ?, ?)
 	`, task.ID, task.UserID, task.ModelID, task.ProviderID, task.Capability, task.Prompt, task.ReferenceImageURL, task.SizeTier, task.Size, task.OutputFormat, task.TransparentBackground, task.Quantity, task.UserIP,
-		task.CostCredits, task.ModelCostCredits, task.RemainingCredits, task.DurationSeconds, task.Status, task.ErrorMessage, resultJSON,
+		task.SubscriptionQuotaUnits, task.CostCredits, task.ModelCostCredits, task.RemainingCredits, task.DurationSeconds, task.Status, task.ErrorMessage, resultJSON,
 		task.FavoriteEnabled, task.PublicStatus, task.DisplayEnabled, task.DisplayNote)
 	if err != nil {
 		return nil, err

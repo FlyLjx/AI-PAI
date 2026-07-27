@@ -216,30 +216,31 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 	accessLogID := newID()
 	var savedTask *tasks.Task
 	if err := r.withUserGenerationLock(ctx, auth.User.ID, func(tx *database.Tx) error {
-		costCredits, err := r.generationBillingQuote(ctx, tx, auth.User.ID, *model, sizeTier, input.N, auth.APIKey.BillingMode)
+		costCredits, subscriptionQuotaUnits, err := r.generationBillingQuote(ctx, tx, auth.User.ID, *model, sizeTier, input.N, auth.APIKey.BillingMode)
 		if err != nil {
 			return err
 		}
 		task := tasks.Task{
-			ID:                    newID(),
-			UserID:                auth.User.ID,
-			ModelID:               model.ID,
-			ProviderID:            model.ProviderID,
-			Capability:            model.Capability,
-			Prompt:                input.Prompt,
-			ReferenceImageURL:     referencePayload,
-			SizeTier:              sizeTier,
-			Size:                  &size,
-			OutputFormat:          effectiveOutputFormat(outputFormat, transparent),
-			TransparentBackground: transparent,
-			Quantity:              input.N,
-			UserIP:                requestIP(req),
-			CostCredits:           costCredits,
-			ModelCostCredits:      0,
-			RemainingCredits:      0,
-			DurationSeconds:       0,
-			Status:                tasks.StatusQueued,
-			PublicStatus:          "private",
+			ID:                     newID(),
+			UserID:                 auth.User.ID,
+			ModelID:                model.ID,
+			ProviderID:             model.ProviderID,
+			Capability:             model.Capability,
+			Prompt:                 input.Prompt,
+			ReferenceImageURL:      referencePayload,
+			SizeTier:               sizeTier,
+			Size:                   &size,
+			OutputFormat:           effectiveOutputFormat(outputFormat, transparent),
+			TransparentBackground:  transparent,
+			Quantity:               input.N,
+			SubscriptionQuotaUnits: subscriptionQuotaUnits,
+			UserIP:                 requestIP(req),
+			CostCredits:            costCredits,
+			ModelCostCredits:       0,
+			RemainingCredits:       0,
+			DurationSeconds:        0,
+			Status:                 tasks.StatusQueued,
+			PublicStatus:           "private",
 		}
 		savedTask, err = tasks.NewRepository(r.db).CreateWithTx(ctx, tx, task)
 		if err != nil {

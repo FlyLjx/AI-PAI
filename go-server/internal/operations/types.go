@@ -65,6 +65,11 @@ type CustomSubscriptionGrant struct {
 	QuotaImages  int    `json:"quotaImages"`
 }
 
+type SubscriptionQuotaAdjustment struct {
+	QuotaRemaining *int
+	ResetUsage     bool
+}
+
 type Invite struct {
 	ID                    string  `json:"id"`
 	InviterID             string  `json:"inviterId"`

@@ -40,7 +40,7 @@ func TestGrantCustomSubscriptionCreatesEntitlementWithoutOrder(t *testing.T) {
 			"id", "name", "description", "amount", "duration_days", "quota_images", "bonus_credits", "discount_percent",
 			"allowed_provider_ids", "allowed_model_ids", "badge", "sort_order", "status", "created_at", "updated_at",
 		}).AddRow(planID, "合作客户额度", description, 0, 45, 1234, 0, 0, `[]`, `[]`, badge, 0, "active", now, now))
-	mock.ExpectQuery(`SELECT expires_at FROM user_subscriptions WHERE user_id=\? FOR UPDATE`).
+	mock.ExpectQuery(`SELECT plan_id, plan_snapshot, status, started_at, expires_at FROM user_subscriptions WHERE user_id=\? FOR UPDATE`).
 		WithArgs(userID).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO user_subscriptions`).

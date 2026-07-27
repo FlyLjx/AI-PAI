@@ -153,30 +153,31 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	prompt := input.Prompt
 	var savedTask *tasks.Task
 	if err := r.withUserGenerationLock(ctx, user.ID, func(tx *database.Tx) error {
-		costCredits, err := r.generationBillingQuote(ctx, tx, user.ID, *model, input.SizeTier, input.Quantity, generationBillingModeAuto)
+		costCredits, subscriptionQuotaUnits, err := r.generationBillingQuote(ctx, tx, user.ID, *model, input.SizeTier, input.Quantity, generationBillingModeAuto)
 		if err != nil {
 			return err
 		}
 		task := tasks.Task{
-			ID:                    newID(),
-			UserID:                user.ID,
-			ModelID:               model.ID,
-			ProviderID:            model.ProviderID,
-			Capability:            input.Capability,
-			Prompt:                prompt,
-			ReferenceImageURL:     referenceImagePayload(req, input),
-			SizeTier:              input.SizeTier,
-			Size:                  &size,
-			OutputFormat:          effectiveOutputFormat(input.OutputFormat, input.TransparentBackground),
-			TransparentBackground: input.TransparentBackground || input.OutputFormat == "png",
-			Quantity:              input.Quantity,
-			UserIP:                requestIP(req),
-			CostCredits:           costCredits,
-			ModelCostCredits:      0,
-			RemainingCredits:      0,
-			DurationSeconds:       0,
-			Status:                tasks.StatusQueued,
-			PublicStatus:          "private",
+			ID:                     newID(),
+			UserID:                 user.ID,
+			ModelID:                model.ID,
+			ProviderID:             model.ProviderID,
+			Capability:             input.Capability,
+			Prompt:                 prompt,
+			ReferenceImageURL:      referenceImagePayload(req, input),
+			SizeTier:               input.SizeTier,
+			Size:                   &size,
+			OutputFormat:           effectiveOutputFormat(input.OutputFormat, input.TransparentBackground),
+			TransparentBackground:  input.TransparentBackground || input.OutputFormat == "png",
+			Quantity:               input.Quantity,
+			SubscriptionQuotaUnits: subscriptionQuotaUnits,
+			UserIP:                 requestIP(req),
+			CostCredits:            costCredits,
+			ModelCostCredits:       0,
+			RemainingCredits:       0,
+			DurationSeconds:        0,
+			Status:                 tasks.StatusQueued,
+			PublicStatus:           "private",
 		}
 		savedTask, err = tasks.NewRepository(r.db).CreateWithTx(ctx, tx, task)
 		return err
@@ -198,25 +199,27 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	return savedTask, nil
 }
 
-func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, userID string, model models.Model, sizeTier string, quantity int, billingMode string) (float64, error) {
+func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, userID string, model models.Model, sizeTier string, quantity int, billingMode string) (float64, int, error) {
 	if quantity < 1 {
 		quantity = 1
 	}
 	billingMode = normalizeGenerationBillingMode(billingMode)
 	if billingMode == "" {
-		return 0, newAppError(http.StatusBadRequest, "API Key 计费模式不正确")
+		return 0, 0, newAppError(http.StatusBadRequest, "API Key 计费模式不正确")
 	}
 	if billingMode != generationBillingModeBalance {
 		entitlement, err := r.currentSubscriptionEntitlement(ctx, userID)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
-		handled, err := generationSubscriptionBillingQuote(entitlement, model, quantity, billingMode == generationBillingModeSubscription)
+		quotaUnitsPerImage := subscriptionQuotaUnitsPerImage(modelPriceForTier(model, sizeTier))
+		quotaUnits := subscriptionQuotaUnitsForRequest(quotaUnitsPerImage, quantity)
+		handled, err := generationSubscriptionBillingQuote(entitlement, model, quotaUnits, billingMode == generationBillingModeSubscription)
 		if err != nil {
-			return 0, err
+			return 0, 0, err
 		}
 		if handled {
-			return 0, nil
+			return 0, quotaUnitsPerImage, nil
 		}
 	}
 
@@ -224,20 +227,20 @@ func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, us
 	var credits float64
 	var reserved float64
 	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ?`, userID).Scan(&credits); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if err := tx.QueryRowContext(ctx, `
 		SELECT COALESCE(SUM(cost_credits), 0)
 		FROM generation_tasks
 		WHERE user_id = ? AND status IN ('queued', 'pending', 'processing')
 	`, userID).Scan(&reserved); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	if !hasAvailableGenerationBalance(credits, reserved, price) {
 		r.notifyBalanceInsufficient(userID)
-		return 0, newAppError(http.StatusPaymentRequired, generationBalanceInsufficientMessage(billingMode))
+		return 0, 0, newAppError(http.StatusPaymentRequired, generationBalanceInsufficientMessage(billingMode))
 	}
-	return price, nil
+	return price, 0, nil
 }
 
 func generationBalanceInsufficientMessage(billingMode string) string {
@@ -247,14 +250,14 @@ func generationBalanceInsufficientMessage(billingMode string) string {
 	return "账户余额不足，请充值或开通订阅"
 }
 
-func generationSubscriptionBillingQuote(entitlement *operations.SubscriptionEntitlement, model models.Model, quantity int, required bool) (bool, error) {
+func generationSubscriptionBillingQuote(entitlement *operations.SubscriptionEntitlement, model models.Model, quotaUnits int, required bool) (bool, error) {
 	if entitlement == nil || !entitlement.IsPaid {
 		if required {
 			return true, newAppError(http.StatusPaymentRequired, "订阅已到期或未开通，请续费后再调用")
 		}
 		return false, nil
 	}
-	if err := requireGenerationQuotaForEntitlement(entitlement, model, quantity); err != nil {
+	if err := requireGenerationQuotaForEntitlement(entitlement, model, quotaUnits); err != nil {
 		return true, err
 	}
 	return true, nil
@@ -278,6 +281,31 @@ func generationBalanceCost(unitPrice float64, quantity int) float64 {
 		quantity = 1
 	}
 	return normalizedCreditAmount(unitPrice * float64(quantity))
+}
+
+func subscriptionQuotaUnitsPerImage(unitPrice float64) int {
+	unitPrice = normalizedCreditAmount(unitPrice)
+	if unitPrice <= 0 {
+		return 0
+	}
+	scaled := unitPrice * 100
+	if scaled >= float64(math.MaxInt) {
+		return math.MaxInt
+	}
+	return int(math.Ceil(scaled - 1e-9))
+}
+
+func subscriptionQuotaUnitsForRequest(perImage int, quantity int) int {
+	if perImage <= 0 {
+		return 0
+	}
+	if quantity < 1 {
+		quantity = 1
+	}
+	if quantity > math.MaxInt/perImage {
+		return math.MaxInt
+	}
+	return perImage * quantity
 }
 
 func hasAvailableGenerationBalance(credits float64, reserved float64, cost float64) bool {
@@ -318,8 +346,8 @@ func (r *Router) requireGenerationQuota(ctx context.Context, userID string, mode
 }
 
 func requireGenerationQuotaForEntitlement(entitlement *operations.SubscriptionEntitlement, model models.Model, quantity int) error {
-	if quantity < 1 {
-		quantity = 1
+	if quantity < 0 {
+		quantity = 0
 	}
 	if entitlement == nil {
 		return newAppError(http.StatusPaymentRequired, "免费额度已用完，请开通订阅")
@@ -332,6 +360,9 @@ func requireGenerationQuotaForEntitlement(entitlement *operations.SubscriptionEn
 			return newAppError(http.StatusForbidden, "当前订阅套餐不支持该模型")
 		}
 	} else {
+		if quantity < 1 {
+			quantity = 1
+		}
 		for _, window := range entitlement.QuotaWindows {
 			if window.QuotaRemaining < quantity {
 				return newAppError(http.StatusPaymentRequired, freeQuotaWindowLimitMessage(window))
