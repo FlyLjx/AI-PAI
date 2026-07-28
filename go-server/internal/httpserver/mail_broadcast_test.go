@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"aipi-go/internal/content"
@@ -34,6 +35,46 @@ func TestNormalizeMailBroadcastInputRejectsIncompleteAction(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected incomplete action to be rejected")
+	}
+}
+
+func TestBuildMailPreviewUsesDeliveryTemplate(t *testing.T) {
+	input := mailBroadcastInput{
+		Subject:    "  <系统通知>  ",
+		Content:    "  第一行\n<script>alert('x')</script>  ",
+		ActionText: "  查看详情  ",
+		ActionURL:  "  https://portal.example.com/dashboard?a=1&b=2  ",
+		TargetType: "specific",
+	}
+	result, err := buildMailPreview(input, smtpSettings{
+		Enabled:  false,
+		FromName: "AIπ",
+		SiteName: "旧生图站名称",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FromName != "AI-PAI API 中转站" || result.Subject != "<系统通知>" {
+		t.Fatalf("unexpected preview metadata: %#v", result)
+	}
+	if result.Action == nil || result.Action.Text != "查看详情" || result.Action.URL != "https://portal.example.com/dashboard?a=1&b=2" {
+		t.Fatalf("unexpected preview action: %#v", result.Action)
+	}
+	wantHTML := buildMailHTML(result.FromName, result.Subject, result.Text, mailAction{Text: result.Action.Text, URL: result.Action.URL})
+	if result.HTML != wantHTML {
+		t.Fatal("preview html does not match the delivery template")
+	}
+	if strings.Contains(result.HTML, "<script>alert") || !strings.Contains(result.HTML, "&lt;script&gt;alert") {
+		t.Fatalf("preview content was not escaped: %s", result.HTML)
+	}
+}
+
+func TestBuildMailPreviewRejectsAdminLink(t *testing.T) {
+	_, err := buildMailPreview(mailBroadcastInput{
+		Subject: "系统通知", Content: "正文内容", ActionText: "查看", ActionURL: "https://portal.example.com/sys-admins/users",
+	}, smtpSettings{})
+	if err == nil {
+		t.Fatal("expected admin link to be rejected")
 	}
 }
 

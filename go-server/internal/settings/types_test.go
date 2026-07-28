@@ -47,3 +47,15 @@ func TestDynamicConcurrencyDefaults(t *testing.T) {
 		}
 	}
 }
+
+func TestSystemLogCleanupDefaults(t *testing.T) {
+	if Defaults["systemLogAutoCleanupEnabled"] != false {
+		t.Fatalf("default system log cleanup enabled = %v, want false", Defaults["systemLogAutoCleanupEnabled"])
+	}
+	if Defaults["systemLogRetentionDays"] != float64(30) {
+		t.Fatalf("default system log retention days = %v, want 30", Defaults["systemLogRetentionDays"])
+	}
+	if _, ok := Public(Defaults)["systemLogRetentionDays"]; ok {
+		t.Fatal("system log retention must remain admin-only")
+	}
+}

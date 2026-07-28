@@ -233,6 +233,37 @@ type AdminOperationsActiveCall struct {
 	CreatedAt        string  `json:"createdAt"`
 }
 
+type AdminOperationsLiveSnapshot struct {
+	ActiveUsers           int                         `json:"activeUsers"`
+	ActiveRequests        int                         `json:"activeRequests"`
+	QueuedRequests        int                         `json:"queuedRequests"`
+	ProcessingRequests    int                         `json:"processingRequests"`
+	SlowRequests          int                         `json:"slowRequests"`
+	AverageElapsedSeconds float64                     `json:"averageElapsedSeconds"`
+	ActiveCalls           []AdminOperationsActiveCall `json:"activeCalls"`
+	GeneratedAt           string                      `json:"generatedAt"`
+}
+
+type AdminOperationsRankingSnapshot struct {
+	Range       string                   `json:"range"`
+	Metric      string                   `json:"metric"`
+	TopUsers    []AdminOperationsTopUser `json:"topUsers"`
+	GeneratedAt string                   `json:"generatedAt"`
+}
+
+type AdminOperationsTrendPoint struct {
+	Timestamp string `json:"timestamp"`
+	Total     int    `json:"total"`
+	Success   int    `json:"success"`
+	Failed    int    `json:"failed"`
+}
+
+type AdminOperationsTrendSnapshot struct {
+	Minutes     int                         `json:"minutes"`
+	Points      []AdminOperationsTrendPoint `json:"points"`
+	GeneratedAt string                      `json:"generatedAt"`
+}
+
 type AdminOperationsSnapshot struct {
 	Range                 string                      `json:"range"`
 	Metric                string                      `json:"metric"`

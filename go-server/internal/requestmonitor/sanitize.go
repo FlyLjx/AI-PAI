@@ -41,7 +41,7 @@ func ShouldRecord(req *http.Request) bool {
 		return false
 	}
 	path := req.URL.Path
-	if path == "/api/health" || path == "/api/admin/request-monitor" {
+	if path == "/api/health" || path == "/api/admin/request-monitor" || path == "/api/admin/mail-preview" {
 		return false
 	}
 	return strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/oauth/")

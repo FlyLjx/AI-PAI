@@ -56,6 +56,7 @@ export async function requestGo(request: Request, path: string, token?: string):
     body: request.method === 'GET' || request.method === 'HEAD' ? undefined : await request.arrayBuffer(),
     cache: 'no-store',
     redirect: 'manual',
+    signal: request.signal,
   });
 }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarClock,
   Check,
@@ -9,6 +9,8 @@ import {
   ChevronRight,
   Clock3,
   ExternalLink,
+  Eye,
+  EyeOff,
   Link2,
   Loader2,
   Mail,
@@ -30,6 +32,7 @@ import {
   type MailBroadcastInput,
   type MailDeliveryLog,
   type MailDeliverySummary,
+  type MailPreviewResult,
   type PortalUser,
 } from '@/lib/admin-api';
 
@@ -92,6 +95,11 @@ export default function AdminMailLogsPage() {
   const [error, setError] = useState('');
   const [composerOpen, setComposerOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [preview, setPreview] = useState<MailPreviewResult | null>(null);
+  const [previewError, setPreviewError] = useState('');
+  const previewRequestId = useRef(0);
   const [usersLoading, setUsersLoading] = useState(false);
   const [users, setUsers] = useState<PortalUser[]>([]);
   const [broadcast, setBroadcast] = useState<MailBroadcastInput>(emptyBroadcast);
@@ -125,6 +133,50 @@ export default function AdminMailLogsPage() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
+  useEffect(() => {
+    const requestId = ++previewRequestId.current;
+    if (!composerOpen || !previewOpen) return;
+
+    const subject = broadcast.subject.trim();
+    const content = broadcast.content.trim();
+    const actionText = broadcast.actionText?.trim() || '';
+    const actionUrl = broadcast.actionUrl?.trim() || '';
+
+    const controller = new AbortController();
+    const timer = window.setTimeout(async () => {
+      setPreviewError('');
+      if (!subject || !content) {
+        setPreview(null);
+        setPreviewing(false);
+        return;
+      }
+      if (Boolean(actionText) !== Boolean(actionUrl)) {
+        setPreview(null);
+        setPreviewing(false);
+        setPreviewError('邮件按钮文字和链接需要同时填写');
+        return;
+      }
+
+      setPreviewing(true);
+      try {
+        const response = await portalApi.previewMailTemplate({ subject, content, actionText, actionUrl }, controller.signal);
+        if (previewRequestId.current !== requestId) return;
+        setPreview(response.data);
+      } catch (requestError) {
+        if (controller.signal.aborted) return;
+        if (previewRequestId.current !== requestId) return;
+        setPreviewError(requestError instanceof Error ? requestError.message : '邮件模板预览失败');
+      } finally {
+        if (previewRequestId.current === requestId) setPreviewing(false);
+      }
+    }, 450);
+
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [broadcast.actionText, broadcast.actionUrl, broadcast.content, broadcast.subject, composerOpen, previewOpen]);
+
   const selected = useMemo(() => items.find((item) => item.id === selectedId) || null, [items, selectedId]);
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const visibleUsers = useMemo(() => {
@@ -146,6 +198,10 @@ export default function AdminMailLogsPage() {
   const openComposer = async () => {
     setBroadcast({ ...emptyBroadcast, userIds: [] });
     setUserSearch('');
+    setPreview(null);
+    setPreviewError('');
+    setPreviewing(false);
+    setPreviewOpen(true);
     setComposerOpen(true);
     if (users.length > 0) return;
     setUsersLoading(true);
@@ -160,6 +216,10 @@ export default function AdminMailLogsPage() {
   };
 
   const updateBroadcast = <K extends keyof MailBroadcastInput>(key: K, value: MailBroadcastInput[K]) => {
+    if (previewOpen && (key === 'subject' || key === 'content' || key === 'actionText' || key === 'actionUrl')) {
+      setPreviewing(true);
+      setPreviewError('');
+    }
     setBroadcast((current) => ({ ...current, [key]: value }));
   };
 
@@ -319,12 +379,13 @@ export default function AdminMailLogsPage() {
 
       {composerOpen && (
         <div className="fixed inset-0 z-50 overflow-y-auto bg-black/40 p-4 sm:grid sm:place-items-center">
-          <form onSubmit={sendBroadcast} className="mx-auto w-full max-w-3xl overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl">
+          <form onSubmit={sendBroadcast} className="mx-auto w-full max-w-6xl overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl">
             <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5">
-              <div><h2 className="flex items-center gap-2 text-sm font-semibold"><MailPlus className="h-4 w-4 text-[#047857]" />发送邮件</h2><p className="mt-0.5 text-[11px] text-zinc-500">邮件会使用系统设置中的 SMTP 服务。</p></div>
+              <div><h2 className="flex items-center gap-2 text-sm font-semibold"><MailPlus className="h-4 w-4 text-[#047857]" />发送邮件</h2><p className="mt-0.5 text-[11px] text-zinc-500">{previewOpen ? '右侧模板将随邮件内容实时更新。' : '邮件会使用系统设置中的 SMTP 服务。'}</p></div>
               <button type="button" onClick={() => setComposerOpen(false)} disabled={sending} title="关闭" className="rounded p-1 text-zinc-500 hover:bg-zinc-100 disabled:opacity-40"><X className="h-4 w-4" /></button>
             </div>
-            <div className="space-y-4 p-5">
+            <div className={previewOpen ? 'grid min-h-0 lg:grid-cols-[minmax(0,.9fr)_minmax(440px,1.1fr)]' : 'block'}>
+            <div className="space-y-4 p-5 lg:max-h-[68vh] lg:overflow-y-auto">
               <section>
                 <span className="mb-2 block text-[11px] font-semibold text-zinc-500">收件范围</span>
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
@@ -362,7 +423,40 @@ export default function AdminMailLogsPage() {
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">按钮链接</span><input type="url" value={broadcast.actionUrl} onChange={(event) => updateBroadcast('actionUrl', event.target.value)} placeholder="https://ai.yccc.me/dashboard" className="h-9 w-full rounded-md border border-[#DCE4DF] px-3 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
               </section>
             </div>
-            <div className="flex items-center justify-between gap-3 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><span className="text-[10px] text-zinc-400">发送结果将写入邮件记录</span><div className="flex gap-2"><button type="button" onClick={() => setComposerOpen(false)} disabled={sending} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold disabled:opacity-50">取消</button><button type="submit" disabled={sending || usersLoading || recipientCount === 0} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}{sending ? '发送中' : '确认发送'}</button></div></div>
+            {previewOpen && (
+              <aside aria-busy={previewing} className="min-w-0 border-t border-[#DCE4DF] bg-[#F4F7F5] p-4 sm:p-5 lg:max-h-[68vh] lg:overflow-y-auto lg:border-l lg:border-t-0">
+                <div className="mb-3 flex items-start justify-between gap-3 rounded-md border border-[#DCE4DF] bg-white px-4 py-3">
+                  <div className="min-w-0">
+                    <small className="block text-[10px] font-semibold text-zinc-400">实时模板</small>
+                    <strong className="mt-0.5 block break-words text-xs text-[#17201B]">{preview?.subject || broadcast.subject.trim() || '等待邮件内容'}</strong>
+                    {preview?.fromName && <small className="mt-1 block truncate text-[9px] text-zinc-400">{preview.fromName}</small>}
+                  </div>
+                  <span role="status" aria-live="polite" className="inline-flex shrink-0 items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700">
+                    {previewing ? <Loader2 className="h-3 w-3 animate-spin" /> : preview ? <CheckCircle2 className="h-3 w-3" /> : <Clock3 className="h-3 w-3" />}
+                    {previewing ? '更新中' : preview ? '已同步' : '等待内容'}
+                  </span>
+                </div>
+                {previewError && <div className="mb-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-5 text-amber-700">{previewError}</div>}
+                {preview ? (
+                  <div className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white">
+                    <iframe title="邮件模板实时预览" sandbox="" referrerPolicy="no-referrer" srcDoc={preview.html} className="h-[58vh] min-h-[360px] max-h-[620px] w-full bg-white" />
+                  </div>
+                ) : !previewError && (
+                  <div className="grid min-h-[360px] place-items-center rounded-md border border-dashed border-[#CBD8D0] bg-white text-zinc-400">
+                    <span className="text-center"><Eye className="mx-auto mb-2 h-7 w-7" /><small>等待完整邮件内容</small></span>
+                  </div>
+                )}
+              </aside>
+            )}
+            </div>
+            <div className="flex flex-col gap-3 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3 sm:flex-row sm:items-center sm:justify-between">
+              <span className="text-[10px] text-zinc-400">{previewOpen ? (previewing ? '模板内容同步中' : preview ? '模板内容已实时同步' : '填写标题和正文后自动预览') : '发送结果将写入邮件记录'}</span>
+              <div className="flex flex-wrap justify-end gap-2">
+                <button type="button" onClick={() => setPreviewOpen((current) => !current)} disabled={sending} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#BFD2C6] bg-white px-3 text-xs font-semibold text-[#315C46] hover:bg-emerald-50 disabled:opacity-50">{previewOpen ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}{previewOpen ? '关闭预览' : '实时预览'}</button>
+                <button type="button" onClick={() => setComposerOpen(false)} disabled={sending} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold disabled:opacity-50">取消</button>
+                <button type="submit" disabled={sending || usersLoading || recipientCount === 0} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{sending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}{sending ? '发送中' : '确认发送'}</button>
+              </div>
+            </div>
           </form>
         </div>
       )}

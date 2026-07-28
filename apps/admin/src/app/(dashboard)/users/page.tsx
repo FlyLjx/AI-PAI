@@ -1,17 +1,15 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   CreditCard,
-  Crown,
   Gauge,
   Loader2,
   MailCheck,
-  MailWarning,
   PackageCheck,
   Pencil,
   Plus,
@@ -21,7 +19,6 @@ import {
   ShieldCheck,
   Trash2,
   UserRoundCog,
-  Wallet,
   X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -30,7 +27,6 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
-import { StatusBadge } from '@/components/common/StatusBadge';
 import { type ConsumptionRank, type CreditLog, type Plan, type PortalUser, portalApi } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
 
@@ -75,24 +71,34 @@ function subscriptionName(user: PortalUser) {
   return user.subscription?.planName || user.subscription?.tier || '订阅套餐';
 }
 
-function BillingModeLabel({ user }: { user: PortalUser }) {
-  if (subscriptionActive(user)) {
+function BillingSummary({ user }: { user: PortalUser }) {
+  if (!subscriptionActive(user)) {
+    const status = user.subscription?.status;
+    const statusLabel = status === 'expired'
+      ? '订阅已到期'
+      : status === 'canceled' || status === 'cancelled'
+        ? '订阅已取消'
+        : '未开通订阅';
     return (
       <span className="inline-flex flex-col items-start gap-0.5">
-        <span className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800"><Crown className="h-3 w-3" />{subscriptionName(user)}</span>
-        <small className="text-[10px] text-zinc-400">至 {formatDate(user.subscription?.expiresAt || '', false)}</small>
+        <span className="text-[11px] font-semibold text-zinc-700">余额计费</span>
+        <small className={`text-[10px] ${status === 'expired' ? 'text-amber-700' : status === 'canceled' || status === 'cancelled' ? 'text-red-600' : 'text-zinc-400'}`}>{statusLabel}</small>
       </span>
     );
   }
-  return <span className="inline-flex items-center gap-1 rounded border border-blue-200 bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700"><Wallet className="h-3 w-3" />按余额计费</span>;
-}
-
-function SubscriptionStatusBadge({ user }: { user: PortalUser }) {
-  const status = user.subscription?.status;
-  if (status === 'active') return <span className="inline-flex flex-col items-start gap-0.5"><span className="inline-flex rounded border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">生效中</span><small className="font-mono text-[10px] text-zinc-400">剩余 {Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0).toLocaleString('zh-CN')} / {Number(user.subscription?.quotaLimit ?? user.subscription?.quotaImages ?? 0).toLocaleString('zh-CN')}</small></span>;
-  if (status === 'expired') return <span className="inline-flex rounded border border-amber-200 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">已到期</span>;
-  if (status === 'canceled' || status === 'cancelled') return <span className="inline-flex rounded border border-red-200 bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700">已取消</span>;
-  return <span className="inline-flex rounded border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">未订阅</span>;
+  const remaining = Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0);
+  const limit = Number(user.subscription?.quotaLimit ?? user.subscription?.quotaImages ?? 0);
+  return (
+    <span className="inline-flex min-w-0 flex-col items-start gap-0.5">
+      <span className="inline-flex max-w-[220px] items-center gap-1.5 text-[11px] font-semibold text-zinc-800">
+        <i className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+        <span className="truncate">{subscriptionName(user)}</span>
+      </span>
+      <small className="max-w-[240px] truncate font-mono text-[10px] text-zinc-400">
+        剩余 {remaining.toLocaleString('zh-CN')} / {limit.toLocaleString('zh-CN')} · 至 {formatDate(user.subscription?.expiresAt || '', false)}
+      </small>
+    </span>
+  );
 }
 
 function userStatusLabel(status?: string) {
@@ -132,8 +138,10 @@ export default function AdminUsersPage() {
   const [creditLogRefresh, setCreditLogRefresh] = useState(0);
   const [consumptionRanking, setConsumptionRanking] = useState<ConsumptionRank[]>([]);
   const [consumptionDays, setConsumptionDays] = useState(30);
-  const [consumptionLoading, setConsumptionLoading] = useState(true);
+  const [consumptionLoading, setConsumptionLoading] = useState(false);
   const [consumptionError, setConsumptionError] = useState('');
+  const [rankingOpen, setRankingOpen] = useState(false);
+  const rankingTriggerRef = useRef<HTMLButtonElement>(null);
   const [grantPlanId, setGrantPlanId] = useState('');
   const [grantMode, setGrantMode] = useState<GrantMode>('plan');
   const [customGrantName, setCustomGrantName] = useState('自定义订阅');
@@ -142,6 +150,11 @@ export default function AdminUsersPage() {
   const [deleteCandidate, setDeleteCandidate] = useState<PortalUser | null>(null);
   const [actionId, setActionId] = useState('');
   const [verifyingId, setVerifyingId] = useState('');
+
+  const closeRanking = useCallback(() => {
+    setRankingOpen(false);
+    window.setTimeout(() => rankingTriggerRef.current?.focus(), 0);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -174,10 +187,6 @@ export default function AdminUsersPage() {
     }
   }, [consumptionDays]);
 
-  const refreshAll = useCallback(async () => {
-    await Promise.all([load(), loadConsumptionRanking()]);
-  }, [load, loadConsumptionRanking]);
-
   useEffect(() => {
     const initialSearch = new URLSearchParams(window.location.search).get('search')?.trim();
     const timer = window.setTimeout(() => {
@@ -192,9 +201,20 @@ export default function AdminUsersPage() {
   }, [load]);
 
   useEffect(() => {
+    if (!rankingOpen) return;
     const timer = window.setTimeout(() => void loadConsumptionRanking(), 0);
     return () => window.clearTimeout(timer);
-  }, [loadConsumptionRanking]);
+  }, [loadConsumptionRanking, rankingOpen]);
+
+  useEffect(() => {
+    if (!rankingOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      closeRanking();
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [closeRanking, rankingOpen]);
 
   useEffect(() => {
     if (!creditLogUser) return;
@@ -248,8 +268,8 @@ export default function AdminUsersPage() {
   const summary = useMemo(() => ({
     total: users.length,
     active: users.filter((user) => user.status === 'active').length,
+    verified: users.filter((user) => Boolean(user.emailVerifiedAt)).length,
     subscribed: users.filter(subscriptionActive).length,
-    balance: users.reduce((sum, user) => sum + Number(user.credits || 0), 0),
   }), [users]);
   const consumptionWindowLabel = consumptionDays === 0 ? '全部时间' : `近 ${consumptionDays} 天`;
 
@@ -453,67 +473,77 @@ export default function AdminUsersPage() {
   };
 
   const rowActions = (user: PortalUser) => (
-    <div className="flex items-center justify-end gap-1">
-      <button type="button" onClick={() => openCreditLogs(user)} title="查看积分明细" className="inline-flex h-7 items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 text-[10px] font-semibold text-blue-700 hover:border-blue-300 hover:bg-blue-100"><ReceiptText className="h-3 w-3" />积分明细</button>
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 md:min-w-[250px] md:flex-nowrap">
+      <button type="button" onClick={() => openCreditLogs(user)} title="查看积分明细" aria-label={`查看 ${user.email} 的积分明细`} className="inline-flex h-7 items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 text-[10px] font-semibold text-blue-700 hover:border-blue-300 hover:bg-blue-100"><ReceiptText className="h-3 w-3" />积分明细</button>
       {!user.emailVerifiedAt && (
-        <button type="button" onClick={() => void verifyEmail(user)} disabled={Boolean(verifyingId)} title="直接验证邮箱" aria-label={`直接验证 ${user.email} 的邮箱`} className="rounded p-1.5 text-emerald-700 hover:bg-emerald-50 disabled:opacity-40">
+        <button type="button" onClick={() => void verifyEmail(user)} disabled={Boolean(verifyingId)} title="直接验证邮箱" aria-label={`直接验证 ${user.email} 的邮箱`} className="grid h-7 w-7 place-items-center rounded-md border border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100 disabled:opacity-40">
           {verifyingId === user.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MailCheck className="h-3.5 w-3.5" />}
         </button>
       )}
-      <button type="button" onClick={() => openGrant(user)} title="发放订阅" className="rounded p-1.5 text-[#0891B2] hover:bg-cyan-50"><CreditCard className="h-3.5 w-3.5" /></button>
-      {subscriptionActive(user) && <button type="button" onClick={() => openQuota(user)} title="调整订阅额度" aria-label={`调整 ${user.email} 的订阅额度`} className="rounded p-1.5 text-amber-700 hover:bg-amber-50"><Gauge className="h-3.5 w-3.5" /></button>}
-      <button type="button" onClick={() => openEdit(user)} title="编辑用户" className="rounded p-1.5 text-zinc-600 hover:bg-zinc-100"><Pencil className="h-3.5 w-3.5" /></button>
-      <button type="button" onClick={() => void toggleStatus(user)} disabled={actionId === user.id} title={user.status === 'active' ? '停用用户' : '启用用户'} className={`rounded p-1.5 ${user.status === 'active' ? 'text-amber-600 hover:bg-amber-50' : 'text-emerald-700 hover:bg-emerald-50'} disabled:opacity-40`}><ShieldCheck className="h-3.5 w-3.5" /></button>
-      <button type="button" onClick={() => setDeleteCandidate(user)} title="删除用户" className="rounded p-1.5 text-red-600 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5" /></button>
+      <button type="button" onClick={() => openGrant(user)} title="发放订阅" aria-label={`为 ${user.email} 发放订阅`} className="grid h-7 w-7 place-items-center rounded-md border border-cyan-200 bg-cyan-50 text-cyan-700 hover:border-cyan-300 hover:bg-cyan-100"><CreditCard className="h-3.5 w-3.5" /></button>
+      {subscriptionActive(user) && <button type="button" onClick={() => openQuota(user)} title="调整订阅额度" aria-label={`调整 ${user.email} 的订阅额度`} className="grid h-7 w-7 place-items-center rounded-md border border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100"><Gauge className="h-3.5 w-3.5" /></button>}
+      <button type="button" onClick={() => openEdit(user)} title="编辑用户" aria-label={`编辑 ${user.email}`} className="grid h-7 w-7 place-items-center rounded-md border border-zinc-200 bg-zinc-50 text-zinc-600 hover:border-zinc-300 hover:bg-zinc-100"><Pencil className="h-3.5 w-3.5" /></button>
+      <button type="button" onClick={() => void toggleStatus(user)} disabled={actionId === user.id} title={user.status === 'active' ? '停用用户' : '启用用户'} aria-label={`${user.status === 'active' ? '停用' : '启用'} ${user.email}`} className={`grid h-7 w-7 place-items-center rounded-md border ${user.status === 'active' ? 'border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300 hover:bg-amber-100' : 'border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-100'} disabled:opacity-40`}><ShieldCheck className="h-3.5 w-3.5" /></button>
+      <button type="button" onClick={() => setDeleteCandidate(user)} title="删除用户" aria-label={`删除 ${user.email}`} className="grid h-7 w-7 place-items-center rounded-md border border-red-200 bg-red-50 text-red-600 hover:border-red-300 hover:bg-red-100"><Trash2 className="h-3.5 w-3.5" /></button>
     </div>
   );
 
+  const trapDialogFocus = (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.key !== 'Tab') return;
+    const focusable = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )).filter((element) => element.getClientRects().length > 0);
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (!first || !last) return;
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
   return (
     <div className="space-y-5">
-      <PageHeader title="用户管理" description="管理 API 客户、账户状态、余额与订阅权益。">
-        <button type="button" onClick={() => void refreshAll()} disabled={loading || consumptionLoading} title="刷新数据" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${(loading || consumptionLoading) ? 'animate-spin' : ''}`} /></button>
+      <PageHeader
+        title="用户管理"
+        description={loading
+          ? '正在加载用户数据...'
+          : (
+            <span className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 text-[13px]">
+              <span className="text-zinc-500">共 <strong className="font-semibold text-zinc-800">{summary.total.toLocaleString('zh-CN')}</strong> 位</span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-700"><i className="h-1.5 w-1.5 rounded-full bg-emerald-500" />启用 <strong className="font-semibold">{summary.active.toLocaleString('zh-CN')}</strong> 位</span>
+              <span className="inline-flex items-center gap-1.5 text-sky-700"><i className="h-1.5 w-1.5 rounded-full bg-sky-500" />邮箱已验证 <strong className="font-semibold">{summary.verified.toLocaleString('zh-CN')}</strong> 位</span>
+              <span className="inline-flex items-center gap-1.5 text-amber-700"><i className="h-1.5 w-1.5 rounded-full bg-amber-500" />有效订阅 <strong className="font-semibold">{summary.subscribed.toLocaleString('zh-CN')}</strong> 位</span>
+            </span>
+          )}
+      >
+        <button ref={rankingTriggerRef} type="button" onClick={() => { setConsumptionLoading(true); setRankingOpen(true); }} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-zinc-700 hover:border-[#86EFAC] hover:text-[#047857]"><Trophy className="h-3.5 w-3.5" />消费排行</button>
+        <button type="button" onClick={() => void load()} disabled={loading} title="刷新数据" aria-label="刷新用户数据" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
         <button type="button" onClick={openCreate} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#047857] px-3 text-xs font-semibold text-white hover:bg-[#036b4f]"><Plus className="h-4 w-4" />新增用户</button>
       </PageHeader>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          ['全部用户', summary.total, '注册账户'],
-          ['启用账户', summary.active, '可调用 API'],
-          ['有效订阅', summary.subscribed, '订阅额度计费'],
-          ['账户总余额', formatCNY(summary.balance), '按量计费余额'],
-        ].map(([label, value, note]) => (
-          <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
-            <span className="text-[11px] font-semibold text-zinc-500">{label}</span>
-            <strong className="mt-1.5 block text-xl text-[#17201B]">{value}</strong>
-            <small className="mt-1 block text-[11px] text-zinc-400">{note}</small>
-          </div>
-        ))}
-      </div>
-
-      <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="consumption-ranking-title">
-        <header className="flex flex-col gap-3 border-b border-[#EDF0EE] px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-center gap-3">
-            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-amber-50 text-amber-700"><Trophy className="h-4.5 w-4.5" /></span>
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <h2 id="consumption-ranking-title" className="text-sm font-semibold text-[#17201B]">消费排行榜</h2>
-                <span className="inline-flex h-5 items-center gap-1.5 rounded border border-amber-200 bg-amber-50 px-1.5 text-[10px] font-semibold text-amber-700">按余额扣费排序</span>
+      {rankingOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeRanking(); }}>
+          <section className="flex max-h-[calc(100vh-2rem)] w-full max-w-5xl flex-col overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl" role="dialog" aria-modal="true" aria-labelledby="consumption-ranking-title" onKeyDown={trapDialogFocus}>
+            <header className="flex flex-col gap-3 border-b border-[#EDF0EE] px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0">
+                <h2 id="consumption-ranking-title" className="text-sm font-semibold text-[#17201B]">消费排行</h2>
+                <p className="mt-0.5 text-[11px] text-zinc-500">{consumptionWindowLabel}余额扣费最高的客户</p>
               </div>
-              <p className="mt-0.5 text-[11px] text-zinc-500">查看 {consumptionWindowLabel} 的 API 消费最高客户</p>
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-md border border-[#DCE4DF] bg-[#F7F8F6] p-0.5" role="group" aria-label="消费排行榜时间范围">
-              {([ [7, '7天'], [15, '15天'], [30, '30天'], [0, '全部'] ] as const).map(([value, label]) => (
-                <button key={label} type="button" onClick={() => setConsumptionDays(value)} aria-pressed={consumptionDays === value} className={`h-7 min-w-11 rounded px-2 text-[11px] font-semibold ${consumptionDays === value ? 'bg-white text-[#047857] shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>{label}</button>
-              ))}
-            </div>
-            <button type="button" onClick={() => void loadConsumptionRanking()} disabled={consumptionLoading} className="inline-flex h-8 items-center gap-2 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-[#17201B] hover:border-[#12B76A] disabled:opacity-50">
-              <RefreshCw className={`h-3.5 w-3.5 ${consumptionLoading ? 'animate-spin' : ''}`} />刷新
-            </button>
-          </div>
-        </header>
-
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-md border border-[#DCE4DF] bg-[#F7F8F6] p-0.5" role="group" aria-label="消费排行榜时间范围">
+                  {([ [7, '7天'], [15, '15天'], [30, '30天'], [0, '全部'] ] as const).map(([value, label]) => (
+                    <button key={label} type="button" onClick={() => setConsumptionDays(value)} aria-pressed={consumptionDays === value} className={`h-7 min-w-11 rounded px-2 text-[11px] font-semibold ${consumptionDays === value ? 'bg-white text-[#047857] shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>{label}</button>
+                  ))}
+                </div>
+                <button type="button" onClick={() => void loadConsumptionRanking()} disabled={consumptionLoading} title="刷新排行" className="grid h-8 w-8 place-items-center rounded-md border border-[#DCE4DF] bg-white text-zinc-600 hover:border-[#86EFAC] disabled:opacity-50"><RefreshCw className={`h-3.5 w-3.5 ${consumptionLoading ? 'animate-spin' : ''}`} /></button>
+                <button type="button" autoFocus onClick={closeRanking} title="关闭" aria-label="关闭消费排行" className="grid h-8 w-8 place-items-center rounded-md text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button>
+              </div>
+            </header>
+            <div className="min-h-0 flex-1 overflow-auto">
         {consumptionLoading && !consumptionRanking.length ? (
           <div className="grid min-h-[240px] place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[#12B76A]" /></div>
         ) : consumptionError && !consumptionRanking.length ? (
@@ -586,11 +616,14 @@ export default function AdminUsersPage() {
           </div>
         )}
 
-        <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[#EDF0EE] bg-[#FAFBFA] px-4 py-2 text-[9px] text-zinc-400">
-          <span>排行按 {consumptionWindowLabel} 的扣费金额统计，默认展示前 8 名</span>
-          <span>当前榜单：{consumptionRanking.length} 人</span>
-        </footer>
-      </section>
+            </div>
+            <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[#EDF0EE] bg-[#FAFBFA] px-5 py-2.5 text-[10px] text-zinc-400">
+              <span>按扣费金额排序，展示前 8 名</span>
+              <span>{consumptionRanking.length} 位客户</span>
+            </footer>
+          </section>
+        </div>
+      )}
 
       {error && (
         <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>
@@ -601,13 +634,9 @@ export default function AdminUsersPage() {
       ) : (
         <DataTable
           headers={[
-            { key: 'account', label: '账户' },
-            { key: 'emailVerification', label: '邮箱验证' },
-            { key: 'role', label: '角色' },
-            { key: 'billing', label: '计费方式' },
-            { key: 'subscriptionStatus', label: '订阅状态' },
+            { key: 'account', label: '用户' },
+            { key: 'billing', label: '计费与订阅' },
             { key: 'balance', label: '余额', className: 'text-right' },
-            { key: 'status', label: '状态' },
             { key: 'created', label: '注册时间' },
             { key: 'actions', label: '操作', className: 'text-right' },
           ]}
@@ -648,32 +677,39 @@ export default function AdminUsersPage() {
           emptyState={<EmptyState title="暂无用户" description="调整筛选条件或创建一个 API 客户。" icon={UserRoundCog} />}
           renderRow={(user) => (
             <tr key={user.id} className="hover:bg-[#FAFBFA]">
-              <td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{user.email}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{user.id}</small></td>
-              <td className="px-4 py-3">
-                {user.emailVerifiedAt ? (
-                  <span className="inline-flex items-center gap-1 rounded border border-emerald-200 bg-emerald-50 px-1.5 py-0.5 text-[11px] font-medium text-emerald-700" title={`验证时间：${formatDate(user.emailVerifiedAt)}`}><MailCheck className="h-3 w-3" />已验证</span>
-                ) : (
-                  <span className="inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[11px] font-medium text-amber-700"><MailWarning className="h-3 w-3" />未验证</span>
-                )}
+              <td className="px-4 py-3.5">
+                <div className="flex max-w-[260px] items-center gap-2">
+                  <strong className="truncate font-medium">{user.email}</strong>
+                  {user.role === 'admin' && <span className="shrink-0 rounded border border-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500">管理员</span>}
+                </div>
+                <small className="mt-0.5 block max-w-[260px] truncate font-mono text-[10px] text-zinc-400">{user.id}</small>
+                <div className="mt-1.5 flex items-center gap-3 text-[10px]">
+                  <span className={`inline-flex items-center gap-1 ${user.status === 'active' ? 'text-emerald-700' : 'text-zinc-500'}`}><i className={`h-1.5 w-1.5 rounded-full ${user.status === 'active' ? 'bg-emerald-500' : 'bg-zinc-400'}`} />{user.status === 'active' ? '已启用' : '已停用'}</span>
+                  <span className={user.emailVerifiedAt ? 'text-zinc-500' : 'text-amber-700'} title={user.emailVerifiedAt ? `验证时间：${formatDate(user.emailVerifiedAt)}` : undefined}>{user.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证'}</span>
+                </div>
               </td>
-              <td className="px-4 py-3"><span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px]">{user.role === 'admin' ? '管理员' : 'API 客户'}</span></td>
-              <td className="px-4 py-3"><BillingModeLabel user={user} /></td>
-              <td className="px-4 py-3"><SubscriptionStatusBadge user={user} /></td>
-              <td className="px-4 py-3 text-right">
-                <button type="button" onClick={() => openBalance(user)} className="inline-flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-2 py-1 font-mono text-[11px] font-semibold text-[#047857] hover:border-emerald-300 hover:bg-emerald-100" title={`修改 ${user.email} 的余额`}>
-                  <span>{formatCNY(Number(user.credits || 0))}</span><Pencil className="h-3 w-3" /><span className="font-sans">修改</span>
+              <td className="px-4 py-3.5"><BillingSummary user={user} /></td>
+              <td className="px-4 py-3.5 text-right">
+                <button type="button" onClick={() => openBalance(user)} className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-[#047857] hover:underline" title={`修改 ${user.email} 的余额`} aria-label={`修改 ${user.email} 的余额`}>
+                  <span>{formatCNY(Number(user.credits || 0))}</span><Pencil className="h-3 w-3" /><span className="font-sans text-[10px]">修改</span>
                 </button>
               </td>
-              <td className="px-4 py-3"><StatusBadge status={user.status === 'active' ? 'active' : 'disabled'} /></td>
-              <td className="whitespace-nowrap px-4 py-3 text-zinc-500">{formatDate(user.createdAt || '')}</td>
-              <td className="px-4 py-3">{rowActions(user)}</td>
+              <td className="whitespace-nowrap px-4 py-3.5 text-zinc-500">{formatDate(user.createdAt || '')}</td>
+              <td className="px-4 py-3.5">{rowActions(user)}</td>
             </tr>
           )}
           renderMobileItem={(user) => (
             <article key={user.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
-              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{user.email}</strong><small className="font-mono text-[10px] text-zinc-400">{user.id}</small></div><StatusBadge status={user.status === 'active' ? 'active' : 'disabled'} /></div>
-              <div className="mt-3 grid grid-cols-2 gap-x-3 gap-y-3 border-y border-[#EDF0EE] py-3 text-xs"><span><small className="mb-0.5 block text-[10px] text-zinc-400">计费方式</small><BillingModeLabel user={user} /></span><span className="text-right"><small className="mb-0.5 block text-[10px] text-zinc-400">订阅状态</small><SubscriptionStatusBadge user={user} /></span><span><small className="block text-[10px] text-zinc-400">邮箱验证</small><span className={user.emailVerifiedAt ? 'text-emerald-700' : 'text-amber-700'}>{user.emailVerifiedAt ? '已验证' : '未验证'}</span></span><span className="text-right"><small className="block text-[10px] text-zinc-400">账户余额</small><button type="button" onClick={() => openBalance(user)} className="mt-0.5 inline-flex items-center gap-1 font-semibold text-[#047857]"><strong>{formatCNY(Number(user.credits || 0))}</strong><Pencil className="h-3 w-3" />修改</button></span></div>
-              <div className="mt-2 flex items-center justify-between"><small className="text-[10px] text-zinc-400">{formatDate(user.createdAt || '')}</small>{rowActions(user)}</div>
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0"><div className="flex items-center gap-2"><strong className="truncate text-sm">{user.email}</strong>{user.role === 'admin' && <span className="rounded border border-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500">管理员</span>}</div><small className="block truncate font-mono text-[10px] text-zinc-400">{user.id}</small></div>
+                <span className={`mt-0.5 inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold ${user.status === 'active' ? 'text-emerald-700' : 'text-zinc-500'}`}><i className={`h-1.5 w-1.5 rounded-full ${user.status === 'active' ? 'bg-emerald-500' : 'bg-zinc-400'}`} />{user.status === 'active' ? '已启用' : '已停用'}</span>
+              </div>
+              <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-y border-[#EDF0EE] py-3">
+                <BillingSummary user={user} />
+                <span className="text-right"><small className="block text-[10px] text-zinc-400">账户余额</small><button type="button" onClick={() => openBalance(user)} title={`修改 ${user.email} 的余额`} aria-label={`修改 ${user.email} 的余额`} className="mt-0.5 inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-[#047857]"><strong>{formatCNY(Number(user.credits || 0))}</strong><Pencil className="h-3 w-3" /></button></span>
+              </div>
+              <div className="mt-2 flex items-center justify-between gap-3"><small className={`text-[10px] ${user.emailVerifiedAt ? 'text-zinc-400' : 'text-amber-700'}`}>{user.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证'}</small><small className="text-[10px] text-zinc-400">{formatDate(user.createdAt || '')}</small></div>
+              <div className="mt-2 border-t border-[#EDF0EE] pt-2">{rowActions(user)}</div>
             </article>
           )}
         />

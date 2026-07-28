@@ -149,3 +149,39 @@ func TestParseInvalidAdminNotificationIntervalFallsBackToDefault(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateRejectsInvalidSystemLogCleanupSettings(t *testing.T) {
+	tests := []Settings{
+		{"systemLogAutoCleanupEnabled": "true"},
+		{"systemLogRetentionDays": float64(0)},
+		{"systemLogRetentionDays": float64(1.5)},
+		{"systemLogRetentionDays": float64(3651)},
+	}
+	for _, input := range tests {
+		rawDB, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+		_, err = NewRepository(database.Wrap(rawDB)).Update(context.Background(), input)
+		if !errors.Is(err, ErrInvalidSystemLogCleanup) {
+			t.Fatalf("input %#v error = %v, want ErrInvalidSystemLogCleanup", input, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		rawDB.Close()
+	}
+}
+
+func TestParseInvalidSystemLogRetentionDaysFallsBackToDefault(t *testing.T) {
+	for _, value := range []string{"0", "1.5", "3651", "invalid"} {
+		if got := parseValue("systemLogRetentionDays", value); got != Defaults["systemLogRetentionDays"] {
+			t.Fatalf("parseValue(systemLogRetentionDays, %q) = %v, want %v", value, got, Defaults["systemLogRetentionDays"])
+		}
+	}
+	if got := parseValue("systemLogRetentionDays", "90"); got != float64(90) {
+		t.Fatalf("valid retention days = %v, want 90", got)
+	}
+}

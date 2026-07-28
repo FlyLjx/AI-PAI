@@ -13,6 +13,7 @@ var ErrInvalidRechargeRate = errors.New("充值比例必须大于 0")
 var ErrInvalidDynamicConcurrency = errors.New("动态并发配置不正确")
 var ErrInvalidInviteSettings = errors.New("邀请奖励或注册风控配置不正确")
 var ErrInvalidAdminNotification = errors.New("管理员通知配置不正确")
+var ErrInvalidSystemLogCleanup = errors.New("系统日志自动清理配置不正确")
 
 type Repository struct {
 	db *database.DB
@@ -92,6 +93,18 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 			if _, ok := value.(bool); !ok {
 				return nil, ErrInvalidAdminNotification
 			}
+		}
+		if key == "systemLogAutoCleanupEnabled" {
+			if _, ok := value.(bool); !ok {
+				return nil, ErrInvalidSystemLogCleanup
+			}
+		}
+		if key == "systemLogRetentionDays" {
+			number, ok := numericSettingValue(value)
+			if !ok || number < 1 || number > 3650 || math.Trunc(number) != number || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, ErrInvalidSystemLogCleanup
+			}
+			value = number
 		}
 		if key == "inviteInviterRewardType" || key == "inviteInviteeRewardType" || key == "inviteRewardType" {
 			rewardType, ok := value.(string)
@@ -182,6 +195,9 @@ func parseValue(key string, value string) any {
 			return Defaults[key]
 		}
 		if key == "adminUpstreamCheckIntervalMinutes" && (number < 1 || number > 1440 || math.Trunc(number) != number) {
+			return Defaults[key]
+		}
+		if key == "systemLogRetentionDays" && (number < 1 || number > 3650 || math.Trunc(number) != number) {
 			return Defaults[key]
 		}
 		if isInviteRiskIntegerKey(key) && (number < 1 || number > 1000000 || math.Trunc(number) != number) {

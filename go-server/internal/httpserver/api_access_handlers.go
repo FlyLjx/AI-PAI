@@ -426,6 +426,74 @@ func (r *Router) adminAPIAccessOperations(w http.ResponseWriter, req *http.Reque
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
+func (r *Router) adminAPIAccessOperationsLive(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	now := time.Now().In(time.Local)
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	data, err := apiaccess.NewRepository(r.db).AdminOperationsLive(ctx, now)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+func (r *Router) adminAPIAccessOperationsRanking(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	now := time.Now().In(time.Local)
+	rangeKey, startAt := adminOperationsRange(req.URL.Query().Get("range"), now)
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	data, err := apiaccess.NewRepository(r.db).AdminOperationsRanking(
+		ctx,
+		startAt,
+		now,
+		rangeKey,
+		req.URL.Query().Get("metric"),
+		queryInt(req, "limit", 10),
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+func (r *Router) adminAPIAccessOperationsTrend(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	now := time.Now().In(time.Local)
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	data, err := apiaccess.NewRepository(r.db).AdminOperationsTrend(ctx, now, 60)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
 func adminOperationsRange(value string, now time.Time) (string, time.Time) {
 	dayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	switch strings.ToLower(strings.TrimSpace(value)) {

@@ -41,10 +41,18 @@ func TestCaptureRedactsSensitiveValuesAndRestoresBody(t *testing.T) {
 	}
 }
 
-func TestShouldRecordSkipsHealthAndMonitorQueries(t *testing.T) {
-	for _, path := range []string{"/api/health", "/api/admin/request-monitor"} {
-		if ShouldRecord(httptest.NewRequest("GET", "http://example.test"+path, nil)) {
-			t.Fatalf("expected %s to be skipped", path)
+func TestShouldRecordSkipsInternalRequests(t *testing.T) {
+	requests := []struct {
+		method string
+		path   string
+	}{
+		{method: "GET", path: "/api/health"},
+		{method: "GET", path: "/api/admin/request-monitor"},
+		{method: "POST", path: "/api/admin/mail-preview"},
+	}
+	for _, request := range requests {
+		if ShouldRecord(httptest.NewRequest(request.method, "http://example.test"+request.path, nil)) {
+			t.Fatalf("expected %s %s to be skipped", request.method, request.path)
 		}
 	}
 	if !ShouldRecord(httptest.NewRequest("POST", "http://example.test/v1/images/generations", nil)) {

@@ -49,6 +49,8 @@ var Defaults = Settings{
 	"freeDailyGenerationQuota":             float64(5),
 	"freeGenerationQuota":                  float64(10),
 	"taskTimeoutMinutes":                   float64(3),
+	"systemLogAutoCleanupEnabled":          false,
+	"systemLogRetentionDays":               float64(30),
 	"streamGenerationEnabled":              false,
 	"dynamicConcurrencyEnabled":            true,
 	"dynamicConcurrencyWindowValue":        float64(1),

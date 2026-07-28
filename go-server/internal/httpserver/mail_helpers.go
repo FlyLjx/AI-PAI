@@ -80,6 +80,14 @@ func emailBrandName(value string) string {
 	return brand
 }
 
+func mailDisplayFromName(settings smtpSettings) string {
+	fromName := settings.FromName
+	if strings.TrimSpace(fromName) == "" {
+		fromName = settings.SiteName
+	}
+	return emailBrandName(fromName)
+}
+
 func sendSMTPMail(settings smtpSettings, to string, subject string, text string, actions ...mailAction) error {
 	if err := settings.validate(); err != nil {
 		return err
@@ -92,11 +100,7 @@ func sendSMTPMail(settings smtpSettings, to string, subject string, text string,
 	if fromAddress == "" {
 		fromAddress = settings.User
 	}
-	fromName := settings.FromName
-	if fromName == "" {
-		fromName = settings.SiteName
-	}
-	fromName = emailBrandName(fromName)
+	fromName := mailDisplayFromName(settings)
 	addr := net.JoinHostPort(settings.Host, strconv.Itoa(settings.Port))
 	auth := smtp.PlainAuth("", settings.User, settings.Password, settings.Host)
 	action := mailAction{}
@@ -219,31 +223,27 @@ func buildMailHTML(fromName string, subject string, text string, action mailActi
 			actionText = "立即查看"
 		}
 		escapedURL := html.EscapeString(actionURL)
-		actionHTML = `<a href="` + escapedURL + `" style="display:inline-block;margin-top:24px;padding:12px 20px;border-radius:999px;background:#167947;color:#ffffff;text-decoration:none;font-weight:800;">` + html.EscapeString(actionText) + `</a>`
-		copyLinkHTML = `<div style="margin-top:18px;padding:14px;border-radius:14px;background:#f3faf5;border:1px solid #d9eadf;">
-                  <div style="margin-bottom:8px;color:#567064;font-size:12px;font-weight:700;">如果按钮无法打开，请复制以下链接到浏览器访问：</div>
-                  <div style="color:#126238;font-size:13px;line-height:1.6;word-break:break-all;">` + escapedURL + `</div>
+		actionHTML = `<a href="` + escapedURL + `" style="display:inline-block;margin-top:20px;padding:10px 16px;border-radius:6px;background:#047857;color:#ffffff;font-size:14px;line-height:1.4;text-decoration:none;font-weight:700;">` + html.EscapeString(actionText) + `</a>`
+		copyLinkHTML = `<div style="margin-top:18px;color:#6b7280;font-size:12px;line-height:1.7;">
+                  <div>按钮无法打开时，请复制此链接：</div>
+                  <a href="` + escapedURL + `" style="color:#047857;text-decoration:none;word-break:break-all;">` + escapedURL + `</a>
                 </div>`
 	}
 	return `<!doctype html>
 <html>
-  <body style="margin:0;padding:0;background:#f3f7f4;font-family:Arial,'Microsoft YaHei',sans-serif;color:#172033;">
-    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f7f4;padding:28px 12px;">
+  <body style="margin:0;padding:0;background:#f5f6f5;font-family:Arial,'Microsoft YaHei',sans-serif;color:#1f2937;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f5f6f5;padding:24px 12px;">
       <tr>
         <td align="center">
-          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:640px;background:#ffffff;border-radius:22px;overflow:hidden;border:1px solid #dfeee5;box-shadow:0 18px 48px rgba(21,91,54,.10);">
+          <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border:1px solid #e5e7eb;border-radius:8px;">
             <tr>
-              <td style="padding:26px 28px 8px;background:linear-gradient(135deg,#f8fff9,#e7f7ed);">
-				<div style="display:inline-block;padding:7px 12px;border-radius:999px;background:#dff5e8;color:#126238;font-size:12px;font-weight:800;">` + html.EscapeString(brand) + ` · 账户通知</div>
-                <h1 style="margin:18px 0 0;color:#14231b;font-size:26px;line-height:1.28;font-weight:900;">` + html.EscapeString(subject) + `</h1>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:22px 28px 30px;">
-                <div style="font-size:15px;line-height:1.9;white-space:pre-wrap;color:#26352d;">` + html.EscapeString(text) + `</div>
+              <td style="padding:24px;">
+                <div style="color:#047857;font-size:13px;line-height:1.4;font-weight:700;">` + html.EscapeString(brand) + `</div>
+                <h1 style="margin:10px 0 0;color:#111827;font-size:20px;line-height:1.4;font-weight:700;">` + html.EscapeString(subject) + `</h1>
+                <div style="margin-top:20px;color:#374151;font-size:14px;line-height:1.75;white-space:pre-wrap;">` + html.EscapeString(text) + `</div>
                 ` + actionHTML + `
                 ` + copyLinkHTML + `
-				<div style="margin-top:30px;padding-top:16px;border-top:1px solid #e2eee7;color:#7a8980;font-size:12px;line-height:1.7;">这是一封来自 ` + html.EscapeString(brand) + ` 的账户与服务通知邮件，请勿直接回复。</div>
+				<div style="margin-top:28px;padding-top:14px;border-top:1px solid #e5e7eb;color:#9ca3af;font-size:11px;line-height:1.6;">此邮件由 ` + html.EscapeString(brand) + ` 自动发送，请勿直接回复。</div>
               </td>
             </tr>
           </table>

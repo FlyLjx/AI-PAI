@@ -229,6 +229,37 @@ export type AdminOperationsSnapshot = {
   generatedAt: string;
 };
 
+export type AdminOperationsLiveSnapshot = {
+  activeUsers: number;
+  activeRequests: number;
+  queuedRequests: number;
+  processingRequests: number;
+  slowRequests: number;
+  averageElapsedSeconds: number;
+  activeCalls: AdminOperationsActiveCall[];
+  generatedAt: string;
+};
+
+export type AdminOperationsRankingSnapshot = {
+  range: AdminOperationsRange;
+  metric: AdminOperationsMetric;
+  topUsers: AdminOperationsTopUser[];
+  generatedAt: string;
+};
+
+export type AdminOperationsTrendPoint = {
+  timestamp: string;
+  total: number;
+  success: number;
+  failed: number;
+};
+
+export type AdminOperationsTrendSnapshot = {
+  minutes: number;
+  points: AdminOperationsTrendPoint[];
+  generatedAt: string;
+};
+
 export type Plan = {
   id: string;
   name: string;
@@ -301,6 +332,16 @@ export type MailBroadcastResult = {
   failures: Array<{ email: string; message: string }>;
   subject: string;
   message: string;
+};
+
+export type MailPreviewInput = Pick<MailBroadcastInput, 'subject' | 'content' | 'actionText' | 'actionUrl'>;
+
+export type MailPreviewResult = {
+  fromName: string;
+  subject: string;
+  text: string;
+  html: string;
+  action?: { text: string; url: string };
 };
 
 export type Announcement = {
@@ -565,7 +606,7 @@ export const adminAuth = {
 };
 
 export const portalApi = {
-  dashboard: () => api<Record<string, unknown>>('/api/dashboard?limit=8'),
+  dashboard: () => api<Record<string, unknown>>('/api/dashboard?limit=5'),
   stability: () => api<StabilitySnapshot>('/api/upstream/stability'),
   openAIImageStatus: () => api<OpenAIImageStatusSnapshot>('/api/upstream/openai-status'),
   upstreamMaintenance: () => api<UpstreamMaintenanceState>('/api/admin/upstream-maintenance'),
@@ -600,7 +641,11 @@ export const portalApi = {
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   adminUsage: (input: { page?: number; pageSize?: number; keyword?: string; status?: string } = {}) => api<UsageLog[], UsageSummary>(`/api/admin/api-access/logs${query(input)}`),
   adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
+  adminOperationsLive: () => api<AdminOperationsLiveSnapshot>('/api/admin/api-access/operations/live'),
+  adminOperationsRanking: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsRankingSnapshot>(`/api/admin/api-access/operations/ranking${query({ range, metric, limit })}`),
+  adminOperationsTrend: () => api<AdminOperationsTrendSnapshot>('/api/admin/api-access/operations/trend'),
   sendMailBroadcast: (input: MailBroadcastInput) => api<MailBroadcastResult>('/api/admin/mail-broadcast', { method: 'POST', body: JSON.stringify(input) }),
+  previewMailTemplate: (input: MailPreviewInput, signal?: AbortSignal) => api<MailPreviewResult>('/api/admin/mail-preview', { method: 'POST', body: JSON.stringify(input), signal }),
   adminMailLogs: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; category?: string } = {}) => api<MailDeliveryLogPage>(`/api/admin/mail-logs${query(input)}`),
   announcements: () => api<Announcement[]>('/api/announcements'),
   createAnnouncement: (input: AnnouncementMutationInput) => api<Announcement>('/api/announcements', { method: 'POST', body: JSON.stringify(input) }),

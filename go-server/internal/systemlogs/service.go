@@ -10,6 +10,8 @@ import (
 	"time"
 )
 
+const maxLogRetentionDays = 3650
+
 type FileInfo struct {
 	Name      string `json:"name"`
 	Size      int64  `json:"size"`
@@ -30,6 +32,17 @@ type DeleteResult struct {
 	Name      string `json:"name"`
 	Truncated bool   `json:"truncated"`
 	Reason    string `json:"reason,omitempty"`
+}
+
+type CleanupFailure struct {
+	Name  string `json:"name"`
+	Error string `json:"error"`
+}
+
+type CleanupResult struct {
+	Deleted  []string         `json:"deleted"`
+	Skipped  []string         `json:"skipped"`
+	Failures []CleanupFailure `json:"failures"`
 }
 
 type Service struct {
@@ -166,6 +179,64 @@ func (s Service) Delete(name string) (DeleteResult, error) {
 	return s.truncate(path, result, "delete_failed_truncated")
 }
 
+func (s Service) CleanupOlderThan(now time.Time, retentionDays int) (CleanupResult, error) {
+	result := CleanupResult{
+		Deleted:  []string{},
+		Skipped:  []string{},
+		Failures: []CleanupFailure{},
+	}
+	if retentionDays < 1 || retentionDays > maxLogRetentionDays {
+		return result, errors.New("日志保留天数必须在 1 到 3650 天之间")
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	entries, err := os.ReadDir(s.dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return result, nil
+		}
+		return result, err
+	}
+
+	cutoff := now.Add(-time.Duration(retentionDays) * 24 * time.Hour)
+	currentFileName := s.currentFileNameAt(now)
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(strings.ToLower(name), ".log") {
+			continue
+		}
+		if name == currentFileName {
+			result.Skipped = append(result.Skipped, name)
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil {
+			result.Failures = append(result.Failures, CleanupFailure{Name: name, Error: err.Error()})
+			continue
+		}
+		if !info.Mode().IsRegular() || !info.ModTime().Before(cutoff) {
+			result.Skipped = append(result.Skipped, name)
+			continue
+		}
+		path, err := s.safePath(name)
+		if err != nil {
+			result.Failures = append(result.Failures, CleanupFailure{Name: name, Error: err.Error()})
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				result.Skipped = append(result.Skipped, name)
+				continue
+			}
+			result.Failures = append(result.Failures, CleanupFailure{Name: name, Error: err.Error()})
+			continue
+		}
+		result.Deleted = append(result.Deleted, name)
+	}
+	return result, nil
+}
+
 func (s Service) safePath(name string) (string, error) {
 	if name == "" {
 		files, err := s.List()
@@ -204,7 +275,10 @@ func (s Service) truncate(path string, result DeleteResult, reason string) (Dele
 }
 
 func (s Service) currentFileName() string {
-	now := time.Now()
+	return s.currentFileNameAt(time.Now())
+}
+
+func (s Service) currentFileNameAt(now time.Time) string {
 	return "app-" + now.Format("2006-01-02") + ".log"
 }
 

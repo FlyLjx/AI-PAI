@@ -37,6 +37,19 @@ type mailBroadcastResult struct {
 	Message  string              `json:"message"`
 }
 
+type mailPreviewAction struct {
+	Text string `json:"text"`
+	URL  string `json:"url"`
+}
+
+type mailPreviewResult struct {
+	FromName string             `json:"fromName"`
+	Subject  string             `json:"subject"`
+	Text     string             `json:"text"`
+	HTML     string             `json:"html"`
+	Action   *mailPreviewAction `json:"action,omitempty"`
+}
+
 func (r *Router) upstreamStability(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodGet {
 		writeMethodNotAllowed(w)
@@ -183,6 +196,60 @@ func (r *Router) mailBroadcast(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": result})
+}
+
+func (r *Router) mailPreview(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	var input mailBroadcastInput
+	if err := decodeCompatJSON(req, &input); err != nil {
+		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
+		return
+	}
+
+	values, err := settings.NewRepository(r.db).Get(req.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	result, err := buildMailPreview(input, smtpSettingsFromMap(values))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
+}
+
+func buildMailPreview(input mailBroadcastInput, smtpConfig smtpSettings) (mailPreviewResult, error) {
+	input.Target = ""
+	input.TargetType = "all"
+	input.UserIDs = nil
+	normalized, err := normalizeMailBroadcastInput(input)
+	if err != nil {
+		return mailPreviewResult{}, err
+	}
+	action := mailAction{Text: normalized.ActionText, URL: normalized.ActionURL}
+	if err := validateMailAudience("broadcast", normalized.Content, []mailAction{action}); err != nil {
+		return mailPreviewResult{}, err
+	}
+	fromName := mailDisplayFromName(smtpConfig)
+	result := mailPreviewResult{
+		FromName: fromName,
+		Subject:  normalized.Subject,
+		Text:     normalized.Content,
+		HTML:     buildMailHTML(fromName, normalized.Subject, normalized.Content, action),
+	}
+	if action.Text != "" && action.URL != "" {
+		result.Action = &mailPreviewAction{Text: action.Text, URL: action.URL}
+	}
+	return result, nil
 }
 
 func (r *Router) sendMailBroadcast(ctx context.Context, input mailBroadcastInput) (mailBroadcastResult, error) {

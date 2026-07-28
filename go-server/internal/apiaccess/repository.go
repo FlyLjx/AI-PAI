@@ -631,6 +631,30 @@ func buildLogWhere(input ListLogsInput) (string, []any) {
 }
 
 func (r *Repository) AdminOperations(ctx context.Context, startAt time.Time, now time.Time, rangeKey string, metric string, limit int) (AdminOperationsSnapshot, error) {
+	ranking, err := r.AdminOperationsRanking(ctx, startAt, now, rangeKey, metric, limit)
+	if err != nil {
+		return AdminOperationsSnapshot{}, err
+	}
+	live, err := r.AdminOperationsLive(ctx, now)
+	if err != nil {
+		return AdminOperationsSnapshot{}, err
+	}
+	return AdminOperationsSnapshot{
+		Range:                 ranking.Range,
+		Metric:                ranking.Metric,
+		ActiveUsers:           live.ActiveUsers,
+		ActiveRequests:        live.ActiveRequests,
+		QueuedRequests:        live.QueuedRequests,
+		ProcessingRequests:    live.ProcessingRequests,
+		SlowRequests:          live.SlowRequests,
+		AverageElapsedSeconds: live.AverageElapsedSeconds,
+		TopUsers:              ranking.TopUsers,
+		ActiveCalls:           live.ActiveCalls,
+		GeneratedAt:           now.Format(time.RFC3339),
+	}, nil
+}
+
+func (r *Repository) AdminOperationsRanking(ctx context.Context, startAt time.Time, now time.Time, rangeKey string, metric string, limit int) (AdminOperationsRankingSnapshot, error) {
 	if limit < 1 {
 		limit = 10
 	}
@@ -645,12 +669,12 @@ func (r *Repository) AdminOperations(ctx context.Context, startAt time.Time, now
 		"failures": "failed_count",
 		"duration": "average_duration_seconds",
 	}[metric]
+	durationSecondsExpression := adminOperationsLogDurationSecondsExpression()
 
-	snapshot := AdminOperationsSnapshot{
+	snapshot := AdminOperationsRankingSnapshot{
 		Range:       strings.TrimSpace(rangeKey),
 		Metric:      metric,
 		TopUsers:    []AdminOperationsTopUser{},
-		ActiveCalls: []AdminOperationsActiveCall{},
 		GeneratedAt: now.Format(time.RFC3339),
 	}
 	topRows, err := r.db.QueryContext(ctx, `
@@ -665,8 +689,15 @@ func (r *Repository) AdminOperations(ctx context.Context, startAt time.Time, now
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN api_access_logs.image_count ELSE 0 END), 0) AS image_count,
-			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN generation_tasks.cost_credits ELSE 0 END), 0) AS credits_spent,
-			COALESCE(AVG(CASE WHEN api_access_logs.status IN ('success', 'succeeded', 'failed') THEN generation_tasks.duration_seconds ELSE NULL END), 0) AS average_duration_seconds,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN api_access_logs.charged_credits ELSE 0 END), 0) AS credits_spent,
+			COALESCE(AVG(CASE
+				WHEN api_access_logs.status NOT IN ('success', 'succeeded', 'failed') THEN NULL
+				WHEN generation_tasks.duration_seconds > 0 AND generation_tasks.duration_seconds <= 300 THEN generation_tasks.duration_seconds
+				WHEN api_access_logs.finished_at IS NOT NULL
+					AND api_access_logs.finished_at >= api_access_logs.created_at
+					AND `+durationSecondsExpression+` <= 300 THEN `+durationSecondsExpression+`
+				ELSE NULL
+			END), 0) AS average_duration_seconds,
 			MAX(api_access_logs.created_at) AS last_request_at
 		FROM api_access_logs
 		LEFT JOIN users ON users.id = api_access_logs.user_id
@@ -716,7 +747,21 @@ func (r *Repository) AdminOperations(ctx context.Context, startAt time.Time, now
 	if err := topRows.Err(); err != nil {
 		return snapshot, err
 	}
+	return snapshot, nil
+}
 
+func adminOperationsLogDurationSecondsExpression() string {
+	if database.CurrentDialect() == database.DialectPostgres {
+		return "EXTRACT(EPOCH FROM (api_access_logs.finished_at - api_access_logs.created_at))"
+	}
+	return "TIMESTAMPDIFF(MICROSECOND, api_access_logs.created_at, api_access_logs.finished_at) / 1000000.0"
+}
+
+func (r *Repository) AdminOperationsLive(ctx context.Context, now time.Time) (AdminOperationsLiveSnapshot, error) {
+	snapshot := AdminOperationsLiveSnapshot{
+		ActiveCalls: []AdminOperationsActiveCall{},
+		GeneratedAt: now.Format(time.RFC3339),
+	}
 	activeRows, err := r.db.QueryContext(ctx, `
 		SELECT
 			api_access_logs.id,
@@ -821,6 +866,70 @@ func (r *Repository) AdminOperations(ctx context.Context, startAt time.Time, now
 		snapshot.AverageElapsedSeconds = totalElapsed / float64(snapshot.ActiveRequests)
 	}
 	return snapshot, nil
+}
+
+func (r *Repository) AdminOperationsTrend(ctx context.Context, now time.Time, minutes int) (AdminOperationsTrendSnapshot, error) {
+	if minutes < 1 {
+		minutes = 60
+	}
+	if minutes > 1440 {
+		minutes = 1440
+	}
+	currentMinute := now.Truncate(time.Minute)
+	startAt := currentMinute.Add(-time.Duration(minutes-1) * time.Minute)
+	endAt := currentMinute.Add(time.Minute)
+	bucketExpression := adminOperationsMinuteBucketExpression()
+	snapshot := AdminOperationsTrendSnapshot{
+		Minutes:     minutes,
+		Points:      make([]AdminOperationsTrendPoint, 0, minutes),
+		GeneratedAt: now.Format(time.RFC3339),
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			`+bucketExpression+` AS minute_bucket,
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
+			COALESCE(SUM(CASE WHEN api_access_logs.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+		FROM api_access_logs
+		WHERE api_access_logs.created_at >= ?
+			AND api_access_logs.created_at < ?
+			AND api_access_logs.status IN ('queued', 'pending', 'processing', 'success', 'succeeded', 'failed', 'canceled', 'cancelled')
+		GROUP BY `+bucketExpression+`
+		ORDER BY `+bucketExpression+` ASC
+	`, startAt, endAt)
+	if err != nil {
+		return snapshot, err
+	}
+	byMinute := make(map[string]AdminOperationsTrendPoint, minutes)
+	for rows.Next() {
+		var bucket string
+		var point AdminOperationsTrendPoint
+		if err := rows.Scan(&bucket, &point.Total, &point.Success, &point.Failed); err != nil {
+			rows.Close()
+			return snapshot, err
+		}
+		byMinute[bucket] = point
+	}
+	if err := rows.Close(); err != nil {
+		return snapshot, err
+	}
+	if err := rows.Err(); err != nil {
+		return snapshot, err
+	}
+	for minute := startAt; minute.Before(endAt); minute = minute.Add(time.Minute) {
+		key := minute.Format("2006-01-02 15:04")
+		point := byMinute[key]
+		point.Timestamp = minute.Format(time.RFC3339)
+		snapshot.Points = append(snapshot.Points, point)
+	}
+	return snapshot, nil
+}
+
+func adminOperationsMinuteBucketExpression() string {
+	if database.CurrentDialect() == database.DialectPostgres {
+		return "TO_CHAR(DATE_TRUNC('minute', api_access_logs.created_at), 'YYYY-MM-DD HH24:MI')"
+	}
+	return "DATE_FORMAT(api_access_logs.created_at, '%Y-%m-%d %H:%i')"
 }
 
 func normalizeAdminOperationsMetric(value string) string {

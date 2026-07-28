@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
+  ArrowDownRight,
+  ArrowUpRight,
   Cable,
   ChartNoAxesCombined,
   CircleDollarSign,
-  Clock3,
   HeartPulse,
   Loader2,
+  Minus,
   RefreshCw,
   Server,
   TriangleAlert,
@@ -26,7 +28,6 @@ import {
 } from 'recharts';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/PageHeader';
-import { StatBlock } from '@/components/common/StatBlock';
 import { portalApi, type OpenAIImageStatusSnapshot, type StabilitySnapshot } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
 
@@ -70,7 +71,6 @@ type DashboardData = {
     orders?: number;
     paidAmount?: number;
     tasks?: number;
-    runningTasks?: number;
     failedTasks?: number;
     successfulTasks?: number;
     balanceConsumed?: number;
@@ -86,7 +86,6 @@ type DashboardData = {
     balanceConsumed?: number;
   };
   users?: { total?: number; active?: number; totalBalance?: number };
-  orders?: { all?: number; paid?: number; pending?: number; failed?: number; closed?: number };
   revenue?: { totalPaidAmount?: number };
   taskStats?: {
     total?: number;
@@ -106,7 +105,6 @@ type DashboardData = {
     disabledProviders?: number;
     activeModels?: number;
     disabledModels?: number;
-    lastTaskAt?: string | null;
   };
   recentOrders?: RechargeRow[];
   recentTasks?: UsageRow[];
@@ -114,11 +112,11 @@ type DashboardData = {
 };
 
 const TASK_TREND_COLORS = {
-  total: '#587FA3',
-  success: '#3F9274',
-  failed: '#D06F69',
-  running: '#D69A45',
-  canceled: '#8A7FB0',
+  total: '#1E5F91',
+  success: '#087A55',
+  failed: '#C43D3D',
+  running: '#B86B0B',
+  canceled: '#6652A3',
 } as const;
 
 function shortDate(value: string): string {
@@ -180,6 +178,7 @@ export default function AdminDashboardPage() {
   const [openAIStatusError, setOpenAIStatusError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
   const [trendDays, setTrendDays] = useState<7 | 15 | 30>(7);
+  const [activityView, setActivityView] = useState<'tasks' | 'orders'>('tasks');
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -251,7 +250,7 @@ export default function AdminDashboardPage() {
   const successRateTrend = dayOverDayTrend(todaySuccessRate, yesterdaySuccessRate);
   const customerTrend = dayOverDayTrend(Number(data.today?.users || 0), Number(data.yesterday?.users || 0));
   const balanceConsumptionTrend = dayOverDayTrend(Number(data.today?.balanceConsumed || 0), Number(data.yesterday?.balanceConsumed || 0));
-  const pendingCount = Number(data.pending?.runningTasks || 0) + Number(data.pending?.pendingOrders || 0);
+  const runningTasks = Number(data.pending?.runningTasks || 0);
   const recentOrders = data.recentOrders || [];
   const recentTasks = data.recentTasks || [];
   const taskTrend = useMemo(() => (data.taskTrend || []).slice(-trendDays), [data.taskTrend, trendDays]);
@@ -286,33 +285,42 @@ export default function AdminDashboardPage() {
     ? upstreamDegraded ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
     : upstreamPending ? 'bg-zinc-100 text-zinc-500' : 'bg-red-50 text-red-700';
   const openAISeverity = openAIStatus?.severity || 'ok';
-  const openAIStatusTone = openAIStatusError
-    ? 'border-red-200 bg-red-50 text-red-700'
+  const openAITextTone = openAIStatusError
+    ? 'text-red-700'
     : openAISeverity === 'critical'
-      ? 'border-red-200 bg-red-50 text-red-700'
+      ? 'text-red-700'
       : openAISeverity === 'warning'
-        ? 'border-amber-200 bg-amber-50 text-amber-700'
-        : 'border-emerald-200 bg-emerald-50 text-emerald-700';
+        ? 'text-amber-700'
+        : 'text-emerald-700';
   const openAIStatusDot = openAIStatusError || openAISeverity === 'critical' ? 'bg-red-500' : openAISeverity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500';
 
-  const attention = useMemo(() => [
-    { label: '待支付充值单', value: Number(data.pending?.pendingOrders || 0), note: '等待支付结果同步', tone: 'amber' },
-    { label: '运行中 API 请求', value: Number(data.pending?.runningTasks || 0), note: '排队与上游处理中', tone: 'blue' },
-    { label: '24 小时失败', value: Number(data.pending?.recentFailedTasks || 0), note: '建议检查上游和密钥', tone: 'red' },
-  ], [data.pending]);
+  const summaryMetrics = [
+    { key: 'revenue', label: '今日实收', value: formatCNY(Number(data.today?.paidAmount || 0)), note: `累计 ${formatCNY(Number(data.revenue?.totalPaidAmount || 0))}`, trend: revenueTrend, icon: CircleDollarSign, tone: 'bg-emerald-50 text-emerald-700' },
+    { key: 'balance', label: '余额消耗', value: formatCNY(Number(data.today?.balanceConsumed || 0), 4), note: `总余额 ${formatCNY(Number(data.users?.totalBalance || 0), 4)}`, trend: balanceConsumptionTrend, icon: Wallet, tone: 'bg-amber-50 text-amber-700' },
+    { key: 'requests', label: 'API 请求', value: Number(data.today?.tasks || 0).toLocaleString('zh-CN'), note: `累计 ${Number(stats.total || 0).toLocaleString('zh-CN')} 次`, trend: requestTrend, icon: Activity, tone: 'bg-cyan-50 text-cyan-700' },
+    { key: 'success-rate', label: '请求成功率', value: todaySuccessRate === null ? '--' : `${Math.round(todaySuccessRate)}%`, note: `累计 ${totalSuccessRate === null ? '--' : `${totalSuccessRate}%`} · ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张`, trend: successRateTrend, icon: Cable, tone: todaySuccessRate !== null && todaySuccessRate < 95 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700' },
+    { key: 'customers', label: '新增客户', value: Number(data.today?.users || 0).toLocaleString('zh-CN'), note: `累计 ${Number(data.users?.total || 0).toLocaleString('zh-CN')} · 启用 ${Number(data.users?.active || 0).toLocaleString('zh-CN')}`, trend: customerTrend, icon: Users, tone: 'bg-zinc-100 text-zinc-600' },
+  ];
+  const alertItems = useMemo(() => [
+    { key: 'pending-orders', label: '待支付充值单', value: Number(data.pending?.pendingOrders || 0), dotTone: 'bg-amber-500', valueTone: 'text-amber-800' },
+    { key: 'recent-failures', label: '24 小时失败', value: Number(data.pending?.recentFailedTasks || 0), dotTone: 'bg-red-500', valueTone: 'text-red-700' },
+  ].filter((item) => item.value > 0), [data.pending]);
 
   return (
     <div className="space-y-5">
       <PageHeader title="经营概览" description="API 中转业务、订阅收入和上游运行状态。">
-        <button
-          type="button"
-          onClick={() => void refreshAll()}
-          disabled={loading || stabilityLoading}
-          className="inline-flex h-8 items-center gap-2 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-[#17201B] hover:border-[#12B76A] disabled:opacity-50"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading || stabilityLoading ? 'animate-spin' : ''}`} />
-          刷新
-        </button>
+        <div className="flex items-center gap-3">
+          <span className="hidden text-[10px] text-zinc-400 sm:inline">更新于 {lastUpdated ? formatDate(lastUpdated) : '-'}</span>
+          <button
+            type="button"
+            onClick={() => void refreshAll()}
+            disabled={loading || stabilityLoading}
+            className="inline-flex h-8 items-center gap-2 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-[#17201B] hover:border-[#12B76A] disabled:opacity-50"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading || stabilityLoading ? 'animate-spin' : ''}`} />
+            刷新
+          </button>
+        </div>
       </PageHeader>
 
       {error && !loading && (
@@ -328,11 +336,47 @@ export default function AdminDashboardPage() {
         </div>
       ) : (
         <>
+          <section aria-label="今日经营摘要" className="overflow-hidden rounded-md border border-[#DCE4DF] bg-[#DCE4DF]">
+            <div className="grid grid-cols-2 gap-px md:grid-cols-3 xl:grid-cols-5">
+              {summaryMetrics.map((metric) => {
+                const Icon = metric.icon;
+                const TrendIcon = metric.trend.type === 'positive' ? ArrowUpRight : metric.trend.type === 'negative' ? ArrowDownRight : Minus;
+                const trendTone = metric.trend.type === 'positive' ? 'text-emerald-700' : metric.trend.type === 'negative' ? 'text-red-700' : 'text-zinc-500';
+                return (
+                  <div key={metric.key} className="min-w-0 bg-white px-4 py-3.5 last:col-span-2 md:last:col-span-1">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-[10px] font-semibold text-zinc-500">{metric.label}</span>
+                      <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-md ${metric.tone}`}><Icon className="h-3.5 w-3.5" /></span>
+                    </div>
+                    <strong className="mt-2 block truncate text-xl text-[#17201B]">{metric.value}</strong>
+                    <div className="mt-2 flex min-w-0 items-center justify-between gap-2 border-t border-[#F0F3F1] pt-2">
+                      <small className="truncate text-[10px] text-zinc-400">{metric.note}</small>
+                      <span className={`inline-flex shrink-0 items-center gap-0.5 font-mono text-[10px] font-semibold ${trendTone}`} title={metric.trend.label}><TrendIcon className="h-3 w-3" />{metric.trend.value}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+
+          {alertItems.length > 0 && (
+            <section aria-label="待关注事项" className="flex flex-wrap items-center gap-x-5 gap-y-2 border-y border-[#E8D8D2] bg-[#FFFDFC] px-4 py-2.5">
+              <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-zinc-600"><TriangleAlert className="h-3.5 w-3.5 text-amber-600" />待关注</span>
+              {alertItems.map((item) => (
+                <span key={item.key} className="inline-flex items-center gap-2 text-[11px] text-zinc-500"><i className={`h-1.5 w-1.5 rounded-full ${item.dotTone}`} />{item.label}<strong className={`font-mono text-xs ${item.valueTone}`}>{item.value.toLocaleString('zh-CN')}</strong></span>
+              ))}
+            </section>
+          )}
+
+          <div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,.7fr)]">
           <section className="min-w-0 overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="task-trend-title">
             <header className="flex min-h-[54px] flex-col gap-3 border-b border-[#EDF0EE] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-2.5">
-                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-blue-50 text-[#587FA3]"><ChartNoAxesCombined className="h-4 w-4" /></span>
-                <div><h2 id="task-trend-title" className="text-sm font-semibold text-[#17201B]">任务处理趋势</h2><p className="mt-0.5 text-[11px] text-zinc-500">{taskTrend[0]?.date || '-'} 至 {taskTrend.at(-1)?.date || '-'}</p></div>
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-blue-50 text-[#1E5F91]"><ChartNoAxesCombined className="h-4 w-4" /></span>
+                <div>
+                  <div className="flex flex-wrap items-center gap-2"><h2 id="task-trend-title" className="text-sm font-semibold text-[#17201B]">任务处理趋势</h2>{runningTasks > 0 && <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">{runningTasks} 个处理中</span>}</div>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">{taskTrend[0]?.date || '-'} 至 {taskTrend.at(-1)?.date || '-'}</p>
+                </div>
               </div>
               <div className="inline-flex self-start rounded-md border border-[#DCE4DF] bg-[#F7F8F6] p-0.5 sm:self-auto" role="group" aria-label="任务趋势时间范围">
                 {[7, 15, 30].map((days) => (
@@ -340,13 +384,13 @@ export default function AdminDashboardPage() {
                 ))}
               </div>
             </header>
-            <div className="flex min-h-[45px] flex-wrap items-center gap-x-5 gap-y-2 border-b border-[#EDF0EE] px-4 py-2.5" aria-label="任务趋势汇总">
+            <div className="flex min-h-[38px] flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-[#EDF0EE] px-4 py-2" aria-label="任务趋势图例">
               {taskTrendSeries.map((item) => (
-                <span key={item.key} className="inline-flex items-center gap-2 text-[11px] text-zinc-500"><i className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />{item.label}<strong className="font-mono text-xs text-[#17201B]">{item.value.toLocaleString('zh-CN')}</strong></span>
+                <span key={item.key} className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500"><i className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />{item.label}</span>
               ))}
             </div>
             <p className="sr-only" id="task-trend-description">当前范围共 {taskTrendSummary.total} 个任务，成功 {taskTrendSummary.success} 个，失败 {taskTrendSummary.failed} 个，处理中 {taskTrendSummary.running} 个，已取消 {taskTrendSummary.canceled} 个。</p>
-            <div className="h-[280px] w-full px-1 pb-3 pt-4 sm:h-[320px] sm:px-3" aria-describedby="task-trend-description">
+            <div className="h-[220px] w-full px-1 pb-3 pt-3 sm:h-[260px] sm:px-3" aria-describedby="task-trend-description">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart accessibilityLayer data={taskTrend} margin={{ top: 6, right: 14, left: -8, bottom: 0 }}>
                   <CartesianGrid stroke="#EDF0EE" strokeDasharray="3 3" vertical={false} />
@@ -363,61 +407,37 @@ export default function AdminDashboardPage() {
             </div>
           </section>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            <StatBlock title="今日实收" value={formatCNY(Number(data.today?.paidAmount || 0))} subtext={`累计实收 ${formatCNY(Number(data.revenue?.totalPaidAmount || 0))} · ${Number(data.orders?.paid || 0).toLocaleString('zh-CN')} 笔`} trend={revenueTrend} color="green" icon={CircleDollarSign} />
-            <StatBlock title="今日余额消耗" value={formatCNY(Number(data.today?.balanceConsumed || 0), 4)} subtext={`总余额 ${formatCNY(Number(data.users?.totalBalance || 0), 4)}`} trend={balanceConsumptionTrend} color="amber" icon={Wallet} />
-            <StatBlock title="今日 API 请求" value={Number(data.today?.tasks || 0).toLocaleString('zh-CN')} subtext={`累计请求 ${Number(stats.total || 0).toLocaleString('zh-CN')} 次`} trend={requestTrend} color="cyan" icon={Activity} />
-            <StatBlock title="今日请求成功率" value={todaySuccessRate === null ? '--' : `${Math.round(todaySuccessRate)}%`} subtext={`累计成功率 ${totalSuccessRate === null ? '--' : `${totalSuccessRate}%`} · 返回 ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张`} trend={successRateTrend} color={todaySuccessRate === null ? 'neutral' : todaySuccessRate >= 95 ? 'green' : 'amber'} icon={Cable} />
-            <StatBlock title="今日新增客户" value={Number(data.today?.users || 0).toLocaleString('zh-CN')} subtext={`累计客户 ${Number(data.users?.total || 0).toLocaleString('zh-CN')} · 启用 ${Number(data.users?.active || 0).toLocaleString('zh-CN')}`} trend={customerTrend} color="neutral" icon={Users} />
-          </div>
-
-          <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="upstream-status-title">
+          <section className="flex min-w-0 flex-col overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="upstream-status-title">
             <div className={`h-1 w-full ${upstreamReachable ? upstreamDegraded ? 'bg-amber-500' : 'bg-[#3F9274]' : upstreamPending ? 'bg-zinc-300' : 'bg-[#D06F69]'}`} />
-            <header className="flex flex-col gap-3 border-b border-[#EDF0EE] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <header className="flex items-start justify-between gap-3 border-b border-[#EDF0EE] px-4 py-3">
               <div className="flex min-w-0 items-center gap-3">
-                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-md ${upstreamIconTone}`}>
-                  {upstreamReachable ? <HeartPulse className="h-4.5 w-4.5" /> : <Server className="h-4.5 w-4.5" />}
-                </span>
+                <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-md ${upstreamIconTone}`}>{upstreamReachable ? <HeartPulse className="h-4 w-4" /> : <Server className="h-4 w-4" />}</span>
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 id="upstream-status-title" className="text-sm font-semibold text-[#17201B]">上游接口运行状况</h2>
-                    {!stabilityLoading || stability ? <span className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${upstreamTone}`}>{upstreamLabel}</span> : null}
-                  </div>
-                  <p className="mt-0.5 text-[11px] text-zinc-500">
-                    {stabilityLoading && !stability ? '正在连接上游状态服务...' : stabilityError || stability?.error || `最近 ${Number(upstreamRuntime?.window_minutes || 60)} 分钟运行统计`}
-                  </p>
+                  <h2 id="upstream-status-title" className="text-sm font-semibold text-[#17201B]">运行健康</h2>
+                  <p className="mt-0.5 truncate text-[10px] text-zinc-500">{stabilityLoading && !stability ? '正在检测上游' : stabilityError || stability?.error || (upstreamCode ? `上游 HTTP ${upstreamCode}` : '暂无状态码')}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-[11px] text-zinc-400">
-                {stabilityLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-label="检测中" />}
-                <span>检测时间：{stability?.fetched_at ? formatDate(stability.fetched_at) : '-'}</span>
-              </div>
+              {stabilityLoading && !stability ? <Loader2 className="mt-1 h-4 w-4 animate-spin text-zinc-400" aria-label="检测中" /> : <span className={`shrink-0 rounded border px-2 py-0.5 text-[10px] font-semibold ${upstreamTone}`}>{upstreamLabel}</span>}
             </header>
-            <div className="grid grid-cols-2 divide-x divide-y divide-[#EDF0EE] sm:grid-cols-3 sm:divide-y-0 xl:grid-cols-6">
+            <div className="grid flex-1 grid-cols-2 gap-px bg-[#EDF0EE]">
               {[
-                ['接口状态', stabilityLoading && !stability ? '--' : upstreamReachable ? '在线' : '异常', upstreamCode ? `HTTP ${upstreamCode}` : '暂无状态码'],
-                ['近一小时成功率', stabilityLoading && !stability ? '--' : percentage(upstreamRuntime?.success_rate), `${Number(upstreamRuntime?.total || 0).toLocaleString('zh-CN')} 次请求`],
-                ['成功请求', Number(upstreamRuntime?.totals?.success || 0).toLocaleString('zh-CN'), '最近 60 分钟'],
-                ['失败请求', Number(upstreamRuntime?.totals?.failed || 0).toLocaleString('zh-CN'), `错误率 ${percentage(upstreamRuntime?.error_rate)}`],
+                ['近一小时成功率', stabilityLoading && !stability ? '--' : percentage(upstreamRuntime?.success_rate), `${Number(upstreamRuntime?.total || 0).toLocaleString('zh-CN')} 次 · ${Number(upstreamRuntime?.totals?.failed || 0).toLocaleString('zh-CN')} 失败`],
                 ['平均耗时', stabilityLoading && !stability ? '--' : durationLabel(upstreamRecent?.average_duration_secs), `成功 ${durationLabel(upstreamRecent?.average_success_duration_secs)}`],
-                ['最近任务', Number(upstreamRecent?.total || 0).toLocaleString('zh-CN'), `${Number(upstreamRecent?.success || 0)} 成功 / ${Number(upstreamRecent?.failed || 0)} 失败`],
+                ['启用上游', Number(data.system?.activeProviders || 0).toLocaleString('zh-CN'), `${Number(data.system?.disabledProviders || 0).toLocaleString('zh-CN')} 个停用`],
+                ['启用模型', Number(data.system?.activeModels || 0).toLocaleString('zh-CN'), `${Number(data.system?.disabledModels || 0).toLocaleString('zh-CN')} 个停用`],
               ].map(([label, value, note]) => (
-                <div key={label} className="min-w-0 px-4 py-3.5">
-                  <span className="block text-[11px] font-semibold text-zinc-500">{label}</span>
-                  <strong className="mt-1.5 block truncate text-base text-[#17201B]">{value}</strong>
+                <div key={label} className="min-w-0 bg-white px-4 py-3">
+                  <span className="block text-[10px] font-semibold text-zinc-500">{label}</span>
+                  <strong className="mt-1 block truncate text-base text-[#17201B]">{value}</strong>
                   <small className="mt-0.5 block truncate text-[10px] text-zinc-400">{note}</small>
                 </div>
               ))}
             </div>
-            <div className="flex flex-col gap-3 border-t border-[#EDF0EE] bg-[#FAFBFA] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="border-t border-[#EDF0EE] bg-[#FAFBFA] px-4 py-3">
               <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className={`inline-flex items-center gap-1.5 rounded border px-2 py-0.5 text-[11px] font-semibold ${openAIStatusTone}`}><i className={`h-1.5 w-1.5 rounded-full ${openAIStatusDot}`} />OpenAI Image：{openAIStatusError || openAIStatus?.statusLabel || '检测中'}</span>
-                  {openAIStatus?.latestImageIncident?.title && <span className="truncate text-[11px] font-semibold text-[#17201B]">{openAIStatus.latestImageIncident.title}</span>}
-                </div>
-                <p className="mt-1 line-clamp-2 text-[11px] text-zinc-500">{openAIStatus?.summary || '订阅 status.openai.com/feed.rss 的 Image / Image Generation 相关事件。'}</p>
+                <div className="flex items-center justify-between gap-3"><span className={`inline-flex min-w-0 items-center gap-1.5 text-[10px] font-semibold ${openAITextTone}`}><i className={`h-1.5 w-1.5 shrink-0 rounded-full ${openAIStatusDot}`} />OpenAI Image：<span className="truncate">{openAIStatusError || openAIStatus?.statusLabel || '检测中'}</span></span><span className="shrink-0 text-[9px] text-zinc-400">{openAIStatus?.fetchedAt ? formatDate(openAIStatus.fetchedAt) : '-'}</span></div>
+                {(openAISeverity !== 'ok' || openAIStatusError) && <p className="mt-1 line-clamp-2 text-[10px] text-zinc-500">{openAIStatus?.latestImageIncident?.title || openAIStatus?.summary || openAIStatusError}</p>}
               </div>
-              <span className="shrink-0 text-[11px] text-zinc-400">OAI 检测：{openAIStatus?.fetchedAt ? formatDate(openAIStatus.fetchedAt) : '-'}</span>
             </div>
             {stabilityError && (
               <div className="flex items-center gap-2 border-t border-red-100 bg-red-50 px-4 py-2.5 text-[11px] text-red-700" role="alert">
@@ -426,102 +446,65 @@ export default function AdminDashboardPage() {
               </div>
             )}
           </section>
+          </div>
 
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1.4fr)_minmax(300px,.6fr)]">
-            <section className="rounded-md border border-[#DCE4DF] bg-white">
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#DCE4DF] px-4 py-3">
-                <div>
-                  <h2 className="text-sm font-semibold text-[#17201B]">今日运行</h2>
-                  <p className="mt-0.5 text-[12px] text-zinc-500">从本地时区 00:00 开始统计</p>
+          <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="recent-activity-title">
+            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#DCE4DF] px-4 py-3">
+              <div><h2 id="recent-activity-title" className="text-sm font-semibold text-[#17201B]">最近活动</h2><p className="mt-0.5 text-[10px] text-zinc-400">仅显示最新记录</p></div>
+              <div className="inline-flex rounded-md border border-[#DCE4DF] bg-[#F7F8F6] p-0.5" role="tablist" aria-label="最近活动类型">
+                <button type="button" role="tab" aria-selected={activityView === 'tasks'} onClick={() => setActivityView('tasks')} className={`h-7 rounded px-3 text-[10px] font-semibold ${activityView === 'tasks' ? 'bg-white text-[#047857] shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>API 请求</button>
+                <button type="button" role="tab" aria-selected={activityView === 'orders'} onClick={() => setActivityView('orders')} className={`h-7 rounded px-3 text-[10px] font-semibold ${activityView === 'orders' ? 'bg-white text-[#047857] shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>充值订阅</button>
+              </div>
+            </header>
+
+            {activityView === 'tasks' ? (
+              <>
+                <div className="divide-y divide-[#EDF0EE] sm:hidden">
+                  {recentTasks.map((row) => { const status = statusView(row.status); return (
+                    <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3">
+                      <span className="min-w-0"><strong className="block truncate text-[11px]">{row.userEmail || row.userId || '-'}</strong><small className="mt-1 block truncate text-[10px] text-zinc-400">{row.modelDisplayName || row.modelName || row.modelId || '-'} · {Number(row.quantity || 0)} 张</small></span>
+                      <span className="text-right"><span className={`rounded border px-1.5 py-0.5 text-[9px] ${status.className}`}>{status.label}</span><small className="mt-1.5 block text-[9px] text-zinc-400">{formatDate(row.createdAt || '')}</small></span>
+                    </div>
+                  ); })}
+                  {!recentTasks.length && <p className="px-4 py-8 text-center text-[11px] text-zinc-400">暂无 API 请求</p>}
                 </div>
-                <span className={`rounded border px-2 py-1 text-[11px] font-semibold ${pendingCount ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-emerald-200 bg-emerald-50 text-emerald-700'}`}>
-                  {pendingCount ? `${pendingCount} 项处理中` : '队列平稳'}
-                </span>
-              </div>
-              <div className="grid grid-cols-2 divide-x divide-y divide-[#EDF0EE] sm:grid-cols-4 sm:divide-y-0">
-                {[
-                  ['API 请求', data.today?.tasks],
-                  ['运行中', data.today?.runningTasks],
-                  ['失败请求', data.today?.failedTasks],
-                  ['新增客户', data.today?.users],
-                ].map(([label, value]) => (
-                  <div key={String(label)} className="p-4">
-                    <span className="text-[11px] font-semibold text-zinc-500">{label}</span>
-                    <strong className="mt-2 block text-xl text-[#17201B]">{Number(value || 0).toLocaleString('zh-CN')}</strong>
-                  </div>
-                ))}
-              </div>
-              <div className="grid grid-cols-1 gap-3 border-t border-[#DCE4DF] bg-[#FAFBFA] p-4 sm:grid-cols-3">
-                {attention.map((item) => (
-                  <div key={item.label} className="flex items-center gap-3 rounded-md border border-[#E5E9E6] bg-white px-3 py-2.5">
-                    <span className={`h-2 w-2 rounded-full ${item.tone === 'red' ? 'bg-red-500' : item.tone === 'amber' ? 'bg-amber-500' : 'bg-blue-500'}`} />
-                    <span className="min-w-0 flex-1">
-                      <span className="block text-[11px] text-zinc-500">{item.label}</span>
-                      <strong className="block text-base text-[#17201B]">{item.value}</strong>
-                      <small className="block truncate text-[11px] text-zinc-400">{item.note}</small>
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </section>
-
-            <section className="rounded-md border border-[#DCE4DF] bg-white">
-              <div className="border-b border-[#DCE4DF] px-4 py-3">
-                <h2 className="text-sm font-semibold text-[#17201B]">资源状态</h2>
-                <p className="mt-0.5 text-[12px] text-zinc-500">接口与模型可用性</p>
-              </div>
-              <div className="divide-y divide-[#EDF0EE] px-4">
-                {[
-                  ['启用上游', data.system?.activeProviders, `${Number(data.system?.disabledProviders || 0)} 个停用`],
-                  ['启用模型', data.system?.activeModels, `${Number(data.system?.disabledModels || 0)} 个停用`],
-                  ['累计充值单', data.orders?.all, `${Number(data.orders?.paid || 0)} 笔已支付`],
-                ].map(([label, value, note]) => (
-                  <div key={String(label)} className="flex items-center justify-between gap-4 py-3 text-xs">
-                    <span className="text-zinc-600">{label}</span>
-                    <span className="text-right"><strong className="block text-[#17201B]">{Number(value || 0)}</strong><small className="text-[11px] text-zinc-400">{note}</small></span>
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center gap-2 border-t border-[#DCE4DF] bg-[#FAFBFA] px-4 py-3 text-[11px] text-zinc-500">
-                <Clock3 className="h-3.5 w-3.5" />
-                最近请求：{data.system?.lastTaskAt ? formatDate(data.system.lastTaskAt) : '暂无记录'}
-              </div>
-            </section>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-            <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white">
-              <div className="border-b border-[#DCE4DF] px-4 py-3"><h2 className="text-sm font-semibold">最近充值与订阅</h2></div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-left text-xs">
-                  <thead className="bg-[#F6F8F6] text-[11px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">类型</th><th className="px-4 py-2">金额</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
-                  <tbody className="divide-y divide-[#EDF0EE]">
-                    {recentOrders.map((row) => { const status = statusView(row.status); return (
-                      <tr key={row.id}><td className="max-w-[180px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="px-4 py-2.5">{row.orderType === 'subscription' ? '订阅' : '余额'}</td><td className="px-4 py-2.5 font-mono">{formatCNY(Number(row.amount || 0))}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[11px] ${status.className}`}>{status.label}</span></td><td className="px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
-                    ); })}
-                    {!recentOrders.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400">暂无充值记录</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-
-            <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white">
-              <div className="border-b border-[#DCE4DF] px-4 py-3"><h2 className="text-sm font-semibold">最近 API 请求</h2></div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-left text-xs">
-                  <thead className="bg-[#F6F8F6] text-[11px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">模型</th><th className="px-4 py-2">数量</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
-                  <tbody className="divide-y divide-[#EDF0EE]">
-                    {recentTasks.map((row) => { const status = statusView(row.status); return (
-                      <tr key={row.id}><td className="max-w-[160px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="max-w-[160px] truncate px-4 py-2.5">{row.modelDisplayName || row.modelName || row.modelId || '-'}</td><td className="px-4 py-2.5 font-mono">{Number(row.quantity || 0)}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[11px] ${status.className}`}>{status.label}</span></td><td className="px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
-                    ); })}
-                    {!recentTasks.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400">暂无 API 请求</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          </div>
-
-          <p className="text-right text-[11px] text-zinc-400">最后同步：{lastUpdated ? formatDate(lastUpdated) : '-'}</p>
+                <div className="hidden overflow-x-auto sm:block">
+                  <table className="w-full min-w-[640px] text-left text-xs">
+                    <thead className="bg-[#F6F8F6] text-[10px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">模型</th><th className="px-4 py-2">数量</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
+                    <tbody className="divide-y divide-[#EDF0EE]">
+                      {recentTasks.map((row) => { const status = statusView(row.status); return (
+                        <tr key={row.id}><td className="max-w-[220px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="max-w-[220px] truncate px-4 py-2.5">{row.modelDisplayName || row.modelName || row.modelId || '-'}</td><td className="px-4 py-2.5 font-mono">{Number(row.quantity || 0)}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[10px] ${status.className}`}>{status.label}</span></td><td className="whitespace-nowrap px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
+                      ); })}
+                      {!recentTasks.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400">暂无 API 请求</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="divide-y divide-[#EDF0EE] sm:hidden">
+                  {recentOrders.map((row) => { const status = statusView(row.status); return (
+                    <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3">
+                      <span className="min-w-0"><strong className="block truncate text-[11px]">{row.userEmail || row.userId || '-'}</strong><small className="mt-1 block text-[10px] text-zinc-400">{row.orderType === 'subscription' ? '订阅' : '余额'} · {formatCNY(Number(row.amount || 0))}</small></span>
+                      <span className="text-right"><span className={`rounded border px-1.5 py-0.5 text-[9px] ${status.className}`}>{status.label}</span><small className="mt-1.5 block text-[9px] text-zinc-400">{formatDate(row.createdAt || '')}</small></span>
+                    </div>
+                  ); })}
+                  {!recentOrders.length && <p className="px-4 py-8 text-center text-[11px] text-zinc-400">暂无充值记录</p>}
+                </div>
+                <div className="hidden overflow-x-auto sm:block">
+                  <table className="w-full min-w-[640px] text-left text-xs">
+                    <thead className="bg-[#F6F8F6] text-[10px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">类型</th><th className="px-4 py-2">金额</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
+                    <tbody className="divide-y divide-[#EDF0EE]">
+                      {recentOrders.map((row) => { const status = statusView(row.status); return (
+                        <tr key={row.id}><td className="max-w-[220px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="px-4 py-2.5">{row.orderType === 'subscription' ? '订阅' : '余额'}</td><td className="px-4 py-2.5 font-mono">{formatCNY(Number(row.amount || 0))}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[10px] ${status.className}`}>{status.label}</span></td><td className="whitespace-nowrap px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
+                      ); })}
+                      {!recentOrders.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400">暂无充值记录</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+          </section>
         </>
       )}
     </div>

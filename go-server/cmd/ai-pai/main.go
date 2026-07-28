@@ -16,6 +16,7 @@ import (
 	"aipi-go/internal/httpserver"
 	"aipi-go/internal/logging"
 	"aipi-go/internal/operations"
+	"aipi-go/internal/systemlogs"
 )
 
 func main() {
@@ -38,6 +39,7 @@ func main() {
 	defer stopWorkers()
 	httpserver.StartServiceNotificationWorker(workerContext, db, logger)
 	operations.StartOrderExpiryWorker(workerContext, db, logger)
+	logCleanupDone := systemlogs.StartAutoCleanupWorker(workerContext, db, logger, cfg.LogDir)
 
 	server := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
@@ -68,5 +70,10 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		logger.Error("graceful shutdown failed", "error", err)
 		os.Exit(1)
+	}
+	select {
+	case <-logCleanupDone:
+	case <-ctx.Done():
+		logger.Warn("system log cleanup worker shutdown timed out")
 	}
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronLeft, ChevronRight, Clipboard, Database, FileText, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { CalendarClock, ChevronLeft, ChevronRight, Clipboard, Database, FileText, Loader2, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
@@ -27,6 +27,11 @@ function bytes(value: number) {
   return `${(size / 1024 / 1024).toFixed(2)} MB`;
 }
 
+function normalizeRetentionDays(value: unknown) {
+  const days = Number(value);
+  return Number.isSafeInteger(days) && days >= 1 && days <= 3650 ? days : 30;
+}
+
 function categoryView(category: string) {
   if (category === 'error') return { label: '错误', className: 'border-red-200 bg-red-50 text-red-700' };
   if (category === 'api') return { label: 'API', className: 'border-blue-200 bg-blue-50 text-blue-700' };
@@ -49,6 +54,11 @@ export default function AdminLogsPage() {
   const [categoryFilter, setCategoryFilter] = useState('all');
   const [page, setPage] = useState(1);
   const [deleteCandidate, setDeleteCandidate] = useState<SystemLogFile | null>(null);
+  const [cleanupEnabled, setCleanupEnabled] = useState(false);
+  const [retentionDays, setRetentionDays] = useState(30);
+  const [cleanupSettingsLoading, setCleanupSettingsLoading] = useState(true);
+  const [cleanupSettingsSaving, setCleanupSettingsSaving] = useState(false);
+  const [cleanupSettingsError, setCleanupSettingsError] = useState('');
   const contentRef = useRef<HTMLPreElement>(null);
 
   const loadDetail = useCallback(async (name: string) => {
@@ -89,12 +99,26 @@ export default function AdminLogsPage() {
     }
   }, [loadDetail, selectedName]);
 
+  const loadCleanupSettings = useCallback(async () => {
+    setCleanupSettingsLoading(true);
+    setCleanupSettingsError('');
+    try {
+      const response = await portalApi.settings();
+      setCleanupEnabled(response.data.systemLogAutoCleanupEnabled === true);
+      setRetentionDays(normalizeRetentionDays(response.data.systemLogRetentionDays));
+    } catch (requestError) {
+      setCleanupSettingsError(requestError instanceof Error ? requestError.message : '自动清理设置加载失败');
+    } finally {
+      setCleanupSettingsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadFiles(false), 0);
+    const timer = window.setTimeout(() => void Promise.all([loadFiles(false), loadCleanupSettings()]), 0);
     return () => window.clearTimeout(timer);
     // Only the initial file selection should run on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loadCleanupSettings]);
 
   useEffect(() => {
     if (detailLoading || !detail?.content) return;
@@ -127,6 +151,7 @@ export default function AdminLogsPage() {
   }), [files]);
 
   const detailLines = useMemo(() => detail?.content.split('\n') || [], [detail?.content]);
+  const cleanupControlsDisabled = cleanupSettingsLoading || cleanupSettingsSaving || Boolean(cleanupSettingsError);
 
   const copyContent = async () => {
     if (!detail?.content) return toast.error('当前日志没有内容');
@@ -150,10 +175,35 @@ export default function AdminLogsPage() {
     }
   };
 
+  const saveCleanupSettings = async () => {
+    if (!Number.isSafeInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
+      toast.error('日志保留天数必须是 1 到 3650 的整数');
+      return;
+    }
+    setCleanupSettingsSaving(true);
+    setCleanupSettingsError('');
+    try {
+      const response = await portalApi.updateSettings({
+        systemLogAutoCleanupEnabled: cleanupEnabled,
+        systemLogRetentionDays: retentionDays,
+      });
+      const values = response.data as Record<string, unknown>;
+      setCleanupEnabled(values.systemLogAutoCleanupEnabled === true);
+      setRetentionDays(normalizeRetentionDays(values.systemLogRetentionDays));
+      toast.success(cleanupEnabled ? `自动清理已启用，日志保留 ${retentionDays} 天` : '日志自动清理已关闭');
+    } catch (requestError) {
+      const message = requestError instanceof Error ? requestError.message : '自动清理设置保存失败';
+      setCleanupSettingsError(message);
+      toast.error(message);
+    } finally {
+      setCleanupSettingsSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader title="系统日志" description="查看 Go 服务运行日志、API 调用日志和错误文件。">
-        <button type="button" onClick={() => void loadFiles()} disabled={loading || detailLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading || detailLoading ? 'animate-spin' : ''}`} />刷新</button>
+        <button type="button" onClick={() => void Promise.all([loadFiles(), loadCleanupSettings()])} disabled={loading || detailLoading || cleanupSettingsLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading || detailLoading || cleanupSettingsLoading ? 'animate-spin' : ''}`} />刷新</button>
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -164,6 +214,19 @@ export default function AdminLogsPage() {
           ['API / 调用', summary.api, '中转请求日志'],
         ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
       </div>
+
+      <section aria-label="日志自动清理" className="flex flex-col gap-3 border-y border-[#DCE4DF] bg-white px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-emerald-50 text-[#047857]"><CalendarClock className="h-4 w-4" /></span>
+          <span className="min-w-0"><strong className="block text-xs">日志自动清理</strong><small className="mt-0.5 block text-[10px] text-zinc-400">{cleanupSettingsLoading ? '正在读取清理策略' : cleanupEnabled ? `每小时检查，保留最近 ${retentionDays} 天` : '当前关闭，历史日志持续保留'}</small></span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="inline-flex h-8 items-center gap-2 rounded-md border border-[#DCE4DF] bg-[#FAFBFA] px-3 text-[11px] font-semibold text-zinc-600"><input type="checkbox" checked={cleanupEnabled} onChange={(event) => setCleanupEnabled(event.target.checked)} disabled={cleanupControlsDisabled} className="h-3.5 w-3.5 accent-[#047857]" />启用</label>
+          <label className={`flex h-8 items-center overflow-hidden rounded-md border border-[#DCE4DF] bg-white ${cleanupEnabled && !cleanupSettingsError ? '' : 'opacity-50'}`}><span className="border-r border-[#DCE4DF] bg-[#FAFBFA] px-2.5 text-[10px] text-zinc-500">保留</span><input type="number" min={1} max={3650} step={1} value={retentionDays} onChange={(event) => setRetentionDays(Number(event.target.value))} disabled={!cleanupEnabled || cleanupControlsDisabled} aria-label="日志保留天数" className="h-full w-20 border-0 px-2 text-center font-mono text-xs outline-none disabled:bg-zinc-50" /><span className="border-l border-[#DCE4DF] bg-[#FAFBFA] px-2.5 text-[10px] text-zinc-500">天</span></label>
+          <button type="button" onClick={() => void saveCleanupSettings()} disabled={cleanupControlsDisabled} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#047857] px-3 text-[11px] font-semibold text-white hover:bg-[#036B4F] disabled:opacity-50">{cleanupSettingsSaving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}保存</button>
+        </div>
+        {cleanupSettingsError && <p className="text-[10px] text-red-600 sm:basis-full">{cleanupSettingsError}</p>}
+      </section>
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void loadFiles(false)} className="font-semibold underline">重试</button></div>}
 
