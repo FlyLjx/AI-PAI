@@ -68,6 +68,10 @@ function requestParameters(log: UsageLog): Record<string, unknown> {
   };
 }
 
+function wantsBase64Response(format?: string | null): boolean {
+  return ['b64_json', 'base64', 'b64'].includes(String(format || '').trim().toLowerCase());
+}
+
 function responseParameters(log: UsageLog): Record<string, unknown> {
   if (log.responseParameters && Object.keys(log.responseParameters).length > 0) return log.responseParameters;
   const normalizedStatus = log.status.toLowerCase();
@@ -84,9 +88,14 @@ function responseParameters(log: UsageLog): Record<string, unknown> {
   if (['success', 'succeeded'].includes(normalizedStatus) && log.taskId) {
     const imageCount = Math.max(0, Number(log.imageCount || log.quantity || 0));
     const finishedAt = Date.parse(log.finishedAt || log.createdAt);
+    const asBase64 = wantsBase64Response(log.responseFormat);
     return {
       created: Number.isFinite(finishedAt) ? Math.floor(finishedAt / 1000) : 0,
-      data: Array.from({ length: imageCount }, (_, index) => ({ url: `/api/tasks/${log.taskId}/images/${index}` })),
+      data: Array.from({ length: imageCount }, (_, index) => (
+        asBase64
+          ? { b64_json: '[base64 image data omitted from logs]' }
+          : { url: `/api/tasks/${log.taskId}/images/${index}` }
+      )),
     };
   }
   return {

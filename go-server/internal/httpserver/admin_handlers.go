@@ -89,22 +89,30 @@ func (r *Router) adminSession(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) requireAdmin(req *http.Request) (*auth.TokenPayload, error) {
+	payload, _, err := r.requireAdminUser(req)
+	return payload, err
+}
+
+func (r *Router) requireAdminUser(req *http.Request) (*auth.TokenPayload, *users.User, error) {
 	token := bearerToken(req)
 	if token == "" {
-		return nil, newAppError(http.StatusUnauthorized, "请先登录后台")
+		return nil, nil, newAppError(http.StatusUnauthorized, "请先登录后台")
 	}
 	payload, err := r.tokens.ParseAdminToken(token)
 	if err != nil {
-		return nil, newAppError(http.StatusUnauthorized, "后台登录已失效，请重新登录")
+		return nil, nil, newAppError(http.StatusUnauthorized, "后台登录已失效，请重新登录")
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 5*time.Second)
 	defer cancel()
 	user, err := users.NewRepository(r.db).FindByID(ctx, payload.UserID)
-	if errors.Is(err, sql.ErrNoRows) || user == nil || user.Role != "admin" || user.Status != "active" {
-		return nil, newAppError(http.StatusForbidden, "后台权限不足")
-	}
 	if err != nil {
-		return nil, err
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, nil, newAppError(http.StatusForbidden, "后台权限不足")
+		}
+		return nil, nil, err
 	}
-	return payload, nil
+	if user == nil || user.Role != "admin" || user.Status != "active" {
+		return nil, nil, newAppError(http.StatusForbidden, "后台权限不足")
+	}
+	return payload, user, nil
 }

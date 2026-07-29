@@ -80,3 +80,61 @@ func TestAdminCanListUserCreditLogs(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAdminCreditLogsDoNotExposeLegacyAdminUUID(t *testing.T) {
+	previousDialect := database.CurrentDialect()
+	database.SetDialect("mysql")
+	defer database.SetDialect(string(previousDialect))
+
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+
+	const legacyAdminID = "9b12d5b4-e32d-4e0d-bc04-eb192f351234"
+	now := time.Now().UTC().Truncate(time.Second)
+	expectAdminBalanceUser(mock, "viewer-admin", "viewer@example.com", 0, "admin", now)
+	expectAdminBalanceUser(mock, "user-1", "user@example.com", 8.5, "user", now)
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM credit_logs WHERE user_id = \? AND type = \?`).
+		WithArgs("user-1", "manual_adjust").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`SELECT id, user_id, type, amount, balance_after, COALESCE\(remark, ''\), created_at`).
+		WithArgs("user-1", "manual_adjust", 10, 0).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "user_id", "type", "amount", "balance_after", "remark", "created_at"}).
+			AddRow("log-1", "user-1", "manual_adjust", 1.5, 8.5, "管理员 "+legacyAdminID+"：补发余额", now))
+	mock.ExpectQuery(`SELECT id, email\s+FROM users\s+WHERE id IN \(\?\)`).
+		WithArgs(legacyAdminID).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "email"}).AddRow(legacyAdminID, "operator@example.com"))
+
+	router := &Router{db: database.Wrap(rawDB), tokens: auth.NewTokenManager(config.DatabaseConfig{})}
+	token, err := router.tokens.CreateAdminToken("viewer-admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/api/users/user-1/credit-logs?type=manual_adjust&page=1&pageSize=10", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	router.userProfile(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+
+	var response struct {
+		Data []struct {
+			Remark string `json:"remark"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Data) != 1 || response.Data[0].Remark != "管理员 operator@example.com：补发余额" {
+		t.Fatalf("unexpected data: %+v", response.Data)
+	}
+	if strings.Contains(recorder.Body.String(), legacyAdminID) {
+		t.Fatalf("response exposes legacy admin UUID: %s", recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -298,7 +298,10 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		writeOpenAIError(w, status, message, errorType)
 		return
 	}
-	r.queue.EnqueueScopedWithOptions(savedTask.ID, generation.APIKeyConcurrencyScope(auth.APIKey.ID), r.dynamicAPIKeyConcurrencyLimit(auth.APIKey), generation.ProcessOptions{ImageResponseFormat: input.ResponseFormat})
+	r.queue.EnqueueScopedWithOptions(savedTask.ID, generation.APIKeyConcurrencyScope(auth.APIKey.ID), r.dynamicAPIKeyConcurrencyLimit(auth.APIKey), generation.ProcessOptions{
+		ImageResponseFormat: input.ResponseFormat,
+		ImageQuality:        input.Quality,
+	})
 	preferProxyResults := resultMode == "proxy"
 	preferBase64Results := compatWantsBase64ImageResponse(input.ResponseFormat)
 

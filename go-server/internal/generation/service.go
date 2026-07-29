@@ -23,6 +23,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 
 type ProcessOptions struct {
 	ImageResponseFormat string
+	ImageQuality        string
 }
 
 func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options ProcessOptions) error {
@@ -101,6 +102,7 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		SizeTier:              task.SizeTier,
 		Size:                  size,
 		Quantity:              task.Quantity,
+		Quality:               options.ImageQuality,
 		OutputFormat:          taskOutputFormat(task.OutputFormat, task.TransparentBackground),
 		ResponseFormat:        options.ImageResponseFormat,
 		TransparentBackground: task.TransparentBackground,

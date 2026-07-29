@@ -31,7 +31,7 @@ func TestSetCreditsUpdatesBalanceAndWritesAuditLog(t *testing.T) {
 		WithArgs(25.5, "user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO credit_logs`).
-		WithArgs(sqlmock.AnyArg(), "user-1", 15.5, 25.5, "管理员 admin-1：补发余额").
+		WithArgs(sqlmock.AnyArg(), "user-1", 15.5, 25.5, "管理员 admin@example.com：补发余额").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	mock.ExpectQuery(`SELECT .* FROM users WHERE id = \? LIMIT 1`).
@@ -41,7 +41,7 @@ func TestSetCreditsUpdatesBalanceAndWritesAuditLog(t *testing.T) {
 			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
 		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 25.5, "user", "active", now, now, now))
 
-	updated, err := NewRepository(database.Wrap(rawDB)).SetCredits(context.Background(), "user-1", 25.5, "管理员 admin-1：补发余额")
+	updated, err := NewRepository(database.Wrap(rawDB)).SetCredits(context.Background(), "user-1", 25.5, "管理员 admin@example.com：补发余额")
 	if err != nil {
 		t.Fatal(err)
 	}

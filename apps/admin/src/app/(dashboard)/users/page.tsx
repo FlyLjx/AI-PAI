@@ -62,6 +62,16 @@ function creditLogView(log: CreditLog) {
   return { label: log.type || '其他变动', tone: 'border-zinc-200 bg-zinc-50 text-zinc-600', amountTone: change < 0 ? 'text-red-600' : 'text-emerald-700', change };
 }
 
+function creditLogRemark(value?: string) {
+  const remark = value?.trim() || '-';
+  const match = /^管理员\s+([^：:]+)[：:]\s*(.*)$/u.exec(remark);
+  if (!match) return remark;
+  const actor = match[1].trim();
+  if (actor.includes('@')) return remark;
+  const detail = match[2].trim();
+  return detail ? `系统管理员：${detail}` : '系统管理员';
+}
+
 function subscriptionActive(user: PortalUser) {
   return user.subscription?.status === 'active';
 }
@@ -844,9 +854,9 @@ export default function AdminUsersPage() {
                 <>
                   <table className="hidden w-full border-collapse text-left text-[11px] sm:table">
                     <thead className="sticky top-0 z-10 bg-white text-zinc-400"><tr className="border-b border-[#EDF0EE]"><th className="px-5 py-2.5 font-semibold">类型</th><th className="px-4 py-2.5 text-right font-semibold">变动</th><th className="px-4 py-2.5 text-right font-semibold">变动后余额</th><th className="px-4 py-2.5 font-semibold">说明</th><th className="px-5 py-2.5 font-semibold">时间</th></tr></thead>
-                    <tbody>{creditLogs.map((log) => { const view = creditLogView(log); return <tr key={log.id} className="border-b border-[#F0F2F0] last:border-0 hover:bg-[#FAFBFA]"><td className="px-5 py-3"><span className={`inline-flex rounded border px-1.5 py-0.5 font-semibold ${view.tone}`}>{view.label}</span></td><td className={`px-4 py-3 text-right font-mono font-semibold ${view.amountTone}`}>{view.change > 0 ? '+' : '-'}{formatCNY(Math.abs(view.change))}</td><td className="px-4 py-3 text-right font-mono font-semibold text-zinc-700">{formatCNY(Number(log.balanceAfter || 0))}</td><td className="max-w-[210px] px-4 py-3 text-zinc-600"><span className="block truncate" title={log.remark || '-'}>{log.remark || '-'}</span></td><td className="whitespace-nowrap px-5 py-3 text-zinc-400">{formatDate(log.createdAt)}</td></tr>; })}</tbody>
+                    <tbody>{creditLogs.map((log) => { const view = creditLogView(log); const remark = creditLogRemark(log.remark); return <tr key={log.id} className="border-b border-[#F0F2F0] last:border-0 hover:bg-[#FAFBFA]"><td className="px-5 py-3"><span className={`inline-flex rounded border px-1.5 py-0.5 font-semibold ${view.tone}`}>{view.label}</span></td><td className={`px-4 py-3 text-right font-mono font-semibold ${view.amountTone}`}>{view.change > 0 ? '+' : '-'}{formatCNY(Math.abs(view.change))}</td><td className="px-4 py-3 text-right font-mono font-semibold text-zinc-700">{formatCNY(Number(log.balanceAfter || 0))}</td><td className="max-w-[210px] px-4 py-3 text-zinc-600"><span className="block truncate" title={remark}>{remark}</span></td><td className="whitespace-nowrap px-5 py-3 text-zinc-400">{formatDate(log.createdAt)}</td></tr>; })}</tbody>
                   </table>
-                  <div className="divide-y divide-[#EDF0EE] sm:hidden">{creditLogs.map((log) => { const view = creditLogView(log); return <div key={log.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${view.tone}`}>{view.label}</span><strong className={`font-mono text-xs ${view.amountTone}`}>{view.change > 0 ? '+' : '-'}{formatCNY(Math.abs(view.change))}</strong></div><p className="mt-2 truncate text-[11px] text-zinc-600">{log.remark || '-'}</p><div className="mt-2 flex items-center justify-between text-[10px] text-zinc-400"><span>余额 {formatCNY(Number(log.balanceAfter || 0))}</span><span>{formatDate(log.createdAt)}</span></div></div>; })}</div>
+                  <div className="divide-y divide-[#EDF0EE] sm:hidden">{creditLogs.map((log) => { const view = creditLogView(log); const remark = creditLogRemark(log.remark); return <div key={log.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${view.tone}`}>{view.label}</span><strong className={`font-mono text-xs ${view.amountTone}`}>{view.change > 0 ? '+' : '-'}{formatCNY(Math.abs(view.change))}</strong></div><p className="mt-2 truncate text-[11px] text-zinc-600" title={remark}>{remark}</p><div className="mt-2 flex items-center justify-between text-[10px] text-zinc-400"><span>余额 {formatCNY(Number(log.balanceAfter || 0))}</span><span>{formatDate(log.createdAt)}</span></div></div>; })}</div>
                 </>
               )}
             </div>

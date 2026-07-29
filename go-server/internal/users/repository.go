@@ -98,7 +98,14 @@ func (r *Repository) ListCreditLogs(ctx context.Context, userID string, logType 
 		item.CreatedAt = appclock.DatabaseTime(item.CreatedAt)
 		items = append(items, item)
 	}
-	return items, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+	r.resolveCreditLogAdminRemarks(ctx, items)
+	return items, total, nil
 }
 
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, error) {

@@ -21,6 +21,7 @@ type ImageRequest struct {
 	SizeTier              string
 	Size                  string
 	Quantity              int
+	Quality               string
 	OutputFormat          string
 	ResponseFormat        string
 	TransparentBackground bool

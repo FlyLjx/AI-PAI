@@ -380,8 +380,16 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 		if imageCount < 0 {
 			imageCount = 0
 		}
+		isChatCompletion := strings.HasSuffix(strings.TrimRight(strings.ToLower(strings.TrimSpace(log.Endpoint)), "/"), "/chat/completions")
+		summarizeBase64 := !isChatCompletion && usageLogWantsBase64ImageResponse(log.ResponseFormat)
 		data := make([]map[string]string, 0, imageCount)
 		for index := 0; index < imageCount; index++ {
+			if summarizeBase64 {
+				data = append(data, map[string]string{
+					"b64_json": "[base64 image data omitted from logs]",
+				})
+				continue
+			}
 			data = append(data, map[string]string{
 				"url": "/api/tasks/" + strings.TrimSpace(*log.TaskID) + "/images/" + strconv.Itoa(index),
 			})
@@ -390,7 +398,7 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 		if log.FinishedAt != nil {
 			createdAt = *log.FinishedAt
 		}
-		if strings.HasSuffix(strings.TrimRight(strings.ToLower(strings.TrimSpace(log.Endpoint)), "/"), "/chat/completions") {
+		if isChatCompletion {
 			links := make([]string, 0, len(data))
 			for _, item := range data {
 				links = append(links, "![image]("+item["url"]+")")
@@ -444,6 +452,15 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 		}
 	default:
 		return nil
+	}
+}
+
+func usageLogWantsBase64ImageResponse(format string) bool {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "b64_json", "base64", "b64":
+		return true
+	default:
+		return false
 	}
 }
 

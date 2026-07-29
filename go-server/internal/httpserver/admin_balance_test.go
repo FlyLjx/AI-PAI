@@ -36,7 +36,7 @@ func TestAdminCanSetUserBalance(t *testing.T) {
 		WithArgs(25.5, "user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectExec(`INSERT INTO credit_logs`).
-		WithArgs(sqlmock.AnyArg(), "user-1", 15.5, 25.5, "管理员 admin-1：补发余额").
+		WithArgs(sqlmock.AnyArg(), "user-1", 15.5, 25.5, "管理员 admin@example.com：补发余额").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 	expectAdminBalanceUser(mock, "user-1", "user@example.com", 25.5, "user", now)

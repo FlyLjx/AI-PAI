@@ -76,6 +76,7 @@ func TestCallImageJSONRequestsAndExtractsBase64Response(t *testing.T) {
 	service := &Service{logger: slog.Default()}
 	input := testImageRequest(server.URL)
 	input.ResponseFormat = "b64_json"
+	input.Quality = "medium"
 	result, err := service.callImageJSON(context.Background(), input, 1)
 	if err != nil {
 		t.Fatalf("callImageJSON returned error: %v", err)
@@ -83,9 +84,27 @@ func TestCallImageJSONRequestsAndExtractsBase64Response(t *testing.T) {
 	if received["response_format"] != "b64_json" {
 		t.Fatalf("response_format should request b64_json, got %#v", received["response_format"])
 	}
+	if received["quality"] != "medium" {
+		t.Fatalf("quality should preserve the requested value, got %#v", received["quality"])
+	}
 	images := ExtractImages(result)
 	if len(images) != 1 || images[0].URL != "" || images[0].B64 != imageBase64 {
 		t.Fatalf("unexpected base64 images: %#v", images)
+	}
+}
+
+func TestNormalizeUpstreamImageQuality(t *testing.T) {
+	tests := map[string]string{
+		" medium ": "medium",
+		"LOW":      "low",
+		"auto":     "auto",
+		"2k":       "high",
+		"":         "high",
+	}
+	for input, expected := range tests {
+		if actual := normalizeUpstreamImageQuality(input); actual != expected {
+			t.Fatalf("normalizeUpstreamImageQuality(%q) = %q, want %q", input, actual, expected)
+		}
 	}
 }
 

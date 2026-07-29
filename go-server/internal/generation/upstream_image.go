@@ -27,7 +27,7 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 		"prompt":          buildUpstreamPrompt(input.Prompt, input.Size, input.SizeTier, input.Model.AppendSizeToPrompt, input.TransparentBackground),
 		"size":            input.Size,
 		"n":               input.Quantity,
-		"quality":         "high",
+		"quality":         normalizeUpstreamImageQuality(input.Quality),
 		"response_format": normalizeUpstreamImageResponseFormat(input.ResponseFormat),
 	}
 	if input.OutputFormat != "" {
@@ -188,6 +188,15 @@ func normalizeUpstreamImageResponseFormat(format string) string {
 		return "b64_json"
 	}
 	return "url"
+}
+
+func normalizeUpstreamImageQuality(quality string) string {
+	switch strings.ToLower(strings.TrimSpace(quality)) {
+	case "low", "medium", "high", "auto", "standard", "hd":
+		return strings.ToLower(strings.TrimSpace(quality))
+	default:
+		return "high"
+	}
 }
 
 func wantsBase64ImageResponse(format string) bool {

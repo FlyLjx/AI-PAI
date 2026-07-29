@@ -336,7 +336,7 @@ func (r *Router) updateUserBalance(w http.ResponseWriter, req *http.Request, id 
 		writeMethodNotAllowed(w)
 		return
 	}
-	admin, err := r.requireAdmin(req)
+	_, admin, err := r.requireAdminUser(req)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -361,7 +361,11 @@ func (r *Router) updateUserBalance(w http.ResponseWriter, req *http.Request, id 
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
-	remark := "管理员 " + admin.UserID + "：" + input.Remark
+	actorLabel := "系统管理员"
+	if adminEmail := strings.TrimSpace(admin.Email); adminEmail != "" {
+		actorLabel = "管理员 " + adminEmail
+	}
+	remark := actorLabel + "：" + input.Remark
 	updated, err := users.NewRepository(r.db).SetCredits(ctx, id, *input.Balance, remark)
 	if errors.Is(err, users.ErrInvalidCredits) {
 		writeError(w, newAppError(http.StatusBadRequest, err.Error()))

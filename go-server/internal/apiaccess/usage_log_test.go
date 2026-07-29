@@ -57,6 +57,29 @@ func TestToPublicLogIncludesRequestAndSuccessResponseParameters(t *testing.T) {
 	}
 }
 
+func TestToPublicLogSummarizesBase64ImageResponse(t *testing.T) {
+	taskID := "task-base64"
+	publicLog := ToPublicLog(UsageLog{
+		TaskID:         &taskID,
+		Endpoint:       "/v1/images/generations",
+		Status:         "success",
+		ImageCount:     1,
+		ResponseFormat: "b64_json",
+		CreatedAt:      time.Now(),
+	})
+
+	data, ok := publicLog.ResponseParams["data"].([]map[string]string)
+	if !ok || len(data) != 1 {
+		t.Fatalf("unexpected response data: %#v", publicLog.ResponseParams["data"])
+	}
+	if data[0]["b64_json"] != "[base64 image data omitted from logs]" {
+		t.Fatalf("unexpected base64 summary: %#v", data[0])
+	}
+	if _, exists := data[0]["url"]; exists {
+		t.Fatalf("base64 response summary should not contain a URL: %#v", data[0])
+	}
+}
+
 func TestToPublicLogIncludesFailureResponseParameters(t *testing.T) {
 	message := "上游接口返回错误"
 	publicLog := ToPublicLog(UsageLog{
