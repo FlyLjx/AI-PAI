@@ -88,6 +88,14 @@ func customerPricingModels(items []models.Model) []models.PublicPricingModel {
 	for _, item := range unique {
 		result = append(result, models.ToPublicPricing(item))
 	}
+	sort.SliceStable(result, func(i, j int) bool {
+		leftName := strings.ToLower(strings.TrimSpace(result[i].DisplayName))
+		rightName := strings.ToLower(strings.TrimSpace(result[j].DisplayName))
+		if leftName == rightName {
+			return result[i].ID < result[j].ID
+		}
+		return leftName < rightName
+	})
 	return result
 }
 

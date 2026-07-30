@@ -40,3 +40,25 @@ func TestCustomerPricingModelsOnlyExposeCallableImageModels(t *testing.T) {
 		}
 	}
 }
+
+func TestCustomerPricingModelsSortByDisplayName(t *testing.T) {
+	active := "active"
+	now := time.Now()
+	items := []models.Model{
+		{ID: "zulu", ModelName: "upstream-z", DisplayName: "Zulu Image", Capability: "chat_image", Status: "active", ProviderStatus: &active, UpdatedAt: now},
+		{ID: "alpha", ModelName: "upstream-a", DisplayName: "alpha image", Capability: "chat_image", Status: "active", ProviderStatus: &active, UpdatedAt: now},
+		{ID: "beta", ModelName: "upstream-b", DisplayName: "Beta Image", Capability: "chat_image", Status: "active", ProviderStatus: &active, UpdatedAt: now},
+	}
+
+	result := customerPricingModels(items)
+	if len(result) != 3 {
+		t.Fatalf("pricing models = %d, want 3: %#v", len(result), result)
+	}
+	got := []string{result[0].DisplayName, result[1].DisplayName, result[2].DisplayName}
+	want := []string{"alpha image", "Beta Image", "Zulu Image"}
+	for index := range want {
+		if got[index] != want[index] {
+			t.Fatalf("pricing model order = %#v, want %#v", got, want)
+		}
+	}
+}
