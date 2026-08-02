@@ -150,6 +150,28 @@ func TestParseInvalidAdminNotificationIntervalFallsBackToDefault(t *testing.T) {
 	}
 }
 
+func TestNormalizeNotificationEmails(t *testing.T) {
+	got, err := NormalizeNotificationEmails("admin@example.com; finance@example.com\nADMIN@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "admin@example.com, finance@example.com" {
+		t.Fatalf("normalized recipients = %q", got)
+	}
+	recipients, err := ParseNotificationEmails(got)
+	if err != nil || len(recipients) != 2 || recipients[1] != "finance@example.com" {
+		t.Fatalf("parsed recipients = %#v, error = %v", recipients, err)
+	}
+}
+
+func TestNormalizeNotificationEmailsRejectsInvalidAddress(t *testing.T) {
+	for _, value := range []string{"admin", "admin@example.com, not-an-email", "Admin <admin@example.com>"} {
+		if _, err := NormalizeNotificationEmails(value); !errors.Is(err, ErrInvalidAdminNotification) {
+			t.Fatalf("value %q error = %v, want ErrInvalidAdminNotification", value, err)
+		}
+	}
+}
+
 func TestUpdateRejectsInvalidSystemLogCleanupSettings(t *testing.T) {
 	tests := []Settings{
 		{"systemLogAutoCleanupEnabled": "true"},

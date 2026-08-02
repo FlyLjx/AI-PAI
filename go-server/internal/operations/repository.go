@@ -50,6 +50,8 @@ type PageInput struct {
 	Status    string
 	UserID    string
 	OrderType string
+	StartDate string
+	EndDate   string
 }
 
 type dashboardBalanceMetrics struct {
@@ -1025,9 +1027,10 @@ func (r *Repository) AdminInviteSummary(ctx context.Context) (AdminInviteSummary
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN COALESCE(status, 'rewarded')='rewarded' THEN 1 ELSE 0 END), 0) AS rewarded,
 			COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0) AS pending,
+			COALESCE(SUM(CASE WHEN status='review' THEN 1 ELSE 0 END), 0) AS review,
 			COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END), 0) AS blocked
 		FROM user_invites
-	`).Scan(&summary.Total, &summary.Rewarded, &summary.Pending, &summary.Blocked)
+	`).Scan(&summary.Total, &summary.Rewarded, &summary.Pending, &summary.Review, &summary.Blocked)
 	return summary, err
 }
 
@@ -1046,7 +1049,7 @@ func (r *Repository) InviteSummary(ctx context.Context, userID string) (map[stri
 	}
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT
-			COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END),0),
+			COALESCE(SUM(CASE WHEN status IN ('pending','review') THEN 1 ELSE 0 END),0),
 			COALESCE(SUM(CASE WHEN status='blocked' THEN 1 ELSE 0 END),0)
 		FROM user_invites WHERE inviter_id=?
 	`, userID).Scan(&pendingCount, &blockedCount); err != nil {
@@ -1302,7 +1305,11 @@ func (r *Repository) BindInvite(ctx context.Context, input InviteBindingInput) (
 			return nil, err
 		}
 		if riskReason != "" {
-			status = "blocked"
+			if input.Risk.ManualReview {
+				status = "review"
+			} else {
+				status = "blocked"
+			}
 		}
 	}
 
@@ -1392,13 +1399,19 @@ func (r *Repository) FinalizeInviteRewards(ctx context.Context, inviteeID string
 		return nil, err
 	}
 	if riskReason != "" {
-		if _, err := tx.ExecContext(ctx, `UPDATE user_invites SET status='blocked', risk_reason=?, verified_at=NOW() WHERE id=?`, riskReason, inviteID); err != nil {
+		status := "blocked"
+		if risk.ManualReview {
+			status = "review"
+			if _, err := tx.ExecContext(ctx, `UPDATE user_invites SET status=?, risk_reason=?, verified_at=NOW() WHERE id=?`, status, riskReason, inviteID); err != nil {
+				return nil, err
+			}
+		} else if _, err := tx.ExecContext(ctx, `UPDATE user_invites SET status='blocked', risk_reason=?, verified_at=NOW() WHERE id=?`, riskReason, inviteID); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(); err != nil {
 			return nil, err
 		}
-		result.Status = "blocked"
+		result.Status = status
 		result.RiskReason = riskReason
 		return result, nil
 	}
@@ -1414,6 +1427,96 @@ func (r *Repository) FinalizeInviteRewards(ctx context.Context, inviteeID string
 		SET status='rewarded', risk_reason=NULL, verified_at=NOW(), rewarded_at=NOW()
 		WHERE id=? AND status='pending'
 	`, inviteID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	result.Status = "rewarded"
+	return result, nil
+}
+
+// ReviewInvite applies an administrator decision to an invite that was held by
+// the risk gate. Approval uses the same transaction as automatic settlement so
+// both rewards and the invite state change together and cannot be duplicated.
+func (r *Repository) ReviewInvite(ctx context.Context, inviteID string, reviewerID string, approve bool, note string) (*InviteRewardResult, error) {
+	inviteID = strings.TrimSpace(inviteID)
+	reviewerID = strings.TrimSpace(reviewerID)
+	note = strings.TrimSpace(note)
+	if inviteID == "" || reviewerID == "" {
+		return nil, errors.New("审核参数不完整")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var inviterID, inviteeID, status string
+	var inviterType, inviteeType string
+	var inviterCredits, inviteeCredits float64
+	var inviterPlanID, inviterSnapshot, inviteePlanID, inviteeSnapshot sql.NullString
+	var riskReason sql.NullString
+	err = tx.QueryRowContext(ctx, `
+		SELECT inviter_id, invitee_id, COALESCE(status, 'rewarded'),
+			COALESCE(reward_type, 'none'), reward_credits, reward_plan_id, reward_plan_snapshot,
+			COALESCE(invitee_reward_type, 'none'), invitee_reward_credits, invitee_reward_plan_id, invitee_reward_plan_snapshot,
+			risk_reason
+		FROM user_invites WHERE id=? FOR UPDATE
+	`, inviteID).Scan(
+		&inviterID, &inviteeID, &status,
+		&inviterType, &inviterCredits, &inviterPlanID, &inviterSnapshot,
+		&inviteeType, &inviteeCredits, &inviteePlanID, &inviteeSnapshot,
+		&riskReason,
+	)
+	if err == sql.ErrNoRows {
+		return nil, sql.ErrNoRows
+	}
+	if err != nil {
+		return nil, err
+	}
+	result := &InviteRewardResult{InviteID: inviteID, InviterID: inviterID, InviteeID: inviteeID, Status: status, RiskReason: riskReason.String}
+	if status == "rewarded" {
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	if !approve {
+		if note == "" {
+			note = "管理员审核驳回"
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE user_invites SET status='blocked', reviewed_at=NOW(), reviewed_by=?, review_note=? WHERE id=?`, reviewerID, note, inviteID); err != nil {
+			return nil, err
+		}
+		if err := tx.Commit(); err != nil {
+			return nil, err
+		}
+		result.Status = "blocked"
+		return result, nil
+	}
+
+	var verifiedUserID string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM users WHERE id=? AND status='active' AND email_verified_at IS NOT NULL FOR UPDATE`, inviteeID).Scan(&verifiedUserID); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, errors.New("被邀请人尚未完成邮箱验证")
+		}
+		return nil, err
+	}
+	if err := grantInviteRewardInTx(ctx, tx, inviterID, "邀请奖励：管理员审核通过", inviterType, inviterCredits, inviterPlanID.String, inviterSnapshot.String); err != nil {
+		return nil, err
+	}
+	if err := grantInviteRewardInTx(ctx, tx, inviteeID, "新人奖励：管理员审核通过", inviteeType, inviteeCredits, inviteePlanID.String, inviteeSnapshot.String); err != nil {
+		return nil, err
+	}
+	if note == "" {
+		note = "管理员审核通过"
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE user_invites
+		SET status='rewarded', verified_at=COALESCE(verified_at, NOW()), rewarded_at=NOW(), reviewed_at=NOW(), reviewed_by=?, review_note=?
+		WHERE id=? AND status<>'rewarded'
+	`, reviewerID, note, inviteID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1511,9 +1614,9 @@ func inviteRiskReason(ctx context.Context, tx *database.Tx, excludeInviteID stri
 		args   []any
 		reason string
 	}{
-		{risk.MaxPerIP24h, `SELECT COUNT(*) FROM user_invites WHERE id<>? AND invitee_ip=? AND status IN ('pending','rewarded') AND created_at>=DATE_SUB(NOW(), INTERVAL 1 DAY)`, []any{excludeInviteID, strings.TrimSpace(inviteeIP)}, "同一网络地址 24 小时内有效邀请过多"},
-		{risk.MaxPerDevice24h, `SELECT COUNT(*) FROM user_invites WHERE id<>? AND device_hash=? AND status IN ('pending','rewarded') AND created_at>=DATE_SUB(NOW(), INTERVAL 1 DAY)`, []any{excludeInviteID, strings.TrimSpace(deviceHash)}, "同一设备 24 小时内有效邀请过多"},
-		{risk.MaxPerInviter24h, `SELECT COUNT(*) FROM user_invites WHERE id<>? AND inviter_id=? AND status IN ('pending','rewarded') AND created_at>=DATE_SUB(NOW(), INTERVAL 1 DAY)`, []any{excludeInviteID, inviterID}, "邀请人 24 小时内有效邀请已达到上限"},
+		{risk.MaxPerIP24h, `SELECT COUNT(*) FROM user_invites WHERE id<>? AND invitee_ip=? AND status IN ('pending','review','rewarded') AND created_at>=DATE_SUB(NOW(), INTERVAL 1 DAY)`, []any{excludeInviteID, strings.TrimSpace(inviteeIP)}, "同一网络地址 24 小时内有效邀请过多"},
+		{risk.MaxPerDevice24h, `SELECT COUNT(*) FROM user_invites WHERE id<>? AND device_hash=? AND status IN ('pending','review','rewarded') AND created_at>=DATE_SUB(NOW(), INTERVAL 1 DAY)`, []any{excludeInviteID, strings.TrimSpace(deviceHash)}, "同一设备 24 小时内有效邀请过多"},
+		{risk.MaxPerInviter24h, `SELECT COUNT(*) FROM user_invites WHERE id<>? AND inviter_id=? AND status IN ('pending','review','rewarded') AND created_at>=DATE_SUB(NOW(), INTERVAL 1 DAY)`, []any{excludeInviteID, inviterID}, "邀请人 24 小时内有效邀请已达到上限"},
 	}
 	for _, check := range checks {
 		if check.limit <= 0 || strings.TrimSpace(fmt.Sprint(check.args[1])) == "" {
@@ -2554,6 +2657,14 @@ func buildOrderWhere(input PageInput) (string, []any) {
 	if orderType != "" && orderType != "all" {
 		where = append(where, "recharge_orders.order_type=?")
 		args = append(args, orderType)
+	}
+	if startDate := strings.TrimSpace(input.StartDate); startDate != "" {
+		where = append(where, "DATE(recharge_orders.created_at)>=?")
+		args = append(args, startDate)
+	}
+	if endDate := strings.TrimSpace(input.EndDate); endDate != "" {
+		where = append(where, "DATE(recharge_orders.created_at)<=?")
+		args = append(args, endDate)
 	}
 	if keyword := strings.ToLower(strings.TrimSpace(input.Keyword)); keyword != "" {
 		like := "%" + keyword + "%"

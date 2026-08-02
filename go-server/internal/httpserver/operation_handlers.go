@@ -234,15 +234,51 @@ func (r *Router) inviteSummary(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) inviteByID(w http.ResponseWriter, req *http.Request) {
+	payload, err := r.requireAdmin(req)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	path := strings.TrimPrefix(req.URL.Path, "/api/invites/")
+	if strings.HasSuffix(path, "/review") {
+		if req.Method != http.MethodPatch && req.Method != http.MethodPost {
+			writeMethodNotAllowed(w)
+			return
+		}
+		id := strings.TrimSuffix(path, "/review")
+		id = strings.TrimSuffix(id, "/")
+		var input struct {
+			Action string `json:"action"`
+			Note   string `json:"note"`
+		}
+		if err := decodeCompatJSON(req, &input); err != nil {
+			writeError(w, newAppError(http.StatusBadRequest, "审核参数不正确"))
+			return
+		}
+		approve := strings.EqualFold(strings.TrimSpace(input.Action), "approve")
+		if !approve && !strings.EqualFold(strings.TrimSpace(input.Action), "reject") {
+			writeError(w, newAppError(http.StatusBadRequest, "审核动作不正确"))
+			return
+		}
+		ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+		defer cancel()
+		result, err := operations.NewRepository(r.db).ReviewInvite(ctx, id, payload.UserID, approve, input.Note)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		if result != nil && result.Status == "rewarded" {
+			r.publishCurrentUser(context.Background(), result.InviterID)
+			r.publishCurrentUser(context.Background(), result.InviteeID)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": result})
+		return
+	}
 	if req.Method != http.MethodDelete {
 		writeMethodNotAllowed(w)
 		return
 	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	id := strings.TrimPrefix(req.URL.Path, "/api/invites/")
+	id := strings.TrimSuffix(path, "/")
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	result, err := operations.NewRepository(r.db).DeleteInvite(ctx, id)
@@ -652,6 +688,13 @@ func (r *Router) rechargeOrders(w http.ResponseWriter, req *http.Request) {
 	defer cancel()
 	input := operationPage(req)
 	input.OrderType = strings.TrimSpace(req.URL.Query().Get("orderType"))
+	startDate, endDate, err := orderDateRange(req)
+	if err != nil {
+		writeError(w, newAppError(http.StatusBadRequest, err.Error()))
+		return
+	}
+	input.StartDate = startDate
+	input.EndDate = endDate
 	repo := operations.NewRepository(r.db)
 	items, total, err := repo.Orders(ctx, input)
 	if err != nil {
@@ -666,6 +709,38 @@ func (r *Router) rechargeOrders(w http.ResponseWriter, req *http.Request) {
 	response := paginated(items, total, req)
 	response["summary"] = summary
 	writeJSON(w, http.StatusOK, response)
+}
+
+func orderDateRange(req *http.Request) (string, string, error) {
+	startValue := strings.TrimSpace(req.URL.Query().Get("startDate"))
+	endValue := strings.TrimSpace(req.URL.Query().Get("endDate"))
+	if startValue == "" && endValue == "" {
+		return "", "", nil
+	}
+	if startValue == "" || endValue == "" {
+		return "", "", errors.New("开始日期和结束日期需要同时填写")
+	}
+	location := time.Local
+	start, err := time.ParseInLocation("2006-01-02", startValue, location)
+	if err != nil {
+		return "", "", errors.New("开始日期格式不正确")
+	}
+	end, err := time.ParseInLocation("2006-01-02", endValue, location)
+	if err != nil {
+		return "", "", errors.New("结束日期格式不正确")
+	}
+	today := time.Now().In(location)
+	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, location)
+	if end.After(today) {
+		return "", "", errors.New("结束日期不能晚于今天")
+	}
+	if start.After(end) {
+		return "", "", errors.New("开始日期不能晚于结束日期")
+	}
+	if int(end.Sub(start).Hours()/24)+1 > 366 {
+		return "", "", errors.New("单次最多查询 366 天数据")
+	}
+	return start.Format("2006-01-02"), end.Format("2006-01-02"), nil
 }
 
 func (r *Router) rechargeHistory(w http.ResponseWriter, req *http.Request) {

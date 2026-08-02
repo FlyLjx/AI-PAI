@@ -145,6 +145,7 @@ export type AdminInviteSummary = {
   total: number;
   rewarded: number;
   pending: number;
+  review: number;
   blocked: number;
 };
 
@@ -635,7 +636,7 @@ export const portalApi = {
   createPlan: (input: Partial<Plan>) => api<Plan>('/api/subscriptions/plans', { method: 'POST', body: JSON.stringify(input) }),
   updatePlan: (id: string, input: Partial<Plan>) => api<Plan>(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deletePlan: (id: string) => api(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  recharges: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; orderType?: string } = {}) => api<RechargeOrder[], RechargeSummary>(`/api/recharge/orders${query(input)}`),
+  recharges: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; orderType?: string; startDate?: string; endDate?: string } = {}) => api<RechargeOrder[], RechargeSummary>(`/api/recharge/orders${query(input)}`),
   adminKeys: () => api<{ items: APIKey[]; stats: Record<string, number>; dynamicConcurrency: DynamicConcurrencyConfig }>('/api/admin/api-access/keys'),
   updateAdminKey: (id: string, input: { status?: string; concurrencyLimit?: number }) => api<APIKey>(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
@@ -653,6 +654,7 @@ export const portalApi = {
   deleteAnnouncement: (id: string) => api(`/api/announcements/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   requestMonitor: (input: { range?: RequestMonitorRange; page?: number; pageSize?: number; keyword?: string; method?: string; status?: string } = {}) => api<RequestMonitorSnapshot>(`/api/admin/request-monitor${query(input)}`),
   adminInvites: (page = 1, pageSize = 30) => api<AdminInviteRecord[], AdminInviteSummary>(`/api/invites${query({ page, pageSize })}`),
+  reviewInvite: (id: string, action: 'approve' | 'reject', note = '') => api(`/api/invites/${encodeURIComponent(id)}/review`, { method: 'PATCH', body: JSON.stringify({ action, note }) }),
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),
   settings: () => api<Record<string, unknown>>('/api/settings'),
   updateSettings: (input: Record<string, unknown>) => api('/api/settings', { method: 'PATCH', body: JSON.stringify(input) }),

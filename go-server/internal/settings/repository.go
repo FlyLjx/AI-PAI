@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/mail"
 	"strconv"
+	"strings"
 
 	"aipi-go/internal/database"
 )
@@ -89,6 +91,13 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 			}
 			value = number
 		}
+		if key == "adminNotificationEmails" {
+			normalized, err := NormalizeNotificationEmails(value)
+			if err != nil {
+				return nil, ErrInvalidAdminNotification
+			}
+			value = normalized
+		}
 		if key == "adminRechargeNotificationEnabled" || key == "adminUpstreamNotificationEnabled" || key == "adminOpenAIStatusNotificationEnabled" || key == "upstreamMaintenanceEnabled" {
 			if _, ok := value.(bool); !ok {
 				return nil, ErrInvalidAdminNotification
@@ -126,7 +135,7 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 			}
 			value = number
 		}
-		if key == "inviteRechargeRebateEnabled" || key == "inviteRebateIncludeSubscriptions" {
+		if key == "inviteRechargeRebateEnabled" || key == "inviteRebateIncludeSubscriptions" || key == "inviteRiskEnabled" || key == "inviteRiskManualReview" || key == "inviteRiskBlockSameIP" || key == "inviteRiskBlockSameDevice" {
 			if _, ok := value.(bool); !ok {
 				return nil, ErrInvalidInviteSettings
 			}
@@ -178,6 +187,52 @@ func numericSettingValue(value any) (float64, bool) {
 	}
 }
 
+// NormalizeNotificationEmails accepts comma, semicolon, or newline separated
+// addresses and returns a de-duplicated value suitable for system_settings.
+func NormalizeNotificationEmails(value any) (string, error) {
+	raw, ok := value.(string)
+	if !ok {
+		return "", ErrInvalidAdminNotification
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	})
+	seen := make(map[string]struct{}, len(parts))
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		address := strings.TrimSpace(part)
+		if address == "" {
+			continue
+		}
+		parsed, err := mail.ParseAddress(address)
+		if err != nil || parsed.Address != address || !strings.Contains(parsed.Address, "@") {
+			return "", ErrInvalidAdminNotification
+		}
+		key := strings.ToLower(parsed.Address)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, parsed.Address)
+		if len(result) > 20 {
+			return "", ErrInvalidAdminNotification
+		}
+	}
+	return strings.Join(result, ", "), nil
+}
+
+// ParseNotificationEmails validates and expands the stored recipient list.
+func ParseNotificationEmails(value string) ([]string, error) {
+	normalized, err := NormalizeNotificationEmails(value)
+	if err != nil {
+		return nil, err
+	}
+	if normalized == "" {
+		return nil, nil
+	}
+	return strings.Split(normalized, ", "), nil
+}
+
 func parseValue(key string, value string) any {
 	if _, ok := Defaults[key].(bool); ok {
 		return value == "true" || value == "1"
@@ -212,6 +267,12 @@ func parseValue(key string, value string) any {
 		return number
 	}
 	if key == "dynamicConcurrencyWindowUnit" && value != "minute" && value != "hour" {
+		return Defaults[key]
+	}
+	if key == "adminNotificationEmails" {
+		if normalized, err := NormalizeNotificationEmails(value); err == nil {
+			return normalized
+		}
 		return Defaults[key]
 	}
 	return value

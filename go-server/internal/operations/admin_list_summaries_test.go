@@ -82,13 +82,13 @@ func TestAdminInviteSummaryUsesAllRowsWithoutPagination(t *testing.T) {
 	}
 	defer rawDB.Close()
 
-	mock.ExpectQuery(`(?s)SELECT\s+COUNT\(\*\) AS total,.*AS rewarded,.*AS pending,.*AS blocked.*FROM user_invites`).
-		WillReturnRows(sqlmock.NewRows([]string{"total", "rewarded", "pending", "blocked"}).AddRow(70, 51, 12, 7))
+	mock.ExpectQuery(`(?s)SELECT\s+COUNT\(\*\) AS total,.*AS rewarded,.*AS pending,.*AS review,.*AS blocked.*FROM user_invites`).
+		WillReturnRows(sqlmock.NewRows([]string{"total", "rewarded", "pending", "review", "blocked"}).AddRow(70, 51, 12, 4, 7))
 	summary, err := NewRepository(database.Wrap(rawDB)).AdminInviteSummary(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if summary.Total != 70 || summary.Rewarded != 51 || summary.Pending != 12 || summary.Blocked != 7 {
+	if summary.Total != 70 || summary.Rewarded != 51 || summary.Pending != 12 || summary.Review != 4 || summary.Blocked != 7 {
 		t.Fatalf("unexpected invite summary: %+v", summary)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

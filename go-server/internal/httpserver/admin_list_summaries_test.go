@@ -104,8 +104,8 @@ func TestInvitesReturnsFullSummary(t *testing.T) {
 	mock.ExpectQuery(`(?s)SELECT user_invites\.id,.*FROM user_invites.*ORDER BY user_invites\.created_at DESC LIMIT \? OFFSET \?`).
 		WithArgs(30, 30).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	mock.ExpectQuery(`(?s)SELECT\s+COUNT\(\*\) AS total,.*AS rewarded,.*AS pending,.*AS blocked.*FROM user_invites`).
-		WillReturnRows(sqlmock.NewRows([]string{"total", "rewarded", "pending", "blocked"}).AddRow(70, 51, 12, 7))
+	mock.ExpectQuery(`(?s)SELECT\s+COUNT\(\*\) AS total,.*AS rewarded,.*AS pending,.*AS review,.*AS blocked.*FROM user_invites`).
+		WillReturnRows(sqlmock.NewRows([]string{"total", "rewarded", "pending", "review", "blocked"}).AddRow(70, 51, 12, 4, 7))
 
 	router := &Router{db: database.Wrap(rawDB), tokens: auth.NewTokenManager(config.DatabaseConfig{})}
 	token, err := router.tokens.CreateAdminToken("admin-1")
@@ -129,13 +129,14 @@ func TestInvitesReturnsFullSummary(t *testing.T) {
 			Total    int `json:"total"`
 			Rewarded int `json:"rewarded"`
 			Pending  int `json:"pending"`
+			Review   int `json:"review"`
 			Blocked  int `json:"blocked"`
 		} `json:"summary"`
 	}
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Pagination.Total != 70 || response.Summary.Total != 70 || response.Summary.Rewarded != 51 || response.Summary.Pending != 12 || response.Summary.Blocked != 7 {
+	if response.Pagination.Total != 70 || response.Summary.Total != 70 || response.Summary.Rewarded != 51 || response.Summary.Pending != 12 || response.Summary.Review != 4 || response.Summary.Blocked != 7 {
 		t.Fatalf("unexpected invite response: pagination=%+v summary=%+v", response.Pagination, response.Summary)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

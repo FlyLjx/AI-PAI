@@ -108,6 +108,7 @@ type InviteRewardSpec struct {
 
 type InviteRiskLimits struct {
 	Enabled          bool
+	ManualReview     bool
 	BlockSameIP      bool
 	BlockSameDevice  bool
 	MaxPerIP24h      int
@@ -239,6 +240,7 @@ type AdminInviteSummary struct {
 	Total    int `json:"total"`
 	Rewarded int `json:"rewarded"`
 	Pending  int `json:"pending"`
+	Review   int `json:"review"`
 	Blocked  int `json:"blocked"`
 }
 

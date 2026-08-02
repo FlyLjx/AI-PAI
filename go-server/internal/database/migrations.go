@@ -106,6 +106,15 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "user_invites", "rewarded_at", "TIMESTAMP NULL", "verified_at"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "reviewed_at", "TIMESTAMP NULL", "rewarded_at"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "reviewed_by", "VARCHAR(36) NULL", "reviewed_at"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "user_invites", "review_note", "VARCHAR(255) NULL", "reviewed_by"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "subscription_lottery_prizes", "prize_type", "VARCHAR(20) NOT NULL DEFAULT 'subscription'", "name"); err != nil {
 		return err
 	}
@@ -682,6 +691,9 @@ func schemaBootstrapStatements() []string {
 				invitee_ip VARCHAR(64) NULL,
 				verified_at TIMESTAMP NULL,
 				rewarded_at TIMESTAMP NULL,
+				reviewed_at TIMESTAMP NULL,
+				reviewed_by VARCHAR(36) NULL,
+				review_note VARCHAR(255) NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
 			`CREATE TABLE IF NOT EXISTS invite_rebate_records (

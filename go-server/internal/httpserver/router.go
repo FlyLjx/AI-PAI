@@ -134,6 +134,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/settings/test-email", r.testSettingEndpoint)
 	r.mux.HandleFunc("/api/settings", r.settings)
 	r.mux.HandleFunc("/api/invites/summary", r.inviteSummary)
+	r.mux.HandleFunc("/api/invites/", r.inviteByID)
 	r.mux.HandleFunc("/api/invites", r.invites)
 	r.mux.HandleFunc("/api/account-pool/accounts", r.accountPoolAccounts)
 	r.mux.HandleFunc("/v1/models", r.compatModels)

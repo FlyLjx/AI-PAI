@@ -33,6 +33,7 @@ type SettingsForm = {
   inviteRechargeRebatePercent: number;
   inviteRebateIncludeSubscriptions: boolean;
   inviteRiskEnabled: boolean;
+  inviteRiskManualReview: boolean;
   inviteRiskBlockSameIP: boolean;
   inviteRiskBlockSameDevice: boolean;
   inviteRiskMaxPerIP24h: number;
@@ -53,6 +54,7 @@ type SettingsForm = {
   emailUser: string;
   emailFromName: string;
   emailFromAddress: string;
+  adminNotificationEmails: string;
   adminRechargeNotificationEnabled: boolean;
   adminUpstreamNotificationEnabled: boolean;
   adminOpenAIStatusNotificationEnabled: boolean;
@@ -84,6 +86,7 @@ const emptySettings: SettingsForm = {
   inviteRechargeRebatePercent: 5,
   inviteRebateIncludeSubscriptions: false,
   inviteRiskEnabled: true,
+  inviteRiskManualReview: true,
   inviteRiskBlockSameIP: true,
   inviteRiskBlockSameDevice: true,
   inviteRiskMaxPerIP24h: 2,
@@ -104,6 +107,7 @@ const emptySettings: SettingsForm = {
   emailUser: '',
   emailFromName: 'AI-PAI',
   emailFromAddress: '',
+  adminNotificationEmails: '',
   adminRechargeNotificationEnabled: true,
   adminUpstreamNotificationEnabled: true,
   adminOpenAIStatusNotificationEnabled: true,
@@ -152,6 +156,7 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     inviteRechargeRebatePercent: Number(data.inviteRechargeRebatePercent || 5),
     inviteRebateIncludeSubscriptions: Boolean(data.inviteRebateIncludeSubscriptions),
     inviteRiskEnabled: data.inviteRiskEnabled !== false,
+    inviteRiskManualReview: data.inviteRiskManualReview !== false,
     inviteRiskBlockSameIP: data.inviteRiskBlockSameIP !== false,
     inviteRiskBlockSameDevice: data.inviteRiskBlockSameDevice !== false,
     inviteRiskMaxPerIP24h: positiveInteger(data.inviteRiskMaxPerIP24h, 2),
@@ -172,6 +177,7 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     emailUser: String(data.emailUser || ''),
     emailFromName: String(data.emailFromName || data.siteName || 'AI-PAI'),
     emailFromAddress: String(data.emailFromAddress || ''),
+    adminNotificationEmails: String(data.adminNotificationEmails || ''),
     adminRechargeNotificationEnabled: data.adminRechargeNotificationEnabled !== false,
     adminUpstreamNotificationEnabled: data.adminUpstreamNotificationEnabled !== false,
     adminOpenAIStatusNotificationEnabled: data.adminOpenAIStatusNotificationEnabled !== false,
@@ -252,6 +258,7 @@ export default function AdminSettingsPage() {
         emailUser: form.emailUser.trim(),
         emailFromName: form.emailFromName.trim(),
         emailFromAddress: form.emailFromAddress.trim(),
+        adminNotificationEmails: form.adminNotificationEmails.trim(),
       };
       if (emailPassword) input.emailPassword = emailPassword;
       if (alipayPrivateKey) input.alipayPrivateKey = alipayPrivateKey;
@@ -342,13 +349,14 @@ export default function AdminSettingsPage() {
                 <p className="mt-2 text-[10px] text-zinc-400">返利余额 = 实付金额 × 充值比例 × 返利比例；每个支付订单只结算一次。</p>
               </div>
               <div className="border-t border-[#EDF0EE] pt-4">
-                <div className="mb-3 flex items-center justify-between gap-3"><span className="flex items-center gap-2"><ShieldAlert className="h-4 w-4 text-[#B42318]" /><span><strong className="block text-[11px]">邀请风控</strong><small className="text-[10px] text-zinc-400">异常邀请保留审计记录但不发奖</small></span></span><label className="flex items-center gap-2 text-[11px] text-zinc-500"><input type="checkbox" checked={form.inviteRiskEnabled} onChange={(event) => updateField('inviteRiskEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />启用</label></div>
-                <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-5 ${form.inviteRiskEnabled ? '' : 'opacity-50'}`}>
+                <div className="mb-3 flex items-center justify-between gap-3"><span className="flex items-center gap-2"><ShieldAlert className="h-4 w-4 text-[#B42318]" /><span><strong className="block text-[11px]">邀请风控</strong><small className="text-[10px] text-zinc-400">风险邀请先进入人工审核，审核通过后发放</small></span></span><label className="flex items-center gap-2 text-[11px] text-zinc-500"><input type="checkbox" checked={form.inviteRiskEnabled} onChange={(event) => updateField('inviteRiskEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />启用</label></div>
+                <div className={`grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-6 ${form.inviteRiskEnabled ? '' : 'opacity-50'}`}>
                   <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">单 IP / 24 小时</span><input disabled={!form.inviteRiskEnabled} min={1} type="number" value={form.inviteRiskMaxPerIP24h} onChange={(event) => updateField('inviteRiskMaxPerIP24h', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
                   <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">单设备 / 24 小时</span><input disabled={!form.inviteRiskEnabled} min={1} type="number" value={form.inviteRiskMaxPerDevice24h} onChange={(event) => updateField('inviteRiskMaxPerDevice24h', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
                   <label><span className="mb-1 block text-[10px] font-semibold text-zinc-500">单邀请人 / 24 小时</span><input disabled={!form.inviteRiskEnabled} min={1} type="number" value={form.inviteRiskMaxPerInviter24h} onChange={(event) => updateField('inviteRiskMaxPerInviter24h', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
                   <label className="flex items-center gap-2 rounded-md border border-[#DCE4DF] px-3 text-[10px] text-zinc-600"><input disabled={!form.inviteRiskEnabled} type="checkbox" checked={form.inviteRiskBlockSameIP} onChange={(event) => updateField('inviteRiskBlockSameIP', event.target.checked)} className="h-3.5 w-3.5 accent-[#047857]" />拦截同 IP</label>
                   <label className="flex items-center gap-2 rounded-md border border-[#DCE4DF] px-3 text-[10px] text-zinc-600"><input disabled={!form.inviteRiskEnabled} type="checkbox" checked={form.inviteRiskBlockSameDevice} onChange={(event) => updateField('inviteRiskBlockSameDevice', event.target.checked)} className="h-3.5 w-3.5 accent-[#047857]" />拦截同设备</label>
+                  <label className="flex items-center gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 text-[10px] text-amber-800"><input disabled={!form.inviteRiskEnabled} type="checkbox" checked={form.inviteRiskManualReview} onChange={(event) => updateField('inviteRiskManualReview', event.target.checked)} className="h-3.5 w-3.5 accent-[#D97706]" />风险进入人工审核</label>
                 </div>
               </div>
               <div className="border-t border-[#EDF0EE] pt-4">
@@ -402,7 +410,8 @@ export default function AdminSettingsPage() {
               </div>
               <label className="flex items-center gap-2 text-[11px] text-zinc-500"><input type="checkbox" checked={form.emailSecure} onChange={(event) => updateField('emailSecure', event.target.checked)} className="h-3.5 w-3.5 accent-[#047857]" />使用 SSL/TLS（465 端口通常开启）</label>
               <div className="space-y-2 border-t border-[#EDF0EE] pt-4">
-                <div><strong className="block text-[11px]">管理员邮件通知</strong><small className="text-[10px] text-zinc-400">发送给所有启用中的管理员账号邮箱</small></div>
+                <div><strong className="block text-[11px]">管理员邮件通知</strong><small className="text-[10px] text-zinc-400">可指定固定接收地址；留空时发送给所有启用中的管理员账号邮箱</small></div>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">管理员接收邮箱</span><textarea rows={2} value={form.adminNotificationEmails} onChange={(event) => updateField('adminNotificationEmails', event.target.value)} placeholder="admin@example.com, finance@example.com\n支持逗号、分号或换行分隔" className="w-full resize-y rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-[11px] leading-5" /></label>
                 <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">充值成功通知</strong><small className="text-[10px] text-zinc-400">余额充值或订阅购买到账时发送</small></span><input type="checkbox" checked={form.adminRechargeNotificationEnabled} onChange={(event) => updateField('adminRechargeNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
                 <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">上游状态通知</strong><small className="text-[10px] text-zinc-400">异常与恢复时发送，持续异常 6 小时内不重复</small></span><input type="checkbox" checked={form.adminUpstreamNotificationEnabled} onChange={(event) => updateField('adminUpstreamNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
                 <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">OpenAI Image 订阅</strong><small className="text-[10px] text-zinc-400">订阅 status.openai.com 的图片相关异常与恢复</small></span><input type="checkbox" checked={form.adminOpenAIStatusNotificationEnabled} onChange={(event) => updateField('adminOpenAIStatusNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>

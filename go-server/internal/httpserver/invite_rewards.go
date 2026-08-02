@@ -41,6 +41,7 @@ func inviteProgramConfigFromSettings(values settings.Settings) inviteProgramConf
 		},
 		Risk: operations.InviteRiskLimits{
 			Enabled:          anyBool(values["inviteRiskEnabled"]),
+			ManualReview:     anyBool(values["inviteRiskManualReview"]),
 			BlockSameIP:      anyBool(values["inviteRiskBlockSameIP"]),
 			BlockSameDevice:  anyBool(values["inviteRiskBlockSameDevice"]),
 			MaxPerIP24h:      positiveSettingInt(values["inviteRiskMaxPerIP24h"], 2),

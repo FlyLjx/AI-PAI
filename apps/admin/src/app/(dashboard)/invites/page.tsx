@@ -8,8 +8,10 @@ import {
   Clock3,
   Gift,
   Loader2,
+  MessageSquareText,
   RefreshCw,
   ShieldAlert,
+  ShieldCheck,
   UserPlus,
   XCircle,
 } from 'lucide-react';
@@ -17,12 +19,15 @@ import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import { formatCNY, formatDate } from '@/lib/common/utils';
 import { portalApi, type AdminInviteRecord, type AdminInviteSummary } from '@/lib/admin-api';
+import { toast } from 'sonner';
 
 const PAGE_SIZE = 30;
+type ReviewAction = 'approve' | 'reject';
 
 function statusView(status: string) {
   if (status === 'rewarded') return { label: '已发放', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', icon: CheckCircle2 };
   if (status === 'blocked') return { label: '已拦截', className: 'border-red-200 bg-red-50 text-red-700', icon: XCircle };
+  if (status === 'review') return { label: '待人工审核', className: 'border-amber-200 bg-amber-50 text-amber-800', icon: ShieldAlert };
   return { label: '待验证', className: 'border-amber-200 bg-amber-50 text-amber-700', icon: Clock3 };
 }
 
@@ -75,7 +80,10 @@ export default function AdminInvitesPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [summary, setSummary] = useState<AdminInviteSummary>({ total: 0, rewarded: 0, pending: 0, blocked: 0 });
+  const [reviewingId, setReviewingId] = useState('');
+  const [reviewDialog, setReviewDialog] = useState<{ item: AdminInviteRecord; action: ReviewAction } | null>(null);
+  const [reviewNote, setReviewNote] = useState('');
+  const [summary, setSummary] = useState<AdminInviteSummary>({ total: 0, rewarded: 0, pending: 0, review: 0, blocked: 0 });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -85,11 +93,12 @@ export default function AdminInvitesPage() {
       setItems(response.data || []);
       const responseTotal = Number(response.pagination?.total ?? response.summary?.total ?? 0);
       setTotal(responseTotal);
-      setSummary(response.summary || {
-        total: responseTotal,
-        rewarded: response.data.filter((item) => item.status === 'rewarded').length,
-        pending: response.data.filter((item) => item.status === 'pending').length,
-        blocked: response.data.filter((item) => item.status === 'blocked').length,
+      setSummary({
+        total: Number(response.summary?.total ?? responseTotal),
+        rewarded: Number(response.summary?.rewarded ?? response.data.filter((item) => item.status === 'rewarded').length),
+        pending: Number(response.summary?.pending ?? response.data.filter((item) => item.status === 'pending').length),
+        review: Number(response.summary?.review ?? response.data.filter((item) => item.status === 'review').length),
+        blocked: Number(response.summary?.blocked ?? response.data.filter((item) => item.status === 'blocked').length),
       });
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : '邀请记录加载失败');
@@ -97,6 +106,39 @@ export default function AdminInvitesPage() {
       setLoading(false);
     }
   }, [page]);
+
+  const openReviewDialog = (item: AdminInviteRecord, action: ReviewAction) => {
+    setReviewDialog({ item, action });
+    setReviewNote(action === 'approve' ? '核验通过，允许发放邀请奖励' : '');
+  };
+
+  const closeReviewDialog = () => {
+    if (reviewingId) return;
+    setReviewDialog(null);
+    setReviewNote('');
+  };
+
+  const review = async () => {
+    if (!reviewDialog) return;
+    const { item, action } = reviewDialog;
+    const note = reviewNote.trim();
+    if (action === 'reject' && !note) {
+      toast.error('驳回时需要填写原因');
+      return;
+    }
+    setReviewingId(item.id);
+    try {
+      await portalApi.reviewInvite(item.id, action, note.trim());
+      toast.success(action === 'approve' ? '审核通过，奖励已发放' : '已驳回并拦截奖励');
+      setReviewDialog(null);
+      setReviewNote('');
+      await load();
+    } catch (reviewError) {
+      toast.error(reviewError instanceof Error ? reviewError.message : '审核操作失败');
+    } finally {
+      setReviewingId('');
+    }
+  };
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -107,6 +149,7 @@ export default function AdminInvitesPage() {
   const metrics = [
     { label: '全部记录', value: summary.total, icon: Gift, tone: 'bg-zinc-100 text-zinc-600' },
     { label: '已发放', value: summary.rewarded, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
+    { label: '待人工审核', value: summary.review, icon: ShieldAlert, tone: 'bg-amber-50 text-amber-800' },
     { label: '待验证', value: summary.pending, icon: Clock3, tone: 'bg-amber-50 text-amber-700' },
     { label: '已拦截', value: summary.blocked, icon: ShieldAlert, tone: 'bg-red-50 text-red-700' },
   ];
@@ -119,7 +162,7 @@ export default function AdminInvitesPage() {
         </button>
       </PageHeader>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {metrics.map((metric) => {
           const Icon = metric.icon;
           return (
@@ -137,7 +180,7 @@ export default function AdminInvitesPage() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1320px] text-left text-xs">
             <thead className="bg-[#F7F8F6] text-[10px] text-zinc-500">
-              <tr><th className="px-4 py-3">邀请人</th><th className="px-4 py-3">被邀请人</th><th className="px-4 py-3">邀请人奖励</th><th className="px-4 py-3">新用户奖励</th><th className="px-4 py-3">充值返利</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">邀请人IP</th><th className="px-4 py-3">被邀请人IP</th><th className="px-4 py-3">创建时间</th></tr>
+              <tr><th className="px-4 py-3">邀请人</th><th className="px-4 py-3">被邀请人</th><th className="px-4 py-3">邀请人奖励</th><th className="px-4 py-3">新用户奖励</th><th className="px-4 py-3">充值返利</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">邀请人IP</th><th className="px-4 py-3">被邀请人IP</th><th className="px-4 py-3">创建时间</th><th className="px-4 py-3">审核</th></tr>
             </thead>
             <tbody className="divide-y divide-[#EDF0EE]">
               {items.map((item) => {
@@ -154,10 +197,11 @@ export default function AdminInvitesPage() {
                     <td className="px-4 py-3"><IPEvidenceCell record={item} side="inviter" /></td>
                     <td className="px-4 py-3"><IPEvidenceCell record={item} side="invitee" /></td>
                     <td className="whitespace-nowrap px-4 py-3 text-[10px] text-zinc-500">{formatDate(item.rewardedAt || item.createdAt)}</td>
+                    <td className="px-4 py-3"><div className="flex min-w-[150px] gap-1.5">{item.status !== 'rewarded' && <><button type="button" disabled={reviewingId === item.id} onClick={() => openReviewDialog(item, 'approve')} className="rounded border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-semibold text-emerald-700 transition-colors hover:border-emerald-300 hover:bg-emerald-100 disabled:opacity-50">{reviewingId === item.id ? '处理中' : '通过发放'}</button><button type="button" disabled={reviewingId === item.id} onClick={() => openReviewDialog(item, 'reject')} className="rounded border border-red-200 bg-red-50 px-2 py-1 text-[10px] font-semibold text-red-700 transition-colors hover:border-red-300 hover:bg-red-100 disabled:opacity-50">驳回</button></>}</div></td>
                   </tr>
                 );
               })}
-              {!loading && !items.length && <tr><td colSpan={9} className="px-4 py-14 text-center text-zinc-400"><UserPlus className="mx-auto mb-2 h-6 w-6" />暂无邀请记录</td></tr>}
+              {!loading && !items.length && <tr><td colSpan={10} className="px-4 py-14 text-center text-zinc-400"><UserPlus className="mx-auto mb-2 h-6 w-6" />暂无邀请记录</td></tr>}
             </tbody>
           </table>
         </div>
@@ -171,6 +215,50 @@ export default function AdminInvitesPage() {
           </div>
         </footer>
       </section>
+
+      {reviewDialog && (
+        <div
+          className="fixed inset-0 z-[70] grid place-items-center bg-black/45 p-4 backdrop-blur-[1px]"
+          role="presentation"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) closeReviewDialog(); }}
+        >
+          <section className="w-full max-w-md overflow-hidden rounded-lg border border-[#DCE4DF] bg-white shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="invite-review-title">
+            <div className={`border-l-4 px-5 py-4 ${reviewDialog.action === 'approve' ? 'border-l-emerald-500' : 'border-l-red-500'}`}>
+              <div className="flex items-start gap-3">
+                <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-md ${reviewDialog.action === 'approve' ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>
+                  {reviewDialog.action === 'approve' ? <ShieldCheck className="h-5 w-5" /> : <ShieldAlert className="h-5 w-5" />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 id="invite-review-title" className="text-sm font-semibold text-[#17201B]">{reviewDialog.action === 'approve' ? '通过邀请审核' : '驳回邀请审核'}</h2>
+                  <p className="mt-1 truncate text-[11px] text-zinc-500">{reviewDialog.item.inviteeEmail || reviewDialog.item.inviteeId}</p>
+                </div>
+                <button type="button" onClick={closeReviewDialog} disabled={Boolean(reviewingId)} aria-label="关闭" className="grid h-7 w-7 place-items-center rounded-md text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-40">×</button>
+              </div>
+              <label className="mt-4 block text-[11px] font-semibold text-zinc-600" htmlFor="invite-review-note">{reviewDialog.action === 'approve' ? '审核备注' : '驳回原因'}{reviewDialog.action === 'approve' && <span className="ml-1 font-normal text-zinc-400">（可直接确认）</span>}</label>
+              <div className="relative mt-1.5">
+                <MessageSquareText className="pointer-events-none absolute left-3 top-3 h-4 w-4 text-zinc-400" />
+                <textarea
+                  id="invite-review-note"
+                  autoFocus
+                  rows={4}
+                  value={reviewNote}
+                  onChange={(event) => setReviewNote(event.target.value)}
+                  placeholder={reviewDialog.action === 'approve' ? '补充本次审核依据（可选）' : '请填写驳回原因'}
+                  disabled={Boolean(reviewingId)}
+                  className="w-full resize-none rounded-md border border-[#CBD8D0] bg-[#FBFCFB] py-2.5 pl-9 pr-3 text-xs leading-5 text-[#17201B] outline-none transition-colors placeholder:text-zinc-400 focus:border-[#12B76A] focus:bg-white focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-60"
+                />
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-[#EDF0EE] bg-[#F7F9F7] px-5 py-3.5">
+              <button type="button" onClick={closeReviewDialog} disabled={Boolean(reviewingId)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-3.5 text-xs font-semibold text-zinc-600 transition-colors hover:bg-zinc-50 disabled:opacity-50">取消</button>
+              <button type="button" onClick={() => void review()} disabled={Boolean(reviewingId) || (reviewDialog.action === 'reject' && !reviewNote.trim())} className={`inline-flex h-8 items-center gap-1.5 rounded-md px-3.5 text-xs font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${reviewDialog.action === 'approve' ? 'bg-[#047857] hover:bg-[#036749]' : 'bg-[#C62828] hover:bg-[#A61F1F]'}`}>
+                {reviewingId ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : reviewDialog.action === 'approve' ? <ShieldCheck className="h-3.5 w-3.5" /> : <ShieldAlert className="h-3.5 w-3.5" />}
+                {reviewingId ? '处理中' : reviewDialog.action === 'approve' ? '确认通过并发放' : '确认驳回'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

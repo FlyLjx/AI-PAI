@@ -103,6 +103,7 @@ func (m *serviceNotificationManager) sendRechargeSuccessNotification(ctx context
 	return m.sendAdminNotification(
 		ctx,
 		smtpConfig,
+		anyString(values["adminNotificationEmails"]),
 		"recharge_success",
 		brand+" 充值成功通知",
 		body,
@@ -202,6 +203,7 @@ func (m *serviceNotificationManager) sendUpstreamHealthNotification(ctx context.
 	sendErr := m.sendAdminNotification(
 		ctx,
 		smtpConfig,
+		anyString(values["adminNotificationEmails"]),
 		category,
 		subject,
 		body,
@@ -326,6 +328,7 @@ func (m *serviceNotificationManager) sendOpenAIStatusNotification(ctx context.Co
 	sendErr := m.sendAdminNotification(
 		ctx,
 		smtpConfig,
+		anyString(values["adminNotificationEmails"]),
 		category,
 		subject,
 		body,
@@ -388,6 +391,7 @@ func firstNonEmpty(value string, fallback string) string {
 func (m *serviceNotificationManager) sendAdminNotification(
 	ctx context.Context,
 	smtpConfig smtpSettings,
+	configuredRecipients string,
 	category string,
 	subject string,
 	body string,
@@ -396,7 +400,7 @@ func (m *serviceNotificationManager) sendAdminNotification(
 	if err := smtpConfig.validate(); err != nil {
 		return err
 	}
-	recipients, err := m.adminMailRecipients(ctx)
+	recipients, err := m.adminMailRecipients(ctx, configuredRecipients)
 	if err != nil {
 		return err
 	}
@@ -416,7 +420,10 @@ func (m *serviceNotificationManager) sendAdminNotification(
 	return nil
 }
 
-func (m *serviceNotificationManager) adminMailRecipients(ctx context.Context) ([]string, error) {
+func (m *serviceNotificationManager) adminMailRecipients(ctx context.Context, configuredRecipients string) ([]string, error) {
+	if strings.TrimSpace(configuredRecipients) != "" {
+		return settings.ParseNotificationEmails(configuredRecipients)
+	}
 	rows, err := m.db.QueryContext(ctx, `
 		SELECT email
 		FROM users
