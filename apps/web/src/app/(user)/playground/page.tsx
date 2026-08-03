@@ -38,7 +38,7 @@ type AspectRatio = ImageGenerationInput['aspect_ratio'];
 type OutputFormat = ImageGenerationInput['output_format'];
 type ReferenceImage = { id: string; file: File; previewUrl: string };
 
-const maxReferenceImages = 4;
+const maxReferenceImages = 10;
 const maxReferenceImageBytes = 20 * 1024 * 1024;
 const maxReferenceImagesTotalBytes = 75 * 1024 * 1024;
 const supportedReferenceImageTypes = new Set(['image/jpeg', 'image/png', 'image/webp']);
@@ -298,7 +298,7 @@ export default function PlaygroundPage() {
     if (generating || files.length === 0) return;
     const available = maxReferenceImages - referenceImages.length;
     if (available <= 0) {
-      toast.error('最多上传 4 张参考图');
+      toast.error('最多上传 10 张参考图');
       return;
     }
 
@@ -306,7 +306,7 @@ export default function PlaygroundPage() {
     if (validFiles.length !== files.length) toast.error('参考图仅支持 JPG、PNG、WEBP');
     const sizeValidFiles = validFiles.filter((file) => file.size <= maxReferenceImageBytes);
     if (sizeValidFiles.length !== validFiles.length) toast.error('单张参考图不能超过 20MB');
-    if (sizeValidFiles.length > available) toast.error('最多上传 4 张参考图');
+    if (sizeValidFiles.length > available) toast.error('最多上传 10 张参考图');
 
     let totalBytes = referenceImages.reduce((sum, item) => sum + item.file.size, 0);
     const accepted: File[] = [];

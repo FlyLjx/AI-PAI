@@ -151,7 +151,11 @@ func TestCompatRequestReferenceURLsLimitsUniqueImages(t *testing.T) {
 	if count := len(compatRequestReferenceURLs(input, true)); count != 4 {
 		t.Fatalf("unique reference count=%d, want 4", count)
 	}
-	input.ReferenceURLs = append(input.ReferenceURLs, "five")
+	input.ReferenceURLs = []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "ten"}
+	if count := len(compatRequestReferenceURLs(input, true)); count != maxCompatReferenceImages {
+		t.Fatalf("reference count=%d, want %d", count, maxCompatReferenceImages)
+	}
+	input.ReferenceURLs = append(input.ReferenceURLs, "eleven")
 	if count := len(compatRequestReferenceURLs(input, true)); count <= maxCompatReferenceImages {
 		t.Fatalf("reference count=%d, want more than %d", count, maxCompatReferenceImages)
 	}

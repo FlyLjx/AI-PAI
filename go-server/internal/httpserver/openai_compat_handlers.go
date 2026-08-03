@@ -59,7 +59,7 @@ const (
 
 const (
 	compatTaskLogWaitTimeout    = 30 * time.Minute
-	maxCompatReferenceImages    = 4
+	maxCompatReferenceImages    = 10
 	compatImageResultModeHeader = "X-Aipi-Image-Result-Mode"
 )
 
@@ -152,7 +152,7 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 	}
 	referenceURLs := compatRequestReferenceURLs(input, isEdit)
 	if len(referenceURLs) > maxCompatReferenceImages {
-		writeOpenAIError(w, http.StatusBadRequest, "参考图最多上传 4 张", "invalid_request_error")
+		writeOpenAIError(w, http.StatusBadRequest, "参考图最多上传 10 张", "invalid_request_error")
 		return
 	}
 	r.compatImageRequestWithInput(w, req, auth, input, isEdit, compatImageResponseOpenAI)
