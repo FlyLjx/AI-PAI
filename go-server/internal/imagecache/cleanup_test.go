@@ -64,7 +64,11 @@ func TestCleanupTaskImagesOlderThanInSkipsSymlinksAndMissingDirectory(t *testing
 	if err := os.Mkdir(target, 0755); err != nil {
 		t.Fatal(err)
 	}
-	writeCachedImage(t, target, "0.png", now.Add(-48*time.Hour))
+	old := now.Add(-48 * time.Hour)
+	writeCachedImage(t, target, "0.png", old)
+	if err := os.Chtimes(target, old, old); err != nil {
+		t.Fatal(err)
+	}
 	link := filepath.Join(dir, "link")
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlink creation is unavailable: %v", err)
