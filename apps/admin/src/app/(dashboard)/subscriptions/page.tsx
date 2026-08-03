@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { CreditCard, Gauge, Gift, Loader2, PackageCheck, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/DataTable';
+import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { EmptyState } from '@/components/common/EmptyState';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -28,6 +29,8 @@ export default function AdminSubscriptionsPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [cancelingId, setCancelingId] = useState('');
+  const [cancelCandidate, setCancelCandidate] = useState<PortalUser | null>(null);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('active');
@@ -119,6 +122,22 @@ export default function AdminSubscriptionsPage() {
     }
   };
 
+  const cancelSubscription = async () => {
+    if (!cancelCandidate) return;
+    const user = cancelCandidate;
+    setCancelingId(user.id);
+    try {
+      await portalApi.cancelSubscription(user.id);
+      toast.success(`已取消 ${user.email} 的当前订阅`);
+      setCancelCandidate(null);
+      await load();
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '取消订阅失败');
+    } finally {
+      setCancelingId('');
+    }
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader title="订阅管理" description="查看客户订阅状态，并按现有 Go 规则发放、续期或更换套餐。">
@@ -171,7 +190,7 @@ export default function AdminSubscriptionsPage() {
                 <td className="px-4 py-3">{active ? <div className="w-36"><div className="mb-1 flex justify-between font-mono text-[10px] text-zinc-500"><span>{used} / {limit || '不限'}</span><span>{percent}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-zinc-100"><span className="block h-full bg-[#12B76A]" style={{ width: `${percent}%` }} /></div></div> : '-'}</td>
                 <td className="px-4 py-3"><span className="block whitespace-nowrap text-[11px]">{active ? formatDate(user.subscription?.expiresAt || '', false) : '-'}</span>{active && days !== null && <small className={`text-[10px] ${days <= 7 ? 'text-amber-700' : 'text-zinc-400'}`}>{days < 0 ? '已到期' : `剩余 ${days} 天`}</small>}</td>
                 <td className="px-4 py-3"><span className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${active ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-zinc-50 text-zinc-500'}`}>{active ? '生效中' : '未订阅'}</span></td>
-                <td className="px-4 py-3 text-right"><button type="button" onClick={() => openGrant(user)} className="rounded-md border border-[#DCE4DF] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#047857] hover:border-[#86EFAC]">{active ? '续期/更换' : '发放'}</button></td>
+                <td className="px-4 py-3 text-right"><div className="flex justify-end gap-1.5">{active && <button type="button" onClick={() => setCancelCandidate(user)} disabled={cancelingId === user.id} className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">取消订阅</button>}<button type="button" onClick={() => openGrant(user)} className="rounded-md border border-[#DCE4DF] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#047857] hover:border-[#86EFAC]">{active ? '续期/更换' : '发放'}</button></div></td>
               </tr>
             );
           }}
@@ -182,7 +201,7 @@ export default function AdminSubscriptionsPage() {
               <article key={user.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
                 <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{user.email}</strong><small className="font-mono text-[10px] text-zinc-400">{user.id}</small></div><span className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${active ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-zinc-50 text-zinc-500'}`}>{active ? '生效中' : '未订阅'}</span></div>
                 <div className="mt-3 grid grid-cols-2 gap-2 border-y border-[#EDF0EE] py-2 text-xs"><span><small className="block text-[10px] text-zinc-400">套餐</small>{active ? user.subscription?.planName || '订阅套餐' : '按余额计费'}</span><span className="text-right"><small className="block text-[10px] text-zinc-400">剩余额度</small><strong>{active ? `${remaining} 张` : '-'}</strong></span></div>
-                <div className="mt-2 flex items-center justify-between"><small className="text-[10px] text-zinc-400">{active ? `到期 ${formatDate(user.subscription?.expiresAt || '', false)}` : '未开通订阅'}</small><button type="button" onClick={() => openGrant(user)} className="rounded px-2 py-1 text-[11px] font-semibold text-[#047857] hover:bg-emerald-50">{active ? '续期/更换' : '发放'}</button></div>
+                <div className="mt-2 flex items-center justify-between gap-2"><small className="text-[10px] text-zinc-400">{active ? `到期 ${formatDate(user.subscription?.expiresAt || '', false)}` : '未开通订阅'}</small><span className="flex items-center gap-1">{active && <button type="button" onClick={() => setCancelCandidate(user)} disabled={cancelingId === user.id} className="rounded px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">取消</button>}<button type="button" onClick={() => openGrant(user)} className="rounded px-2 py-1 text-[11px] font-semibold text-[#047857] hover:bg-emerald-50">{active ? '续期/更换' : '发放'}</button></span></div>
               </article>
             );
           }}
@@ -213,6 +232,16 @@ export default function AdminSubscriptionsPage() {
           </form>
         </div>
       )}
+
+      <ConfirmDialog
+        isOpen={Boolean(cancelCandidate)}
+        onClose={() => setCancelCandidate(null)}
+        onConfirm={() => void cancelSubscription()}
+        title="取消当前订阅"
+        description={cancelCandidate ? `确定立即取消 ${cancelCandidate.email} 的当前订阅吗？取消后会立即停止订阅额度使用，已产生的调用记录和历史订单会保留。` : ''}
+        confirmText="立即取消"
+        type="danger"
+      />
     </div>
   );
 }

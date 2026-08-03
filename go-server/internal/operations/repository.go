@@ -73,6 +73,13 @@ func (r *Repository) dashboardBalanceMetrics(ctx context.Context) (dashboardBala
 }
 
 func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
+	return r.dashboardFast(ctx)
+}
+
+// dashboardLegacy is kept as a reference for the previous query layout. The
+// live dashboard uses dashboardFast, which folds the repeated COUNT queries
+// into a small number of indexed aggregate scans.
+func (r *Repository) dashboardLegacy(ctx context.Context) (map[string]any, error) {
 	result := map[string]any{}
 	totalUsers, err := r.count(ctx, `SELECT COUNT(*) FROM users`)
 	if err != nil {
@@ -251,6 +258,203 @@ func (r *Repository) Dashboard(ctx context.Context) (map[string]any, error) {
 	}
 	result["pending"] = map[string]any{
 		"pendingOrders": pendingOrders, "runningTasks": runningTasks,
+		"recentFailedTasks": recentFailed, "privateImages": privateImages,
+	}
+	result["system"] = map[string]any{
+		"api": "ok", "database": "ok", "activeProviders": activeProviders,
+		"disabledProviders": disabledProviders, "activeModels": activeModels,
+		"disabledModels": disabledModels, "lastTaskAt": lastTaskValue,
+	}
+	return result, nil
+}
+
+func (r *Repository) dashboardFast(ctx context.Context) (map[string]any, error) {
+	result := map[string]any{}
+
+	var userTotal, activeUsers, todayUsers, yesterdayUsers int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*),
+			COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN created_at >= CURDATE() THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE() THEN 1 ELSE 0 END), 0)
+		FROM users
+	`).Scan(&userTotal, &activeUsers, &todayUsers, &yesterdayUsers); err != nil {
+		return nil, err
+	}
+
+	var orderTotals struct {
+		all, paid, pending, closed, failed                    int
+		today, yesterday                                      int
+		todayPaidAmount, yesterdayPaidAmount, totalPaidAmount float64
+	}
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN status = 'paid' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'closed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN created_at >= CURDATE() THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE() THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'paid' AND paid_at >= CURDATE() THEN amount ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'paid' AND paid_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND paid_at < CURDATE() THEN amount ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END), 0)
+		FROM recharge_orders
+	`).Scan(
+		&orderTotals.all, &orderTotals.paid, &orderTotals.pending, &orderTotals.closed, &orderTotals.failed,
+		&orderTotals.today, &orderTotals.yesterday, &orderTotals.todayPaidAmount,
+		&orderTotals.yesterdayPaidAmount, &orderTotals.totalPaidAmount,
+	); err != nil {
+		return nil, err
+	}
+
+	balanceMetrics, err := r.dashboardBalanceMetrics(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	var todayTasks, todayRunning, todayFailed, todaySuccess int
+	var yesterdayTasks, yesterdayRunning, yesterdayFailed, yesterdaySuccess int
+	var taskTotal, taskQueued, taskPending, taskProcessing, taskSuccess, taskFailed, taskCanceled int
+	var taskTotalImages, runningTasks, recentFailed, privateImages int
+	var lastTask sql.NullTime
+	taskStatRows, err := r.db.QueryContext(ctx, `
+		SELECT
+			status,
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status = 'success' THEN quantity ELSE 0 END), 0) AS total_images,
+			COALESCE(SUM(CASE WHEN created_at >= CURDATE() THEN 1 ELSE 0 END), 0) AS today_total,
+			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE() THEN 1 ELSE 0 END), 0) AS yesterday_total,
+			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) AND status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS recent_total,
+			COALESCE(SUM(CASE WHEN status IN ('queued', 'pending', 'processing') THEN 1 ELSE 0 END), 0) AS running_total,
+			COALESCE(SUM(CASE WHEN status = 'success' AND display_enabled = FALSE THEN 1 ELSE 0 END), 0) AS private_total,
+			MAX(created_at) AS last_created_at
+		FROM generation_tasks
+		GROUP BY status
+	`)
+	if err != nil {
+		return nil, err
+	}
+	for taskStatRows.Next() {
+		var status string
+		var total, images, todayTotal, yesterdayTotal, recentTotal, runningTotal, privateTotal int
+		var lastCreatedAt sql.NullTime
+		if err := taskStatRows.Scan(&status, &total, &images, &todayTotal, &yesterdayTotal, &recentTotal, &runningTotal, &privateTotal, &lastCreatedAt); err != nil {
+			taskStatRows.Close()
+			return nil, err
+		}
+		taskTotal += total
+		taskTotalImages += images
+		todayTasks += todayTotal
+		yesterdayTasks += yesterdayTotal
+		runningTasks += runningTotal
+		recentFailed += recentTotal
+		privateImages += privateTotal
+		if lastCreatedAt.Valid && (!lastTask.Valid || lastCreatedAt.Time.After(lastTask.Time)) {
+			lastTask = lastCreatedAt
+		}
+		switch status {
+		case "queued":
+			taskQueued = total
+		case "pending":
+			taskPending = total
+		case "processing":
+			taskProcessing = total
+		case "success":
+			taskSuccess = total
+		case "failed":
+			taskFailed = total
+		case "canceled":
+			taskCanceled = total
+		}
+		if status == "success" {
+			todaySuccess += todayTotal
+			yesterdaySuccess += yesterdayTotal
+		}
+		if status == "failed" || status == "canceled" || status == "cancelled" {
+			todayFailed += todayTotal
+			yesterdayFailed += yesterdayTotal
+		}
+		if status == "queued" || status == "pending" || status == "processing" {
+			todayRunning += todayTotal
+			yesterdayRunning += yesterdayTotal
+		}
+	}
+	if err := taskStatRows.Close(); err != nil {
+		return nil, err
+	}
+	if err := taskStatRows.Err(); err != nil {
+		return nil, err
+	}
+
+	var activeProviders, disabledProviders, activeModels, disabledModels int
+	providerModelRows, err := r.db.QueryContext(ctx, `
+		SELECT 'provider' AS kind, status, COUNT(*)
+		FROM api_providers
+		GROUP BY status
+		UNION ALL
+		SELECT 'model' AS kind, status, COUNT(*)
+		FROM ai_models
+		WHERE capability = 'chat_image'
+		GROUP BY status
+	`)
+	if err != nil {
+		return nil, err
+	}
+	for providerModelRows.Next() {
+		var kind, status string
+		var total int
+		if err := providerModelRows.Scan(&kind, &status, &total); err != nil {
+			providerModelRows.Close()
+			return nil, err
+		}
+		if kind == "provider" {
+			if status == "active" {
+				activeProviders = total
+			} else if status == "disabled" {
+				disabledProviders = total
+			}
+		} else if status == "active" {
+			activeModels = total
+		} else if status == "disabled" {
+			disabledModels = total
+		}
+	}
+	if err := providerModelRows.Close(); err != nil {
+		return nil, err
+	}
+	if err := providerModelRows.Err(); err != nil {
+		return nil, err
+	}
+
+	lastTaskValue := any(nil)
+	if lastTask.Valid {
+		lastTaskValue = appclock.DatabaseTime(lastTask.Time).Format(time.RFC3339)
+	}
+	result["today"] = map[string]any{
+		"users": todayUsers, "orders": orderTotals.today, "paidAmount": orderTotals.todayPaidAmount,
+		"tasks": todayTasks, "runningTasks": todayRunning, "failedTasks": todayFailed,
+		"successfulTasks": todaySuccess, "balanceConsumed": balanceMetrics.TodayConsumed,
+	}
+	result["yesterday"] = map[string]any{
+		"users": yesterdayUsers, "orders": orderTotals.yesterday, "paidAmount": orderTotals.yesterdayPaidAmount,
+		"tasks": yesterdayTasks, "runningTasks": yesterdayRunning, "failedTasks": yesterdayFailed,
+		"successfulTasks": yesterdaySuccess, "balanceConsumed": balanceMetrics.YesterdayConsumed,
+	}
+	result["users"] = map[string]any{
+		"total": userTotal, "active": activeUsers, "totalBalance": balanceMetrics.TotalBalance,
+	}
+	result["orders"] = map[string]any{
+		"all": orderTotals.all, "paid": orderTotals.paid, "pending": orderTotals.pending,
+		"closed": orderTotals.closed, "failed": orderTotals.failed,
+	}
+	result["revenue"] = map[string]any{"totalPaidAmount": orderTotals.totalPaidAmount}
+	result["taskStats"] = map[string]any{
+		"total": taskTotal, "queued": taskQueued, "pending": taskPending, "processing": taskProcessing,
+		"success": taskSuccess, "failed": taskFailed, "canceled": taskCanceled, "totalImages": taskTotalImages,
+	}
+	result["pending"] = map[string]any{
+		"pendingOrders": orderTotals.pending, "runningTasks": runningTasks,
 		"recentFailedTasks": recentFailed, "privateImages": privateImages,
 	}
 	result["system"] = map[string]any{
@@ -493,6 +697,52 @@ func (r *Repository) GrantSubscription(ctx context.Context, userID string, planI
 	return tx.Commit()
 }
 
+// CancelSubscription immediately revokes the user's currently active
+// subscription. The subscription row and its snapshot remain available for
+// history, while its status prevents it from being used for new requests.
+func (r *Repository) CancelSubscription(ctx context.Context, userID string) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return ErrNoActiveSubscription
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var status string
+	var expiresAt time.Time
+	if err := tx.QueryRowContext(ctx, `
+		SELECT status, expires_at
+		FROM user_subscriptions
+		WHERE user_id=?
+		FOR UPDATE
+	`, userID).Scan(&status, &expiresAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNoActiveSubscription
+		}
+		return err
+	}
+	if status != "active" || !expiresAt.After(time.Now()) {
+		return ErrNoActiveSubscription
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE user_subscriptions
+		SET status='canceled', updated_at=CURRENT_TIMESTAMP
+		WHERE user_id=? AND status='active'
+	`, userID)
+	if err != nil {
+		return err
+	}
+	if affectedRows, err := result.RowsAffected(); err != nil {
+		return err
+	} else if affectedRows == 0 {
+		return ErrNoActiveSubscription
+	}
+	return tx.Commit()
+}
+
 func (r *Repository) GrantCustomSubscription(ctx context.Context, userID string, input CustomSubscriptionGrant) error {
 	userID = strings.TrimSpace(userID)
 	input.Name = strings.TrimSpace(input.Name)
@@ -639,20 +889,17 @@ func (r *Repository) CurrentSubscription(ctx context.Context, userID string, fre
 	}
 	freeLimits = normalizeFreeQuotaLimits(freeLimits)
 	hourStart, hourEnd := currentHourWindow()
-	hourUsed, err := r.GenerationUsage(ctx, userID, hourStart, hourEnd)
-	if err != nil {
-		return nil, err
-	}
 	dayStart, dayEnd := currentDayWindow()
-	dayUsed, err := r.GenerationUsage(ctx, userID, dayStart, dayEnd)
-	if err != nil {
-		return nil, err
-	}
 	monthStart, monthEnd := currentMonthWindow()
-	monthUsed, err := r.GenerationUsage(ctx, userID, monthStart, monthEnd)
+	usage, err := r.generationUsageWindows(ctx, userID, []generationUsageWindow{
+		{start: hourStart, end: hourEnd},
+		{start: dayStart, end: dayEnd},
+		{start: monthStart, end: monthEnd},
+	})
 	if err != nil {
 		return nil, err
 	}
+	hourUsed, dayUsed, monthUsed := usage[0], usage[1], usage[2]
 	hourWindow := quotaWindow("hour", "小时", freeLimits.Hourly, hourUsed, hourStart, hourEnd)
 	dayWindow := quotaWindow("day", "今日", freeLimits.Daily, dayUsed, dayStart, dayEnd)
 	monthWindow := quotaWindow("month", "本月", freeLimits.Monthly, monthUsed, monthStart, monthEnd)
@@ -689,13 +936,105 @@ func (r *Repository) GenerationUsage(ctx context.Context, userID string, start t
 	return generationUsage(ctx, r.db, userID, start, end)
 }
 
+type generationUsageWindow struct {
+	start time.Time
+	end   time.Time
+}
+
+// generationUsageWindows scans the widest requested window once and derives
+// the hour/day/month counters in memory. Free-tier entitlement calculation
+// used to issue three nearly identical queries for every user response.
+func (r *Repository) generationUsageWindows(ctx context.Context, userID string, windows []generationUsageWindow) ([]int, error) {
+	usage := make([]int, len(windows))
+	if len(windows) == 0 {
+		return usage, nil
+	}
+	start := windows[0].start
+	end := windows[0].end
+	for _, window := range windows[1:] {
+		if window.start.Before(start) {
+			start = window.start
+		}
+		if window.end.After(end) {
+			end = window.end
+		}
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT generation_tasks.created_at,
+			generation_tasks.status,
+			generation_tasks.quantity,
+			COALESCE(generation_tasks.subscription_quota_units, 1),
+			CASE WHEN generation_tasks.status = 'success' THEN COALESCE((
+				SELECT COUNT(*)
+				FROM generation_result_images
+				WHERE generation_result_images.task_id = generation_tasks.id
+			), 0) ELSE 0 END AS result_image_count,
+			CASE WHEN generation_tasks.status = 'success' AND NOT EXISTS (
+				SELECT 1
+				FROM generation_result_images
+				WHERE generation_result_images.task_id = generation_tasks.id
+			) THEN generation_tasks.result_json ELSE NULL END AS result_json_fallback
+		FROM generation_tasks
+		WHERE user_id=?
+			AND status IN ('queued', 'pending', 'processing', 'success')
+			AND created_at >= ?
+			AND created_at < ?
+			AND NOT EXISTS (
+				SELECT 1
+				FROM api_access_logs
+				INNER JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+				WHERE api_access_logs.task_id = generation_tasks.id
+					AND api_access_keys.billing_mode = 'balance'
+			)
+	`, strings.TrimSpace(userID), start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var createdAt time.Time
+		var status string
+		var quantity, quotaUnits, resultImageCount int
+		var resultJSON sql.NullString
+		if err := rows.Scan(&createdAt, &status, &quantity, &quotaUnits, &resultImageCount, &resultJSON); err != nil {
+			return nil, err
+		}
+		if quotaUnits < 0 {
+			quotaUnits = 0
+		}
+		quantityUsed := generationUsageQuantityFromCount(status, quantity, resultImageCount)
+		if quantityUsed == quantity && status == "success" && resultImageCount == 0 && resultJSON.Valid {
+			quantityUsed = generationUsageQuantity(status, quantity, resultJSON.String)
+		}
+		amount := quantityUsed * quotaUnits
+		for index, window := range windows {
+			if !createdAt.Before(window.start) && createdAt.Before(window.end) {
+				usage[index] += amount
+			}
+		}
+	}
+	return usage, rows.Err()
+}
+
 type generationUsageQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 func generationUsage(ctx context.Context, querier generationUsageQuerier, userID string, start time.Time, end time.Time) (int, error) {
 	rows, err := querier.QueryContext(ctx, `
-		SELECT status, quantity, result_json, COALESCE(subscription_quota_units, 1)
+		SELECT generation_tasks.status,
+			generation_tasks.quantity,
+			COALESCE(generation_tasks.subscription_quota_units, 1),
+			CASE WHEN generation_tasks.status = 'success' THEN COALESCE((
+				SELECT COUNT(*)
+				FROM generation_result_images
+				WHERE generation_result_images.task_id = generation_tasks.id
+			), 0) ELSE 0 END AS result_image_count,
+			CASE WHEN generation_tasks.status = 'success' AND NOT EXISTS (
+				SELECT 1
+				FROM generation_result_images
+				WHERE generation_result_images.task_id = generation_tasks.id
+			) THEN generation_tasks.result_json ELSE NULL END AS result_json_fallback
 		FROM generation_tasks
 		WHERE user_id=?
 			AND status IN ('queued', 'pending', 'processing', 'success')
@@ -719,16 +1058,31 @@ func generationUsage(ctx context.Context, querier generationUsageQuerier, userID
 		var status string
 		var quantity int
 		var quotaUnits int
+		var resultImageCount int
 		var resultJSON sql.NullString
-		if err := rows.Scan(&status, &quantity, &resultJSON, &quotaUnits); err != nil {
+		if err := rows.Scan(&status, &quantity, &quotaUnits, &resultImageCount, &resultJSON); err != nil {
 			return 0, err
 		}
 		if quotaUnits < 0 {
 			quotaUnits = 0
 		}
-		used += generationUsageQuantity(status, quantity, resultJSON.String) * quotaUnits
+		quantityUsed := generationUsageQuantityFromCount(status, quantity, resultImageCount)
+		if quantityUsed == quantity && status == "success" && resultImageCount == 0 && resultJSON.Valid {
+			quantityUsed = generationUsageQuantity(status, quantity, resultJSON.String)
+		}
+		used += quantityUsed * quotaUnits
 	}
 	return used, rows.Err()
+}
+
+func generationUsageQuantityFromCount(status string, quantity int, imageCount int) int {
+	if quantity < 0 {
+		quantity = 0
+	}
+	if status == "success" && imageCount > 0 {
+		return imageCount
+	}
+	return quantity
 }
 
 func generationUsageQuantity(status string, quantity int, resultJSON string) int {

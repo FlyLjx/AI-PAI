@@ -159,7 +159,7 @@ func (r *Repository) FindAdminList(ctx context.Context, input ListInput) ([]Admi
 
 func (r *Repository) FindAllForExport(ctx context.Context) ([]Task, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT `+taskSelectColumns+`
+		SELECT `+taskSelectColumnsWithoutResultJSON()+`
 		FROM generation_tasks
 		`+taskJoins+`
 		ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
@@ -603,12 +603,47 @@ func (r *Repository) RequestPublic(ctx context.Context, id string, userID string
 }
 
 func (r *Repository) ImageURLByIndex(ctx context.Context, id string, index int) (string, error) {
+	if index < 0 {
+		return "", sql.ErrNoRows
+	}
+	// Successful tasks normally have their upstream images cached in the
+	// normalized table. Read that small row instead of loading/parsing the
+	// potentially hundreds-of-KB result_json column for every image request.
+	var status, imageURL string
+	var providerBaseURL sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+		SELECT generation_tasks.status,
+			generation_result_images.image_url,
+			api_providers.base_url
+		FROM generation_result_images
+		INNER JOIN generation_tasks ON generation_tasks.id = generation_result_images.task_id
+		LEFT JOIN api_providers ON api_providers.id = generation_tasks.provider_id
+		WHERE generation_result_images.task_id = ?
+		ORDER BY generation_result_images.created_at ASC, generation_result_images.id ASC
+		LIMIT 1 OFFSET ?
+	`, id, index).Scan(&status, &imageURL, &providerBaseURL)
+	if err == nil {
+		if status != string(StatusSuccess) || strings.TrimSpace(imageURL) == "" {
+			return "", sql.ErrNoRows
+		}
+		baseURL := ""
+		if providerBaseURL.Valid {
+			baseURL = providerBaseURL.String
+		}
+		return RewriteImageURL(&baseURL, imageURL), nil
+	}
+	if err != sql.ErrNoRows {
+		return "", err
+	}
+
+	// Keep the legacy JSON fallback for older tasks created before the image
+	// cache table was populated or when caching an upstream URL failed.
 	task, err := r.FindByID(ctx, id)
 	if err != nil {
 		return "", err
 	}
 	urls := ResultURLs(task.ResultJSON)
-	if task.Status != StatusSuccess || index < 0 || index >= len(urls) {
+	if task.Status != StatusSuccess || index >= len(urls) {
 		return "", sql.ErrNoRows
 	}
 	return RewriteImageURL(task.ProviderBaseURL, urls[index]), nil
@@ -658,6 +693,10 @@ const taskSelectColumns = `
 	api_providers.base_url AS provider_base_url
 `
 
+func taskSelectColumnsWithoutResultJSON() string {
+	return strings.Replace(taskSelectColumns, "generation_tasks.result_json,", "NULL AS result_json,", 1)
+}
+
 const taskJoins = `
 	LEFT JOIN users ON users.id = generation_tasks.user_id
 	LEFT JOIN ai_models ON ai_models.id = generation_tasks.model_id
@@ -665,11 +704,17 @@ const taskJoins = `
 `
 
 func (r *Repository) count(ctx context.Context, where string, args []any) (int, error) {
+	from := "FROM generation_tasks"
+	// Status/display filters only touch the task table. Avoid joining the
+	// relatively wide user/model/provider tables for the COUNT(*) query; joins
+	// are still included when a keyword actually searches those tables.
+	if strings.Contains(where, "users.") || strings.Contains(where, "ai_models.") || strings.Contains(where, "api_providers.") {
+		from += taskJoins
+	}
 	var total int
 	err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM generation_tasks
-		`+taskJoins+`
+		`+from+`
 		`+where+`
 	`, args...).Scan(&total)
 	return total, err

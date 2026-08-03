@@ -21,11 +21,15 @@ func (r *Router) currentSubscriptionEntitlement(ctx context.Context, userID stri
 	if err != nil {
 		return nil, err
 	}
-	return operations.NewRepository(r.db).CurrentSubscription(ctx, userID, operations.FreeQuotaLimits{
+	return r.currentSubscriptionEntitlementWithLimits(ctx, userID, operations.FreeQuotaLimits{
 		Hourly:  generationQuotaSetting(values["freeHourlyGenerationQuota"], defaultFreeHourlyGenerationQuota),
 		Daily:   generationQuotaSetting(values["freeDailyGenerationQuota"], defaultFreeDailyGenerationQuota),
 		Monthly: generationQuotaSetting(values["freeGenerationQuota"], defaultFreeGenerationQuota),
 	})
+}
+
+func (r *Router) currentSubscriptionEntitlementWithLimits(ctx context.Context, userID string, limits operations.FreeQuotaLimits) (*operations.SubscriptionEntitlement, error) {
+	return operations.NewRepository(r.db).CurrentSubscription(ctx, userID, limits)
 }
 
 func generationQuotaSetting(value any, fallback int) int {

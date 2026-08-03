@@ -46,6 +46,10 @@ type Router struct {
 	dynamicConcurrencyMu      sync.RWMutex
 	dynamicConcurrencyCache   apiaccess.DynamicConcurrencyConfig
 	dynamicConcurrencyCacheAt time.Time
+
+	taskTimeoutMu      sync.RWMutex
+	taskTimeoutCache   time.Duration
+	taskTimeoutCacheAt time.Time
 }
 
 func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger) http.Handler {

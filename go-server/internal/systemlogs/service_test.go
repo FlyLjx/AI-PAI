@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"aipi-go/internal/imagecache"
 	"aipi-go/internal/settings"
 )
 
@@ -163,6 +164,54 @@ func TestAutoCleanupWorkerRunsOnInterval(t *testing.T) {
 	<-done
 	if calls.Load() < 2 {
 		t.Fatalf("settings calls = %d, want at least 2", calls.Load())
+	}
+}
+
+func TestAutoCleanupWorkerCleansTaskImagesIndependently(t *testing.T) {
+	taskImageDir := t.TempDir()
+	now := time.Date(2026, 8, 2, 12, 0, 0, 0, time.Local)
+	taskDir := filepath.Join(taskImageDir, "task-old")
+	if err := os.Mkdir(taskDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, taskDir, "0.png", now.Add(-48*time.Hour))
+	if err := os.Chtimes(taskDir, now.Add(-48*time.Hour), now.Add(-48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+
+	worker := autoCleanupWorker{
+		service:       New(filepath.Join(t.TempDir(), "logs")),
+		taskImageDir:  taskImageDir,
+		cleanupImages: imagecache.CleanupTaskImagesOlderThanIn,
+		loadSettings: func(context.Context) (settings.Settings, error) {
+			return settings.Settings{
+				"systemLogAutoCleanupEnabled": true,
+				"systemLogRetentionDays":      float64(30),
+				"taskImageAutoCleanupEnabled": true,
+				"taskImageRetentionDays":      float64(1),
+			}, nil
+		},
+		now:      func() time.Time { return now },
+		interval: time.Hour,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := worker.start(ctx)
+	deadline := time.Now().Add(time.Second)
+	for {
+		_, err := os.Stat(taskDir)
+		if errors.Is(err, os.ErrNotExist) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("worker did not clean task images while running log cleanup")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not stop after cancellation")
 	}
 }
 

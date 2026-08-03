@@ -37,11 +37,11 @@ func TestGrantSubscriptionCarriesActiveRemainingQuota(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"plan_id", "plan_snapshot", "status", "started_at", "expires_at"}).
 			AddRow("old-plan", oldSnapshot, "active", startedAt, expiresAt))
-	mock.ExpectQuery(`(?s)SELECT status, quantity, result_json, COALESCE\(subscription_quota_units, 1\).*FROM generation_tasks.*billing_mode = 'balance'`).
+	mock.ExpectQuery(`(?s)SELECT generation_tasks\.status,.*result_image_count.*FROM generation_tasks.*billing_mode = 'balance'`).
 		WithArgs("user-1", startedAt, expiresAt).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "quantity", "result_json", "subscription_quota_units"}).
-			AddRow("queued", 7, nil, 1).
-			AddRow("success", 3, `{"data":[{"url":"https://cdn.example.test/one.png"},{"url":"https://cdn.example.test/two.png"}]}`, 1))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "quantity", "subscription_quota_units", "result_image_count", "result_json_fallback"}).
+			AddRow("queued", 7, 1, 0, nil).
+			AddRow("success", 3, 1, 2, nil))
 	mock.ExpectExec(`UPDATE user_subscriptions`).
 		WithArgs("new-plan", subscriptionSnapshotMatcher{
 			quota: 141, name: "新套餐", providerID: "provider-new", modelID: "model-new",
@@ -104,6 +104,30 @@ func TestGrantSubscriptionDoesNotCarryExpiredQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCancelSubscriptionMarksActiveSubscriptionCanceled(t *testing.T) {
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT status, expires_at FROM user_subscriptions WHERE user_id=\? FOR UPDATE`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"status", "expires_at"}).AddRow("active", time.Now().Add(time.Hour)))
+	mock.ExpectExec(`UPDATE user_subscriptions SET status='canceled', updated_at=CURRENT_TIMESTAMP WHERE user_id=\? AND status='active'`).
+		WithArgs("user-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	if err := NewRepository(database.Wrap(rawDB)).CancelSubscription(context.Background(), "user-1"); err != nil {
 		t.Fatal(err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

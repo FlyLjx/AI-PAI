@@ -58,7 +58,6 @@ const (
 )
 
 const (
-	compatTaskClientWaitTimeout = 290 * time.Second
 	compatTaskLogWaitTimeout    = 30 * time.Minute
 	maxCompatReferenceImages    = 4
 	compatImageResultModeHeader = "X-Aipi-Image-Result-Mode"
@@ -311,11 +310,12 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 	}()
 
 	var result compatTaskResult
+	clientWaitTimeout := compatTaskWaitTimeout(r.taskProcessingTimeout())
 	select {
 	case result = <-resultCh:
 	case <-req.Context().Done():
 		return
-	case <-time.After(compatTaskClientWaitTimeout):
+	case <-time.After(clientWaitTimeout):
 		writeOpenAIError(w, http.StatusGatewayTimeout, "图片生成超时", "api_error")
 		return
 	}

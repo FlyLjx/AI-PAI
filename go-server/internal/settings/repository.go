@@ -12,6 +12,7 @@ import (
 )
 
 var ErrInvalidRechargeRate = errors.New("充值比例必须大于 0")
+var ErrInvalidTaskTimeout = errors.New("API 请求超时必须是 1 到 120 分钟的整数")
 var ErrInvalidDynamicConcurrency = errors.New("动态并发配置不正确")
 var ErrInvalidInviteSettings = errors.New("邀请奖励或注册风控配置不正确")
 var ErrInvalidAdminNotification = errors.New("管理员通知配置不正确")
@@ -66,6 +67,13 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 			}
 			value = rate
 		}
+		if key == "taskTimeoutMinutes" {
+			number, ok := numericSettingValue(value)
+			if !ok || number < MinTaskTimeoutMinutes || number > MaxTaskTimeoutMinutes || math.Trunc(number) != number || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, ErrInvalidTaskTimeout
+			}
+			value = number
+		}
 		if key == "dynamicConcurrencyEnabled" {
 			if _, ok := value.(bool); !ok {
 				return nil, ErrInvalidDynamicConcurrency
@@ -114,6 +122,18 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 				return nil, ErrInvalidSystemLogCleanup
 			}
 			value = number
+		}
+		if key == "taskImageRetentionDays" {
+			number, ok := numericSettingValue(value)
+			if !ok || number < 1 || number > 3650 || math.Trunc(number) != number || math.IsNaN(number) || math.IsInf(number, 0) {
+				return nil, ErrInvalidSystemLogCleanup
+			}
+			value = number
+		}
+		if key == "taskImageAutoCleanupEnabled" {
+			if _, ok := value.(bool); !ok {
+				return nil, ErrInvalidSystemLogCleanup
+			}
 		}
 		if key == "inviteInviterRewardType" || key == "inviteInviteeRewardType" || key == "inviteRewardType" {
 			rewardType, ok := value.(string)
@@ -253,6 +273,12 @@ func parseValue(key string, value string) any {
 			return Defaults[key]
 		}
 		if key == "systemLogRetentionDays" && (number < 1 || number > 3650 || math.Trunc(number) != number) {
+			return Defaults[key]
+		}
+		if key == "taskImageRetentionDays" && (number < 1 || number > 3650 || math.Trunc(number) != number) {
+			return Defaults[key]
+		}
+		if key == "taskTimeoutMinutes" && (number < MinTaskTimeoutMinutes || number > MaxTaskTimeoutMinutes || math.Trunc(number) != number) {
 			return Defaults[key]
 		}
 		if isInviteRiskIntegerKey(key) && (number < 1 || number > 1000000 || math.Trunc(number) != number) {

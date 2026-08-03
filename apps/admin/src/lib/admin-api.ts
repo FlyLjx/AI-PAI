@@ -621,6 +621,7 @@ export const portalApi = {
   deleteUser: (id: string) => api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   verifyUserEmail: (id: string) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/verify-email`, { method: 'POST' }),
   grantSubscription: (id: string, input: Record<string, unknown>) => api(`/api/users/${encodeURIComponent(id)}/subscription`, { method: 'POST', body: JSON.stringify(input) }),
+  cancelSubscription: (id: string) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/subscription`, { method: 'DELETE' }),
   updateSubscriptionQuota: (id: string, input: { quotaRemaining: number; resetUsage: boolean }) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/subscription-quota`, { method: 'PATCH', body: JSON.stringify(input) }),
   providers: () => api<Record<string, unknown>[]>('/api/api-providers'),
   createProvider: (input: Record<string, unknown>) => api('/api/api-providers', { method: 'POST', body: JSON.stringify(input) }),

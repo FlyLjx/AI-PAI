@@ -33,11 +33,11 @@ func TestAdjustSubscriptionQuotaSetsExactRemainingAmount(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"plan_id", "plan_snapshot", "status", "started_at", "expires_at"}).
 			AddRow("plan-1", snapshot, "active", startedAt, expiresAt))
-	mock.ExpectQuery(`(?s)SELECT status, quantity, result_json, COALESCE\(subscription_quota_units, 1\).*FROM generation_tasks`).
+	mock.ExpectQuery(`(?s)SELECT generation_tasks\.status,.*result_image_count.*FROM generation_tasks`).
 		WithArgs("user-1", startedAt, expiresAt).
-		WillReturnRows(sqlmock.NewRows([]string{"status", "quantity", "result_json", "subscription_quota_units"}).
-			AddRow("processing", 2, nil, 2).
-			AddRow("success", 3, `{"data":[{"url":"https://cdn.example.test/one.png"},{"url":"https://cdn.example.test/two.png"}]}`, 3))
+		WillReturnRows(sqlmock.NewRows([]string{"status", "quantity", "subscription_quota_units", "result_image_count", "result_json_fallback"}).
+			AddRow("processing", 2, 2, 0, nil).
+			AddRow("success", 3, 3, 2, nil))
 	mock.ExpectExec(`UPDATE user_subscriptions SET plan_snapshot=\?, started_at=\?, updated_at=CURRENT_TIMESTAMP WHERE user_id=\?`).
 		WithArgs(subscriptionSnapshotMatcher{quota: 35, name: "专业版"}, startedAt, "user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))

@@ -3,21 +3,23 @@ package generation
 import (
 	"context"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"aipi-go/internal/database"
+	"aipi-go/internal/settings"
 	"aipi-go/internal/tasks"
 	"aipi-go/internal/users"
 )
 
 const (
-	taskProcessingTimeout      = 5 * time.Minute
-	taskTimeoutSweepInterval   = 30 * time.Second
-	taskTimeoutSweepBatchSize  = 500
-	taskTimeoutSweepMaxBatches = 10
-	taskTimeoutMessage         = "任务处理超时（超过 5 分钟）"
+	defaultTaskProcessingTimeout = settings.DefaultTaskTimeoutMinutes * time.Minute
+	taskTimeoutSettingsCacheTTL  = 15 * time.Second
+	taskTimeoutSweepInterval     = 30 * time.Second
+	taskTimeoutSweepBatchSize    = 500
+	taskTimeoutSweepMaxBatches   = 10
 )
 
 type Queue struct {
@@ -26,6 +28,7 @@ type Queue struct {
 	unlimited bool
 	service   *Service
 	logger    *slog.Logger
+	settings  *settings.Repository
 	started   bool
 	mu        sync.Mutex
 	shutdown  chan struct{}
@@ -33,6 +36,9 @@ type Queue struct {
 	active    map[string]context.CancelFunc
 	paused    bool
 	pausedAt  time.Time
+	timeoutMu sync.RWMutex
+	timeout   time.Duration
+	timeoutAt time.Time
 }
 
 type Job struct {
@@ -61,6 +67,7 @@ func NewQueue(db *database.DB, logger *slog.Logger, workers int, hub *tasks.Hub,
 		unlimited: unlimited,
 		service:   NewService(db, logger, hub, userHub),
 		logger:    logger,
+		settings:  settings.NewRepository(db),
 		shutdown:  make(chan struct{}),
 	}
 }
@@ -138,12 +145,14 @@ func (q *Queue) process(job Job, workerID any) {
 	release := q.acquireScope(job.ConcurrencyScope, job.ConcurrencyLimit)
 	defer release()
 
-	ctx, cancel := context.WithTimeout(context.Background(), taskProcessingTimeout)
+	processingTimeout := q.taskProcessingTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), processingTimeout)
 	q.registerActiveTask(job.TaskID, cancel)
 	defer q.unregisterActiveTask(job.TaskID)
 	err := q.service.ProcessWithOptions(ctx, job.TaskID, ProcessOptions{
 		ImageResponseFormat: job.ImageResponseFormat,
 		ImageQuality:        job.ImageQuality,
+		ProcessingTimeout:   processingTimeout,
 	})
 	cancel()
 	if err != nil {
@@ -209,15 +218,16 @@ func (q *Queue) watchTimedOutTasks() {
 }
 
 func (q *Queue) sweepTimedOutTasks() {
+	processingTimeout := q.taskProcessingTimeout()
 	for batch := 0; batch < taskTimeoutSweepMaxBatches; batch++ {
 		now := time.Now()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		var ids []string
 		var err error
 		if q.Paused() {
-			ids, err = q.service.FailTimedOutProcessing(ctx, now.Add(-taskProcessingTimeout), now, taskTimeoutSweepBatchSize)
+			ids, err = q.service.FailTimedOutProcessing(ctx, now.Add(-processingTimeout), now, timeoutMessage(processingTimeout), taskTimeoutSweepBatchSize)
 		} else {
-			ids, err = q.service.FailTimedOut(ctx, now.Add(-taskProcessingTimeout), now, taskTimeoutSweepBatchSize)
+			ids, err = q.service.FailTimedOut(ctx, now.Add(-processingTimeout), now, timeoutMessage(processingTimeout), taskTimeoutSweepBatchSize)
 		}
 		cancel()
 		for _, id := range ids {
@@ -231,6 +241,53 @@ func (q *Queue) sweepTimedOutTasks() {
 			return
 		}
 	}
+}
+
+func (q *Queue) taskProcessingTimeout() time.Duration {
+	q.timeoutMu.RLock()
+	timeout, loadedAt := q.timeout, q.timeoutAt
+	q.timeoutMu.RUnlock()
+	if timeout > 0 && time.Since(loadedAt) < taskTimeoutSettingsCacheTTL {
+		return timeout
+	}
+	if q.settings != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		values, err := q.settings.Get(ctx)
+		cancel()
+		if err == nil {
+			timeout = settings.TaskTimeout(values)
+			q.SetTaskProcessingTimeout(timeout)
+			return timeout
+		}
+		if q.logger != nil {
+			q.logger.Warn("task timeout settings lookup failed", "error", err)
+		}
+	}
+	if timeout <= 0 {
+		timeout = defaultTaskProcessingTimeout
+	}
+	return timeout
+}
+
+// SetTaskProcessingTimeout refreshes the queue deadline immediately after an
+// administrator changes the setting. The periodic lookup remains as a safety
+// net for changes made outside the admin API.
+func (q *Queue) SetTaskProcessingTimeout(timeout time.Duration) {
+	if timeout <= 0 {
+		timeout = defaultTaskProcessingTimeout
+	}
+	q.timeoutMu.Lock()
+	q.timeout = timeout
+	q.timeoutAt = time.Now()
+	q.timeoutMu.Unlock()
+}
+
+func timeoutMessage(timeout time.Duration) string {
+	minutes := int(timeout / time.Minute)
+	if minutes < 1 {
+		minutes = 1
+	}
+	return "任务处理超时（超过 " + strconv.Itoa(minutes) + " 分钟）"
 }
 
 func (q *Queue) TouchWaitingTasks(ctx context.Context) error {

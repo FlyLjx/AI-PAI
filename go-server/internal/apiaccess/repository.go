@@ -449,12 +449,11 @@ func (r *Repository) ListLogs(ctx context.Context, input ListLogsInput) ([]Usage
 	page, pageSize, offset := normalizePage(input.Page, input.PageSize)
 	_ = page
 	where, args := buildLogWhere(input)
+	countFrom := logCountFrom(input)
 	var total int
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM api_access_logs
-		LEFT JOIN users ON users.id = api_access_logs.user_id
-		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+		`+countFrom+`
 		`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -480,6 +479,7 @@ func (r *Repository) ListLogs(ctx context.Context, input ListLogsInput) ([]Usage
 
 func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageStats, error) {
 	where, args := buildLogWhere(input)
+	countFrom := logCountFrom(input)
 	var stats UsageStats
 	err := r.db.QueryRowContext(ctx, `
 		SELECT
@@ -489,9 +489,7 @@ func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageSt
 			COALESCE(SUM(api_access_logs.image_count), 0) AS image_count,
 			COALESCE(SUM(api_access_logs.charged_credits), 0) AS charged_credits,
 			COALESCE(SUM(api_access_logs.model_cost_credits), 0) AS model_cost_credits
-		FROM api_access_logs
-		LEFT JOIN users ON users.id = api_access_logs.user_id
-		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+		`+countFrom+`
 		`+where, args...).Scan(
 		&stats.Total,
 		&stats.Success,
@@ -501,6 +499,19 @@ func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageSt
 		&stats.ModelCostCredits,
 	)
 	return stats, err
+}
+
+// logCountFrom keeps the COUNT/aggregate queries index-friendly for the
+// common case. User/key joins are only needed when a keyword searches fields
+// owned by those tables; filtering by IDs and status can be done directly on
+// api_access_logs.
+func logCountFrom(input ListLogsInput) string {
+	if strings.TrimSpace(input.Keyword) == "" {
+		return "FROM api_access_logs"
+	}
+	return `FROM api_access_logs
+		LEFT JOIN users ON users.id = api_access_logs.user_id
+		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id`
 }
 
 func (r *Repository) DailyUsageTrend(ctx context.Context, userID string, startAt time.Time, endAt time.Time) ([]UsageTrendPoint, error) {
@@ -959,7 +970,7 @@ func (r *Repository) AdminStats(ctx context.Context) (AdminStats, error) {
 			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS today_failed,
 			COALESCE(SUM(CASE WHEN status = 'success' THEN image_count ELSE 0 END), 0) AS today_image_count
 		FROM api_access_logs
-		WHERE DATE(created_at) = CURRENT_DATE
+		WHERE created_at >= CURRENT_DATE
 	`).Scan(&stats.TodayRequests, &stats.TodaySuccess, &stats.TodayFailed, &stats.TodayImageCount); err != nil {
 		return stats, err
 	}

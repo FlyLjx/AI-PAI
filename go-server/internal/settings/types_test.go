@@ -1,6 +1,9 @@
 package settings
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestSupportGroupSettingsArePublic(t *testing.T) {
 	values := Settings{
@@ -57,5 +60,26 @@ func TestSystemLogCleanupDefaults(t *testing.T) {
 	}
 	if _, ok := Public(Defaults)["systemLogRetentionDays"]; ok {
 		t.Fatal("system log retention must remain admin-only")
+	}
+}
+
+func TestTaskImageCleanupDefaults(t *testing.T) {
+	if Defaults["taskImageAutoCleanupEnabled"] != true {
+		t.Fatalf("default task image cleanup enabled = %v, want true", Defaults["taskImageAutoCleanupEnabled"])
+	}
+	if Defaults["taskImageRetentionDays"] != float64(1) {
+		t.Fatalf("default task image retention days = %v, want 1", Defaults["taskImageRetentionDays"])
+	}
+	if _, ok := Public(Defaults)["taskImageRetentionDays"]; ok {
+		t.Fatal("task image retention must remain admin-only")
+	}
+}
+
+func TestTaskTimeout(t *testing.T) {
+	if got := TaskTimeout(Settings{"taskTimeoutMinutes": float64(10)}); got != 10*time.Minute {
+		t.Fatalf("task timeout = %s, want 10m", got)
+	}
+	if got := TaskTimeout(Settings{"taskTimeoutMinutes": float64(0)}); got != DefaultTaskTimeoutMinutes*time.Minute {
+		t.Fatalf("invalid task timeout = %s, want default 5m", got)
 	}
 }

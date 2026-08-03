@@ -75,6 +75,18 @@ func (r *Router) publicUserWithSubscription(ctx context.Context, user *users.Use
 	return publicUser
 }
 
+func (r *Router) publicUserWithSubscriptionLimits(ctx context.Context, user *users.User, limits operations.FreeQuotaLimits) users.PublicUser {
+	if user == nil || user.ID == "" {
+		return users.PublicUser{}
+	}
+	publicUser := users.ToPublicUser(user)
+	subscription, err := r.currentSubscriptionEntitlementWithLimits(ctx, user.ID, limits)
+	if err == nil {
+		publicUser.Subscription = subscription
+	}
+	return publicUser
+}
+
 func (r *Router) publishCurrentUser(ctx context.Context, userID string) {
 	if r.userHub == nil || strings.TrimSpace(userID) == "" {
 		return
@@ -515,21 +527,60 @@ func (r *Router) listUsers(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
+	// Read the small settings table once. Calling publicUserWithSubscription
+	// for every row used to reload these settings for each user.
+	values, err := settings.NewRepository(r.db).Get(ctx)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	freeLimits := operations.FreeQuotaLimits{
+		Hourly:  generationQuotaSetting(values["freeHourlyGenerationQuota"], defaultFreeHourlyGenerationQuota),
+		Daily:   generationQuotaSetting(values["freeDailyGenerationQuota"], defaultFreeDailyGenerationQuota),
+		Monthly: generationQuotaSetting(values["freeGenerationQuota"], defaultFreeGenerationQuota),
+	}
 	data := make([]users.PublicUser, 0, len(items))
 	for index := range items {
 		item := items[index]
-		data = append(data, r.publicUserWithSubscription(ctx, &item))
+		data = append(data, r.publicUserWithSubscriptionLimits(ctx, &item, freeLimits))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
 func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request, id string) {
-	if req.Method != http.MethodPost {
+	if req.Method != http.MethodPost && req.Method != http.MethodDelete {
 		writeMethodNotAllowed(w)
 		return
 	}
 	if _, err := r.requireAdmin(req); err != nil {
 		writeError(w, err)
+		return
+	}
+	id = strings.Trim(id, "/")
+	if id == "" {
+		writeError(w, newAppError(http.StatusBadRequest, "请选择用户"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	repo := operations.NewRepository(r.db)
+	if req.Method == http.MethodDelete {
+		if err := repo.CancelSubscription(ctx, id); err != nil {
+			if errors.Is(err, operations.ErrNoActiveSubscription) {
+				writeError(w, newAppError(http.StatusConflict, "该用户没有生效中的订阅"))
+				return
+			}
+			writeError(w, err)
+			return
+		}
+		user, err := users.NewRepository(r.db).FindByID(ctx, id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		data := r.publicUserWithSubscription(ctx, user)
+		r.publishCurrentUser(context.Background(), id)
+		writeJSON(w, http.StatusOK, map[string]any{"data": data})
 		return
 	}
 	var input struct {
@@ -543,7 +594,6 @@ func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request,
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
 		return
 	}
-	id = strings.Trim(id, "/")
 	input.GrantType = strings.ToLower(strings.TrimSpace(input.GrantType))
 	input.PlanID = strings.TrimSpace(input.PlanID)
 	if input.GrantType == "" {
@@ -553,9 +603,6 @@ func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request,
 		writeError(w, newAppError(http.StatusBadRequest, "请选择用户"))
 		return
 	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	repo := operations.NewRepository(r.db)
 	var grantErr error
 	switch input.GrantType {
 	case "custom":

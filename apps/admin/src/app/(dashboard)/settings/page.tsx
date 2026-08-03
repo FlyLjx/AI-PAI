@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CreditCard, Gauge, Gift, Loader2, Mail, RefreshCw, Save, Server, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { CreditCard, Gauge, Gift, Loader2, Mail, RefreshCw, Save, Server, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -16,6 +16,8 @@ type SettingsForm = {
   registerMode: 'open' | 'closed';
   registerEmailVerification: boolean;
   taskTimeoutMinutes: number;
+  taskImageAutoCleanupEnabled: boolean;
+  taskImageRetentionDays: number;
   dynamicConcurrencyEnabled: boolean;
   dynamicConcurrencyWindowValue: number;
   dynamicConcurrencyWindowUnit: 'minute' | 'hour';
@@ -68,7 +70,9 @@ const emptySettings: SettingsForm = {
   backendUrl: '',
   registerMode: 'open',
   registerEmailVerification: false,
-  taskTimeoutMinutes: 3,
+  taskTimeoutMinutes: 5,
+  taskImageAutoCleanupEnabled: true,
+  taskImageRetentionDays: 1,
   dynamicConcurrencyEnabled: true,
   dynamicConcurrencyWindowValue: 1,
   dynamicConcurrencyWindowUnit: 'hour',
@@ -138,7 +142,9 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     backendUrl: String(data.backendUrl || ''),
     registerMode: data.registerMode === 'closed' ? 'closed' : 'open',
     registerEmailVerification: Boolean(data.registerEmailVerification),
-    taskTimeoutMinutes: positiveInteger(data.taskTimeoutMinutes, 3),
+    taskTimeoutMinutes: positiveInteger(data.taskTimeoutMinutes, 5),
+    taskImageAutoCleanupEnabled: data.taskImageAutoCleanupEnabled !== false,
+    taskImageRetentionDays: positiveInteger(data.taskImageRetentionDays, 1),
     dynamicConcurrencyEnabled: data.dynamicConcurrencyEnabled !== false,
     dynamicConcurrencyWindowValue: positiveInteger(data.dynamicConcurrencyWindowValue, 1),
     dynamicConcurrencyWindowUnit: data.dynamicConcurrencyWindowUnit === 'minute' ? 'minute' : 'hour',
@@ -226,6 +232,7 @@ export default function AdminSettingsPage() {
     event.preventDefault();
     if (!form.siteName.trim() || !form.logoText.trim()) return toast.error('请填写站点名称和 Logo 文字');
     if (form.taskTimeoutMinutes < 1) return toast.error('API 请求超时至少 1 分钟');
+    if (!Number.isSafeInteger(form.taskImageRetentionDays) || form.taskImageRetentionDays < 1 || form.taskImageRetentionDays > 3650) return toast.error('图片缓存保留天数必须是 1 到 3650 的整数');
     if (!Number.isSafeInteger(form.dynamicConcurrencyWindowValue) || form.dynamicConcurrencyWindowValue < 1) return toast.error('动态并发统计窗口必须是大于 0 的整数');
     if (!Number.isSafeInteger(form.dynamicConcurrencyRequestStep) || form.dynamicConcurrencyRequestStep < 1) return toast.error('每档调用次数必须是大于 0 的整数');
     if (!Number.isSafeInteger(form.dynamicConcurrencyIncrement) || form.dynamicConcurrencyIncrement < 1) return toast.error('每档增加并发必须是大于 0 的整数');
@@ -246,7 +253,7 @@ export default function AdminSettingsPage() {
         logoText: form.logoText.trim(),
         frontendUrl: form.frontendUrl.trim(),
         backendUrl: form.backendUrl.trim(),
-        taskTimeoutMinutes: Number(form.taskTimeoutMinutes || 3),
+        taskTimeoutMinutes: Number(form.taskTimeoutMinutes || 5),
         rechargeRate: Number(form.rechargeRate),
         inviteRewardType: form.inviteInviterRewardType,
         inviteRewardPlanId: form.inviteInviterRewardPlanId,
@@ -383,6 +390,17 @@ export default function AdminSettingsPage() {
                 <div><span className="mb-1 block text-[11px] font-semibold text-zinc-500">当前规则</span><p className="flex min-h-[34px] items-center rounded-md bg-[#F6F8F6] px-3 text-[11px] text-zinc-600">{form.dynamicConcurrencyEnabled ? `${form.dynamicConcurrencyWindowValue} ${form.dynamicConcurrencyWindowUnit === 'minute' ? '分钟' : '小时'}内每调用 ${form.dynamicConcurrencyRequestStep} 次，并发 +${form.dynamicConcurrencyIncrement}` : '仅使用各 Key 的基础并发'}</p></div>
               </div>
               <p className="text-[10px] text-zinc-400">动态并发不设上限。每个 Key 的基础并发仍可在“API 调用”页面单独调整。</p>
+            </section>
+
+            <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:col-span-2">
+              <div className="flex items-center justify-between gap-4 border-b border-[#DCE4DF] pb-2.5">
+                <div className="flex items-center gap-2"><Trash2 className="h-4 w-4 text-[#B42318]" /><div><h2 className="text-xs font-semibold">图片缓存清理</h2><p className="mt-0.5 text-[10px] text-zinc-400">定期删除 logs/task-images 中过期的本地图片，不影响任务记录和数据库数据</p></div></div>
+                <label className="flex shrink-0 items-center gap-2 text-[11px] font-semibold text-zinc-500"><input type="checkbox" checked={form.taskImageAutoCleanupEnabled} onChange={(event) => updateField('taskImageAutoCleanupEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />启用</label>
+              </div>
+              <div className={`grid grid-cols-1 gap-4 sm:grid-cols-[220px_minmax(0,1fr)] ${form.taskImageAutoCleanupEnabled ? '' : 'opacity-50'}`}>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">缓存保留天数</span><div className="flex h-[34px] items-center overflow-hidden rounded-md border border-[#DCE4DF] bg-white"><input disabled={!form.taskImageAutoCleanupEnabled} min={1} max={3650} step={1} type="number" value={form.taskImageRetentionDays} onChange={(event) => updateField('taskImageRetentionDays', Number(event.target.value))} className="min-w-0 flex-1 border-0 px-3 font-mono text-xs outline-none disabled:bg-zinc-50" /><span className="border-l border-[#DCE4DF] bg-[#F8FAF8] px-3 text-[11px] font-semibold text-zinc-500">天</span></div></label>
+                <div><span className="mb-1 block text-[11px] font-semibold text-zinc-500">清理规则</span><p className="flex min-h-[34px] items-center rounded-md bg-[#F6F8F6] px-3 text-[11px] text-zinc-600">每小时检查一次，超过 {form.taskImageRetentionDays} 天未更新的任务图片目录会被删除；任务、调用记录和上游地址继续保留。</p></div>
+              </div>
             </section>
 
             <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:border-b-0 xl:border-r">

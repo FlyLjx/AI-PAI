@@ -32,7 +32,7 @@ func (r *Router) settings(w http.ResponseWriter, req *http.Request) {
 		defer cancel()
 		data, err := settings.NewRepository(r.db).Update(ctx, input)
 		if err != nil {
-			if errors.Is(err, settings.ErrInvalidRechargeRate) || errors.Is(err, settings.ErrInvalidDynamicConcurrency) || errors.Is(err, settings.ErrInvalidInviteSettings) || errors.Is(err, settings.ErrInvalidAdminNotification) || errors.Is(err, settings.ErrInvalidSystemLogCleanup) {
+			if errors.Is(err, settings.ErrInvalidRechargeRate) || errors.Is(err, settings.ErrInvalidTaskTimeout) || errors.Is(err, settings.ErrInvalidDynamicConcurrency) || errors.Is(err, settings.ErrInvalidInviteSettings) || errors.Is(err, settings.ErrInvalidAdminNotification) || errors.Is(err, settings.ErrInvalidSystemLogCleanup) {
 				writeError(w, newAppError(http.StatusBadRequest, err.Error()))
 				return
 			}
@@ -40,6 +40,10 @@ func (r *Router) settings(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 		r.cacheDynamicConcurrencyConfig(dynamicConcurrencyConfigFromSettings(data))
+		r.cacheTaskProcessingTimeout(settings.TaskTimeout(data))
+		if r.queue != nil {
+			r.queue.SetTaskProcessingTimeout(settings.TaskTimeout(data))
+		}
 		if _, hasMaintenanceFlag := input["upstreamMaintenanceEnabled"]; hasMaintenanceFlag {
 			enabled := anyBool(data["upstreamMaintenanceEnabled"])
 			if !enabled && r.queue != nil {
@@ -90,6 +94,10 @@ func (r *Router) accountPoolSettings(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		writeError(w, err)
 		return
+	}
+	r.cacheTaskProcessingTimeout(settings.TaskTimeout(data))
+	if r.queue != nil {
+		r.queue.SetTaskProcessingTimeout(settings.TaskTimeout(data))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 		"accountPoolEndpoint":   data["accountPoolEndpoint"],

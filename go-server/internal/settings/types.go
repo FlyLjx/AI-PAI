@@ -1,5 +1,27 @@
 package settings
 
+import (
+	"math"
+	"time"
+)
+
+const (
+	MinTaskTimeoutMinutes     = 1
+	MaxTaskTimeoutMinutes     = 120
+	DefaultTaskTimeoutMinutes = 5
+)
+
+// TaskTimeout converts the persisted API timeout setting to a duration. The
+// fallback is intentionally the historical five-minute timeout so a missing
+// or malformed setting never leaves a task without a deadline.
+func TaskTimeout(values Settings) time.Duration {
+	minutes, ok := values["taskTimeoutMinutes"].(float64)
+	if !ok || math.IsNaN(minutes) || math.IsInf(minutes, 0) || minutes < MinTaskTimeoutMinutes || minutes > MaxTaskTimeoutMinutes {
+		return DefaultTaskTimeoutMinutes * time.Minute
+	}
+	return time.Duration(minutes * float64(time.Minute))
+}
+
 type Settings map[string]any
 
 var Defaults = Settings{
@@ -49,9 +71,11 @@ var Defaults = Settings{
 	"freeHourlyGenerationQuota":            float64(2),
 	"freeDailyGenerationQuota":             float64(5),
 	"freeGenerationQuota":                  float64(10),
-	"taskTimeoutMinutes":                   float64(3),
+	"taskTimeoutMinutes":                   float64(DefaultTaskTimeoutMinutes),
 	"systemLogAutoCleanupEnabled":          false,
 	"systemLogRetentionDays":               float64(30),
+	"taskImageAutoCleanupEnabled":          true,
+	"taskImageRetentionDays":               float64(1),
 	"streamGenerationEnabled":              false,
 	"dynamicConcurrencyEnabled":            true,
 	"dynamicConcurrencyWindowValue":        float64(1),

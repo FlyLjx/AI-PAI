@@ -15,7 +15,7 @@ import (
 
 const upstreamDuplicateGuardAttempts = 3
 
-var ErrTaskTimedOut = errors.New(taskTimeoutMessage)
+var ErrTaskTimedOut = errors.New("任务处理超时")
 
 func (s *Service) Process(ctx context.Context, taskID string) error {
 	return s.ProcessWithOptions(ctx, taskID, ProcessOptions{})
@@ -24,6 +24,7 @@ func (s *Service) Process(ctx context.Context, taskID string) error {
 type ProcessOptions struct {
 	ImageResponseFormat string
 	ImageQuality        string
+	ProcessingTimeout   time.Duration
 }
 
 func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options ProcessOptions) error {
@@ -55,7 +56,11 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 
 	model, provider, err := modelAndProvider(ctx, s.db, task)
 	if err != nil {
-		err = normalizeTaskProcessingError(err)
+		if errors.Is(err, context.DeadlineExceeded) {
+			err = newTaskTimeoutError(options.ProcessingTimeout)
+		} else {
+			err = normalizeTaskProcessingError(err)
+		}
 		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
@@ -156,7 +161,11 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		}
 	}
 	if lastErr != nil {
-		lastErr = normalizeTaskProcessingError(lastErr)
+		if errors.Is(lastErr, context.DeadlineExceeded) {
+			lastErr = newTaskTimeoutError(options.ProcessingTimeout)
+		} else {
+			lastErr = normalizeTaskProcessingError(lastErr)
+		}
 		if errors.Is(lastErr, context.Canceled) {
 			if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil && finalTask.Status == tasks.StatusCanceled {
 				s.syncAPIAccessLogForTask(finalTask)
@@ -229,15 +238,26 @@ func normalizeTaskProcessingError(err error) error {
 	return err
 }
 
-func (s *Service) FailTimedOut(ctx context.Context, cutoff time.Time, now time.Time, limit int) ([]string, error) {
-	ids, err := s.tasks.FailTimedOut(ctx, cutoff, now, taskTimeoutMessage, limit)
+func newTaskTimeoutError(timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = defaultTaskProcessingTimeout
+	}
+	minutes := int(timeout / time.Minute)
+	if minutes < 1 {
+		minutes = 1
+	}
+	return fmt.Errorf("%w（超过 %d 分钟）", ErrTaskTimedOut, minutes)
+}
+
+func (s *Service) FailTimedOut(ctx context.Context, cutoff time.Time, now time.Time, message string, limit int) ([]string, error) {
+	ids, err := s.tasks.FailTimedOut(ctx, cutoff, now, message, limit)
 	if err != nil {
 		return ids, err
 	}
 	logRepository := apiaccess.NewRepository(s.db)
 	var syncErr error
 	for _, id := range ids {
-		if err := logRepository.FinishLogsForTask(ctx, id, "failed", 0, taskTimeoutMessage); err != nil {
+		if err := logRepository.FinishLogsForTask(ctx, id, "failed", 0, message); err != nil {
 			syncErr = errors.Join(syncErr, err)
 		}
 		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
@@ -246,21 +266,21 @@ func (s *Service) FailTimedOut(ctx context.Context, cutoff time.Time, now time.T
 			}
 		}
 		if s.logger != nil {
-			s.logger.Warn("generation task timed out", "taskId", id, "timeout", taskProcessingTimeout.String())
+			s.logger.Warn("generation task timed out", "taskId", id, "timeout", message)
 		}
 	}
 	return ids, syncErr
 }
 
-func (s *Service) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, now time.Time, limit int) ([]string, error) {
-	ids, err := s.tasks.FailTimedOutProcessing(ctx, cutoff, now, taskTimeoutMessage, limit)
+func (s *Service) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, now time.Time, message string, limit int) ([]string, error) {
+	ids, err := s.tasks.FailTimedOutProcessing(ctx, cutoff, now, message, limit)
 	if err != nil {
 		return ids, err
 	}
 	logRepository := apiaccess.NewRepository(s.db)
 	var syncErr error
 	for _, id := range ids {
-		if err := logRepository.FinishLogsForTask(ctx, id, "failed", 0, taskTimeoutMessage); err != nil {
+		if err := logRepository.FinishLogsForTask(ctx, id, "failed", 0, message); err != nil {
 			syncErr = errors.Join(syncErr, err)
 		}
 		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
@@ -269,7 +289,7 @@ func (s *Service) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, 
 			}
 		}
 		if s.logger != nil {
-			s.logger.Warn("generation task timed out", "taskId", id, "timeout", taskProcessingTimeout.String())
+			s.logger.Warn("generation task timed out", "taskId", id, "timeout", message)
 		}
 	}
 	return ids, syncErr

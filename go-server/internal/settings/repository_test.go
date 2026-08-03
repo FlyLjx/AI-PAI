@@ -28,6 +28,36 @@ func TestUpdateRejectsInvalidRechargeRate(t *testing.T) {
 	}
 }
 
+func TestUpdateRejectsInvalidTaskTimeout(t *testing.T) {
+	for _, value := range []float64{0, 1.5, 121} {
+		rawDB, mock, err := sqlmock.New()
+		if err != nil {
+			t.Fatal(err)
+		}
+		mock.ExpectBegin()
+		mock.ExpectRollback()
+		_, err = NewRepository(database.Wrap(rawDB)).Update(context.Background(), Settings{"taskTimeoutMinutes": value})
+		if !errors.Is(err, ErrInvalidTaskTimeout) {
+			t.Fatalf("value %v error = %v, want ErrInvalidTaskTimeout", value, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Fatal(err)
+		}
+		rawDB.Close()
+	}
+}
+
+func TestParseTaskTimeoutFallsBackToDefault(t *testing.T) {
+	for _, value := range []string{"0", "1.5", "121", "invalid"} {
+		if got := parseValue("taskTimeoutMinutes", value); got != Defaults["taskTimeoutMinutes"] {
+			t.Fatalf("parseValue(taskTimeoutMinutes, %q) = %v, want %v", value, got, Defaults["taskTimeoutMinutes"])
+		}
+	}
+	if got := parseValue("taskTimeoutMinutes", "10"); got != float64(10) {
+		t.Fatalf("valid task timeout = %v, want 10", got)
+	}
+}
+
 func TestParseInvalidRechargeRateFallsBackToDefault(t *testing.T) {
 	for _, value := range []string{"0", "-1", "invalid"} {
 		if got := parseValue("rechargeRate", value); got != float64(10) {
@@ -178,6 +208,10 @@ func TestUpdateRejectsInvalidSystemLogCleanupSettings(t *testing.T) {
 		{"systemLogRetentionDays": float64(0)},
 		{"systemLogRetentionDays": float64(1.5)},
 		{"systemLogRetentionDays": float64(3651)},
+		{"taskImageAutoCleanupEnabled": "true"},
+		{"taskImageRetentionDays": float64(0)},
+		{"taskImageRetentionDays": float64(1.5)},
+		{"taskImageRetentionDays": float64(3651)},
 	}
 	for _, input := range tests {
 		rawDB, mock, err := sqlmock.New()
@@ -205,5 +239,16 @@ func TestParseInvalidSystemLogRetentionDaysFallsBackToDefault(t *testing.T) {
 	}
 	if got := parseValue("systemLogRetentionDays", "90"); got != float64(90) {
 		t.Fatalf("valid retention days = %v, want 90", got)
+	}
+}
+
+func TestParseInvalidTaskImageRetentionDaysFallsBackToDefault(t *testing.T) {
+	for _, value := range []string{"0", "1.5", "3651", "invalid"} {
+		if got := parseValue("taskImageRetentionDays", value); got != Defaults["taskImageRetentionDays"] {
+			t.Fatalf("parseValue(taskImageRetentionDays, %q) = %v, want %v", value, got, Defaults["taskImageRetentionDays"])
+		}
+	}
+	if got := parseValue("taskImageRetentionDays", "7"); got != float64(7) {
+		t.Fatalf("valid task image retention days = %v, want 7", got)
 	}
 }
