@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CreditCard, Gauge, Gift, Loader2, Mail, RefreshCw, Save, Server, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
+import { CreditCard, Gauge, Gift, Headset, Loader2, Mail, RefreshCw, Save, Server, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -13,6 +13,16 @@ type SettingsForm = {
   logoText: string;
   frontendUrl: string;
   backendUrl: string;
+  supportEnabled: boolean;
+  supportTitle: string;
+  supportDescription: string;
+  supportWechat: string;
+  supportQq: string;
+  supportGroupNumber: string;
+  supportGroupUrl: string;
+  supportEmail: string;
+  supportUrl: string;
+  supportQrCodeUrl: string;
   registerMode: 'open' | 'closed';
   registerEmailVerification: boolean;
   taskTimeoutMinutes: number;
@@ -68,6 +78,16 @@ const emptySettings: SettingsForm = {
   logoText: 'AI-PAI',
   frontendUrl: '',
   backendUrl: '',
+  supportEnabled: true,
+  supportTitle: '联系客服',
+  supportDescription: '遇到充值、生成或账号问题，可以通过下面方式联系管理员。',
+  supportWechat: '',
+  supportQq: '',
+  supportGroupNumber: '',
+  supportGroupUrl: '',
+  supportEmail: '',
+  supportUrl: '',
+  supportQrCodeUrl: '',
   registerMode: 'open',
   registerEmailVerification: false,
   taskTimeoutMinutes: 5,
@@ -140,6 +160,16 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     logoText: String(data.logoText || data.siteName || 'AI-PAI'),
     frontendUrl: String(data.frontendUrl || ''),
     backendUrl: String(data.backendUrl || ''),
+    supportEnabled: data.supportEnabled !== false && data.supportEnabled !== 'false',
+    supportTitle: String(data.supportTitle || '联系客服'),
+    supportDescription: String(data.supportDescription || '遇到充值、生成或账号问题，可以通过下面方式联系管理员。'),
+    supportWechat: String(data.supportWechat || ''),
+    supportQq: String(data.supportQq || ''),
+    supportGroupNumber: String(data.supportGroupNumber || ''),
+    supportGroupUrl: String(data.supportGroupUrl || ''),
+    supportEmail: String(data.supportEmail || ''),
+    supportUrl: String(data.supportUrl || ''),
+    supportQrCodeUrl: String(data.supportQrCodeUrl || ''),
     registerMode: data.registerMode === 'closed' ? 'closed' : 'open',
     registerEmailVerification: Boolean(data.registerEmailVerification),
     taskTimeoutMinutes: positiveInteger(data.taskTimeoutMinutes, 5),
@@ -317,6 +347,24 @@ export default function AdminSettingsPage() {
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">前端地址</span><input type="url" value={form.frontendUrl} onChange={(event) => updateField('frontendUrl', event.target.value)} placeholder="https://portal.example.com" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">Go 后端地址</span><input type="url" value={form.backendUrl} onChange={(event) => updateField('backendUrl', event.target.value)} placeholder="https://api.example.com" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">API 请求超时（分钟）</span><input min={1} max={120} type="number" value={form.taskTimeoutMinutes} onChange={(event) => updateField('taskTimeoutMinutes', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:col-span-2">
+              <div className="flex items-center justify-between gap-4 border-b border-[#DCE4DF] pb-2.5">
+                <div className="flex items-center gap-2"><Headset className="h-4 w-4 text-[#047857]" /><div><h2 className="text-xs font-semibold">客服入口</h2><p className="mt-0.5 text-[10px] text-zinc-400">前台首页、登录页和用户中心均会显示联系客服按钮</p></div></div>
+                <label className="flex shrink-0 items-center gap-2 text-[11px] font-semibold text-zinc-500"><input type="checkbox" checked={form.supportEnabled} onChange={(event) => updateField('supportEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" />开启</label>
+              </div>
+              <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4 ${form.supportEnabled ? '' : 'opacity-50'}`}>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">客服标题</span><input disabled={!form.supportEnabled} value={form.supportTitle} onChange={(event) => updateField('supportTitle', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs disabled:bg-zinc-50" /></label>
+                <label className="sm:col-span-2 xl:col-span-3"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">客服说明</span><input disabled={!form.supportEnabled} value={form.supportDescription} onChange={(event) => updateField('supportDescription', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs disabled:bg-zinc-50" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">微信号</span><input disabled={!form.supportEnabled} value={form.supportWechat} onChange={(event) => updateField('supportWechat', event.target.value)} placeholder="可选" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs disabled:bg-zinc-50" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">QQ 号</span><input disabled={!form.supportEnabled} value={form.supportQq} onChange={(event) => updateField('supportQq', event.target.value)} placeholder="可选" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs disabled:bg-zinc-50" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">群聊群号</span><input disabled={!form.supportEnabled} value={form.supportGroupNumber} onChange={(event) => updateField('supportGroupNumber', event.target.value)} placeholder="可选" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs disabled:bg-zinc-50" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">群聊链接</span><input disabled={!form.supportEnabled} type="url" value={form.supportGroupUrl} onChange={(event) => updateField('supportGroupUrl', event.target.value)} placeholder="https://..." className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">客服邮箱</span><input disabled={!form.supportEnabled} type="email" value={form.supportEmail} onChange={(event) => updateField('supportEmail', event.target.value)} placeholder="support@example.com" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">在线客服链接</span><input disabled={!form.supportEnabled} type="url" value={form.supportUrl} onChange={(event) => updateField('supportUrl', event.target.value)} placeholder="https://..." className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
+                <label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">二维码图片地址</span><input disabled={!form.supportEnabled} type="url" value={form.supportQrCodeUrl} onChange={(event) => updateField('supportQrCodeUrl', event.target.value)} placeholder="https://... 或 data:image/..." className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
               </div>
             </section>
 

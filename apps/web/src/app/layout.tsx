@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "@daypicker/react/style.css";
 import "./globals.css";
 import { Toaster } from "sonner";
+import { SupportWidget } from "@/components/common/SupportWidget";
 
 export const metadata: Metadata = {
   title: "AI-PAI - 图像 API 中转站",
@@ -17,6 +18,7 @@ export default function RootLayout({
     <html lang="zh-CN" className="h-full">
       <body className="min-h-full bg-[#F6F8F6] text-[#17201B]">
         {children}
+        <SupportWidget />
         <Toaster position="top-right" richColors />
       </body>
     </html>
