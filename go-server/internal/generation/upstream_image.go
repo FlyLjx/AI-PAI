@@ -24,7 +24,7 @@ const (
 func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt int) (any, error) {
 	body := map[string]any{
 		"model":           input.Model.ModelName,
-		"prompt":          buildUpstreamPrompt(input.Prompt, input.Size, input.SizeTier, input.Model.AppendSizeToPrompt, input.TransparentBackground),
+		"prompt":          buildUpstreamPrompt(input.Prompt, input.Size, input.SizeTier, input.Model.AppendSizeToPrompt),
 		"size":            input.Size,
 		"n":               input.Quantity,
 		"quality":         normalizeUpstreamImageQuality(input.Quality),
@@ -32,9 +32,6 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 	}
 	if input.OutputFormat != "" {
 		body["output_format"] = input.OutputFormat
-	}
-	if input.TransparentBackground {
-		body["background"] = "transparent"
 	}
 	if len(input.ReferenceImageURLs) > 0 {
 		items := make([]map[string]string, 0, len(input.ReferenceImageURLs))

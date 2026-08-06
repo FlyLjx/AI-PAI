@@ -34,7 +34,6 @@ type compatImageInput struct {
 	Resolution      string         `json:"resolution"`
 	Quality         string         `json:"quality"`
 	ResponseFormat  string         `json:"response_format"`
-	Background      string         `json:"background"`
 	OutputFormat    string         `json:"output_format"`
 	ReferenceURLs   []string       `json:"-"`
 	ReferenceItems  any            `json:"referenceImages"`
@@ -203,7 +202,6 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		return
 	}
 	outputFormat := normalizeOutputFormat(input.OutputFormat)
-	transparent := strings.EqualFold(input.Background, "transparent") || outputFormat == "png"
 	referencePayload := compatReferencePayload(req, compatInputReferenceURLs(input))
 	if isEdit {
 		referencePayload = compatEditReferencePayload(req, input)
@@ -229,8 +227,7 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 			ReferenceImageURL:      referencePayload,
 			SizeTier:               sizeTier,
 			Size:                   &size,
-			OutputFormat:           effectiveOutputFormat(outputFormat, transparent),
-			TransparentBackground:  transparent,
+			OutputFormat:           effectiveOutputFormat(outputFormat),
 			Quantity:               input.N,
 			SubscriptionQuotaUnits: subscriptionQuotaUnits,
 			UserIP:                 requestIP(req),
@@ -354,7 +351,6 @@ func compatRequestParams(req *http.Request, input compatImageInput) map[string]a
 	addCompatRequestString(params, "resolution", input.Resolution)
 	addCompatRequestString(params, "quality", input.Quality)
 	addCompatRequestString(params, "response_format", defaultString(input.ResponseFormat, "url"))
-	addCompatRequestString(params, "background", input.Background)
 	addCompatRequestString(params, "output_format", input.OutputFormat)
 
 	if input.Image != nil {
@@ -1066,7 +1062,6 @@ func decodeCompatImageInput(req *http.Request, target *compatImageInput, isEdit 
 	target.Resolution = req.FormValue("resolution")
 	target.Quality = req.FormValue("quality")
 	target.ResponseFormat = req.FormValue("response_format")
-	target.Background = req.FormValue("background")
 	target.OutputFormat = req.FormValue("output_format")
 	target.N = compatFormInt(req.FormValue("n"), 0)
 	if !isEdit || req.MultipartForm == nil {

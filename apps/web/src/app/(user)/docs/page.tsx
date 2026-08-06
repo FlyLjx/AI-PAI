@@ -85,7 +85,6 @@ const requestParameters: Record<Endpoint, APIParameter[]> = {
     { name: 'aspect_ratio', type: 'string', required: '否', description: '比例：1:1、16:9、9:16、4:3、3:4、3:2、2:3' },
     { name: 'ratio', type: 'string', required: '否', description: 'aspect_ratio 的兼容别名' },
     { name: 'output_format', type: 'string', required: '否', description: 'jpeg、png、webp，默认 jpeg' },
-    { name: 'background', type: 'string', required: '否', description: 'transparent 表示透明背景，并自动使用 PNG' },
     { name: 'referenceImages', type: 'string[]', required: '否', description: '参考图 URL 或 data URI 数组，最多 10 张' },
     { name: 'response_format', type: 'string', required: '否', description: 'url 或 b64_json，默认 url；b64_json 返回 Base64 图片数据' },
   ],
@@ -102,7 +101,6 @@ const requestParameters: Record<Endpoint, APIParameter[]> = {
     { name: 'resolution', type: 'string', required: '否', description: 'size_tier 的兼容别名' },
     { name: 'aspect_ratio / ratio', type: 'string', required: '否', description: '输出比例，例如 1:1、16:9、9:16' },
     { name: 'output_format', type: 'string', required: '否', description: 'jpeg、png、webp，默认 jpeg' },
-    { name: 'background', type: 'string', required: '否', description: 'transparent 表示透明背景，并自动使用 PNG' },
     { name: 'response_format', type: 'string', required: '否', description: 'url 或 b64_json，默认 url；b64_json 返回 Base64 图片数据' },
   ],
   chat: [

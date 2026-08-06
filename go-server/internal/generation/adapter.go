@@ -12,21 +12,20 @@ import (
 const maxUpstreamImageBatch = 4
 
 type ImageRequest struct {
-	TaskID                string
-	Capability            string
-	Operation             string
-	Provider              providers.Provider
-	Model                 models.Model
-	Prompt                string
-	SizeTier              string
-	Size                  string
-	Quantity              int
-	Quality               string
-	OutputFormat          string
-	ResponseFormat        string
-	TransparentBackground bool
-	ReferenceImageURLs    []string
-	MaskImageURL          string
+	TaskID             string
+	Capability         string
+	Operation          string
+	Provider           providers.Provider
+	Model              models.Model
+	Prompt             string
+	SizeTier           string
+	Size               string
+	Quantity           int
+	Quality            string
+	OutputFormat       string
+	ResponseFormat     string
+	ReferenceImageURLs []string
+	MaskImageURL       string
 }
 
 func (s *Service) callImageGeneration(ctx context.Context, input ImageRequest) (any, error) {

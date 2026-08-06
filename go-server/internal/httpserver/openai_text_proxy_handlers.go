@@ -53,7 +53,6 @@ func (r *Router) compatChatCompletions(w http.ResponseWriter, req *http.Request)
 		Size:           defaultString(stringValue(body["size"]), "1024x1024"),
 		Quality:        stringValue(body["quality"]),
 		ResponseFormat: defaultString(stringValue(body["response_format"]), "url"),
-		Background:     stringValue(body["background"]),
 		OutputFormat:   stringValue(body["output_format"]),
 		RequestParams:  body,
 	}, false, compatImageResponseChatCompletion)

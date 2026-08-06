@@ -98,21 +98,20 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		expectedQuantity = 1
 	}
 	request := ImageRequest{
-		TaskID:                taskID,
-		Capability:            task.Capability,
-		Operation:             imageOperation(task.ReferenceImageURL),
-		Provider:              *provider,
-		Model:                 *model,
-		Prompt:                task.Prompt,
-		SizeTier:              task.SizeTier,
-		Size:                  size,
-		Quantity:              task.Quantity,
-		Quality:               options.ImageQuality,
-		OutputFormat:          taskOutputFormat(task.OutputFormat, task.TransparentBackground),
-		ResponseFormat:        options.ImageResponseFormat,
-		TransparentBackground: task.TransparentBackground,
-		ReferenceImageURLs:    referenceImages(task.ReferenceImageURL),
-		MaskImageURL:          maskImage(task.ReferenceImageURL),
+		TaskID:             taskID,
+		Capability:         task.Capability,
+		Operation:          imageOperation(task.ReferenceImageURL),
+		Provider:           *provider,
+		Model:              *model,
+		Prompt:             task.Prompt,
+		SizeTier:           task.SizeTier,
+		Size:               size,
+		Quantity:           task.Quantity,
+		Quality:            options.ImageQuality,
+		OutputFormat:       taskOutputFormat(task.OutputFormat),
+		ResponseFormat:     options.ImageResponseFormat,
+		ReferenceImageURLs: referenceImages(task.ReferenceImageURL),
+		MaskImageURL:       maskImage(task.ReferenceImageURL),
 	}
 
 	var actualQuantity int
@@ -367,8 +366,8 @@ func (s *Service) syncAPIAccessLogForTask(task *tasks.Task) {
 	_ = apiaccess.NewRepository(s.db).FinishLogsForTask(ctx, task.ID, status, imageCount, message)
 }
 
-func taskOutputFormat(format string, transparent bool) string {
-	if transparent || strings.EqualFold(format, "png") {
+func taskOutputFormat(format string) string {
+	if strings.EqualFold(format, "png") {
 		return "png"
 	}
 	format = strings.ToLower(strings.TrimSpace(format))

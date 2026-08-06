@@ -6,19 +6,14 @@ import (
 	"strings"
 )
 
-func buildUpstreamPrompt(prompt string, size string, sizeTier string, appendSize bool, transparentBackground bool) string {
-	transparentInstruction := ""
-	if transparentBackground {
-		transparentInstruction = "背景要求：输出透明背景 PNG，不要添加纯色底、渐变底、相框或额外背景。"
-	}
+func buildUpstreamPrompt(prompt string, size string, sizeTier string, appendSize bool) string {
 	if !appendSize {
-		return strings.TrimSpace(strings.Join(nonEmptyStrings(prompt, transparentInstruction), "\n\n"))
+		return strings.TrimSpace(prompt)
 	}
 	ratio := sizeRatio(size)
 	return strings.TrimSpace(strings.Join(nonEmptyStrings(
 		prompt,
 		"画面尺寸要求：比例 "+ratio+"，输出尺寸 "+size+"，清晰度 "+strings.ToUpper(sizeTier)+"。请严格按照该比例和尺寸构图，不要生成其他画幅。",
-		transparentInstruction,
 	), "\n"))
 }
 

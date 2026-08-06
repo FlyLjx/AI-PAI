@@ -25,7 +25,6 @@ type generateImageInput struct {
 	Capability            string   `json:"capability"`
 	SizeTier              string   `json:"sizeTier"`
 	Size                  string   `json:"size"`
-	TransparentBackground bool     `json:"transparentBackground"`
 	Quantity              int      `json:"quantity"`
 	ReferenceImageURL     string   `json:"referenceImageUrl"`
 	ReferenceImageURLs    []string `json:"referenceImageUrls"`
@@ -167,8 +166,7 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 			ReferenceImageURL:      referenceImagePayload(req, input),
 			SizeTier:               input.SizeTier,
 			Size:                   &size,
-			OutputFormat:           effectiveOutputFormat(input.OutputFormat, input.TransparentBackground),
-			TransparentBackground:  input.TransparentBackground || input.OutputFormat == "png",
+			OutputFormat:           effectiveOutputFormat(input.OutputFormat),
 			Quantity:               input.Quantity,
 			SubscriptionQuotaUnits: subscriptionQuotaUnits,
 			UserIP:                 requestIP(req),
@@ -408,11 +406,8 @@ func stringInList(items []string, target string) bool {
 	return false
 }
 
-func effectiveOutputFormat(outputFormat string, transparentBackground bool) string {
+func effectiveOutputFormat(outputFormat string) string {
 	normalized := normalizeOutputFormat(outputFormat)
-	if transparentBackground || normalized == "png" {
-		return "png"
-	}
 	if normalized == "" {
 		return "jpeg"
 	}

@@ -66,7 +66,7 @@ const quantityOptions: AppSelectOption[] = [1, 2, 3, 4].map((value) => ({
 
 const formatOptions: AppSelectOption[] = [
   { value: 'jpeg', label: 'JPEG' },
-  { value: 'png', label: 'PNG · 透明背景' },
+  { value: 'png', label: 'PNG' },
   { value: 'webp', label: 'WEBP' },
 ];
 
