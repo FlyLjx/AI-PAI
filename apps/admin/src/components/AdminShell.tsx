@@ -95,7 +95,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="app-frame admin-frame">
       <aside className="app-sidebar">
-        <Link href="/dashboard" className="brand-lockup">
+        <Link href="/api-operations" className="brand-lockup">
           <span className="brand-mark">AI</span>
           <span><strong>AI-PAI</strong><small title={`Commit ${ADMIN_BUILD_COMMIT}`}>管理控制台 · {ADMIN_BUILD_VERSION}</small></span>
         </Link>
@@ -109,7 +109,7 @@ export function AdminShell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <header className="mobile-header">
-        <Link href="/dashboard" className="brand-lockup compact"><span className="brand-mark">AI</span><strong>AI-PAI 后台</strong></Link>
+        <Link href="/api-operations" className="brand-lockup compact"><span className="brand-mark">AI</span><strong>AI-PAI 后台</strong></Link>
         <button type="button" onClick={() => setMobileOpen(!mobileOpen)} aria-label="打开导航">{mobileOpen ? <X /> : <Menu />}</button>
       </header>
       {mobileOpen && <div className="mobile-drawer"><Navigation pathname={pathname} mobile onNavigate={() => setMobileOpen(false)} /><button className="mobile-logout" onClick={() => void logout()}><LogOut size={16} />退出登录</button></div>}

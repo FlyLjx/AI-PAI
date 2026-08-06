@@ -13,7 +13,7 @@ export default function AdminLoginPage() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    void adminAuth.session().then(() => router.replace('/dashboard')).catch(() => undefined);
+    void adminAuth.session().then(() => router.replace('/api-operations')).catch(() => undefined);
   }, [router]);
 
   const submit = async (event: React.FormEvent) => {
@@ -21,7 +21,7 @@ export default function AdminLoginPage() {
     setLoading(true);
     try {
       await adminAuth.login(email, password);
-      router.replace('/dashboard');
+      router.replace('/api-operations');
       router.refresh();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '后台登录失败');

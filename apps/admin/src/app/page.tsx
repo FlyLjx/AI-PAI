@@ -4,5 +4,5 @@ import { ADMIN_TOKEN_COOKIE } from '@/lib/admin-proxy';
 
 export default async function Home() {
   const store = await cookies();
-  redirect(store.has(ADMIN_TOKEN_COOKIE) ? '/dashboard' : '/login');
+  redirect(store.has(ADMIN_TOKEN_COOKIE) ? '/api-operations' : '/login');
 }
