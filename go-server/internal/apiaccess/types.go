@@ -208,6 +208,8 @@ type AdminOperationsTopUser struct {
 	FailedCount            int     `json:"failedCount"`
 	ImageCount             int     `json:"imageCount"`
 	CreditsSpent           float64 `json:"creditsSpent"`
+	AvailableBalance       float64 `json:"availableBalance"`
+	TodayCreditsSpent      float64 `json:"todayCreditsSpent"`
 	AverageDurationSeconds float64 `json:"averageDurationSeconds"`
 	SuccessRate            float64 `json:"successRate"`
 	LastRequestAt          string  `json:"lastRequestAt"`

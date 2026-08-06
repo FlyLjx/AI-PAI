@@ -34,12 +34,12 @@ import {
   type AdminOperationsTrendSnapshot,
   type StabilitySnapshot,
 } from '@/lib/admin-api';
-import { formatDate } from '@/lib/common/utils';
+import { formatCNY, formatDate } from '@/lib/common/utils';
 
 const METRIC_OPTIONS = [
+  { value: 'credits', label: '按余额消费' },
   { value: 'requests', label: '按调用次数' },
   { value: 'images', label: '按输出图片' },
-  { value: 'credits', label: '按余额消费' },
   { value: 'failures', label: '按失败次数' },
   { value: 'duration', label: '按平均耗时' },
 ] as const;
@@ -57,7 +57,7 @@ const EMPTY_LIVE: AdminOperationsLiveSnapshot = {
 
 const EMPTY_RANKING: AdminOperationsRankingSnapshot = {
   range: 'today',
-  metric: 'requests',
+  metric: 'credits',
   topUsers: [],
   generatedAt: '',
 };
@@ -135,7 +135,7 @@ function shortClock(value = '') {
 
 function rankingMetricMeta(user: AdminOperationsTopUser, metric: AdminOperationsMetric) {
   if (metric === 'images') return { label: '输出图片', value: user.imageCount.toLocaleString('zh-CN') };
-  if (metric === 'credits') return { label: '余额消费', value: user.creditsSpent.toLocaleString('zh-CN', { maximumFractionDigits: 4 }) };
+  if (metric === 'credits') return { label: '余额消费', value: formatCNY(user.creditsSpent) };
   if (metric === 'failures') return { label: '失败次数', value: user.failedCount.toLocaleString('zh-CN') };
   if (metric === 'duration') return { label: '平均耗时', value: durationLabel(user.averageDurationSeconds) };
   return { label: '调用次数', value: user.requestCount.toLocaleString('zh-CN') };
@@ -151,7 +151,7 @@ export default function AdminAPIOperationsPage() {
   const [trend, setTrend] = useState<AdminOperationsTrendSnapshot>(EMPTY_TREND);
   const [stability, setStability] = useState<StabilitySnapshot | null>(null);
   const [range, setRange] = useState<AdminOperationsRange>('today');
-  const [metric, setMetric] = useState<AdminOperationsMetric>('requests');
+  const [metric, setMetric] = useState<AdminOperationsMetric>('credits');
   const [expandedUser, setExpandedUser] = useState('');
   const [liveLoading, setLiveLoading] = useState(true);
   const [rankingLoading, setRankingLoading] = useState(true);
@@ -542,7 +542,11 @@ export default function AdminAPIOperationsPage() {
               return (
                 <article key={user.userId} className="px-4 py-3 hover:bg-[#FAFBFA]">
                   <div className="flex items-start gap-2.5"><span className={`grid h-5 w-5 shrink-0 place-items-center rounded font-mono text-[10px] font-bold ${rankTone}`}>{index + 1}</span><div className="min-w-0 flex-1"><Link href={`/users?search=${encodeURIComponent(user.userEmail || user.userId)}`} className="block truncate text-[11px] font-semibold text-[#17201B] hover:text-[#047857] hover:underline">{user.userEmail || user.userId}</Link><small className="mt-0.5 block truncate text-[9px] text-zinc-400">{billingModeLabel(user.billingMode)} · {formatDate(user.lastRequestAt)}</small></div><div className="shrink-0 text-right"><strong className="block font-mono text-xs text-[#17201B]">{primary.value}</strong><small className="text-[9px] text-zinc-400">{primary.label}</small></div></div>
-                  <div className="mt-2 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-7 text-[9px] text-zinc-500"><span>调用 <strong className="font-mono text-zinc-700">{user.requestCount}</strong></span><span className={successTone}>成功率 <strong className="font-mono">{user.successRate.toFixed(1)}%</strong></span><span>图片 <strong className="font-mono text-zinc-700">{user.imageCount}</strong></span><span>余额消费 <strong className="font-mono text-zinc-700">{user.creditsSpent.toLocaleString('zh-CN', { maximumFractionDigits: 4 })}</strong></span><span>平均 <strong className="font-mono text-zinc-700">{durationLabel(user.averageDurationSeconds)}</strong></span></div>
+                  <div className="mt-2 grid grid-cols-2 gap-1.5 pl-7 text-[9px] sm:flex sm:flex-wrap">
+                    <span className="min-w-0 rounded border border-emerald-100 bg-emerald-50 px-1.5 py-1 text-emerald-700">可用余额 <strong className="font-mono">{formatCNY(user.availableBalance)}</strong></span>
+                    <span className="min-w-0 rounded border border-amber-100 bg-amber-50 px-1.5 py-1 text-amber-700">今日已用余额 <strong className="font-mono">{formatCNY(user.todayCreditsSpent)}</strong></span>
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 pl-7 text-[9px] text-zinc-500"><span>调用 <strong className="font-mono text-zinc-700">{user.requestCount}</strong></span><span className={successTone}>成功率 <strong className="font-mono">{user.successRate.toFixed(1)}%</strong></span><span>图片 <strong className="font-mono text-zinc-700">{user.imageCount}</strong></span><span>平均 <strong className="font-mono text-zinc-700">{durationLabel(user.averageDurationSeconds)}</strong></span></div>
                 </article>
               );
             })}

@@ -191,6 +191,8 @@ export type AdminOperationsTopUser = {
   failedCount: number;
   imageCount: number;
   creditsSpent: number;
+  availableBalance: number;
+  todayCreditsSpent: number;
   averageDurationSeconds: number;
   successRate: number;
   lastRequestAt: string;

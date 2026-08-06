@@ -26,11 +26,11 @@ func TestAdminOperationsAggregatesRankingAndActiveCalls(t *testing.T) {
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.Local)
 	startAt := time.Date(2026, 7, 18, 0, 0, 0, 0, time.Local)
 	mock.ExpectQuery(`SELECT\s+api_access_logs.user_id`).
-		WithArgs(startAt, 10).
+		WithArgs(startAt, startAt, 10).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"user_id", "email", "billing_mode", "request_count", "success_count", "failed_count",
+			"user_id", "email", "available_balance", "today_credits_spent", "billing_mode", "request_count", "success_count", "failed_count",
 			"image_count", "credits_spent", "average_duration_seconds", "last_request_at",
-		}).AddRow("user-1", "one@example.com", "balance", 12, 10, 2, 15, 6.5, 42.5, now.Add(-time.Minute)))
+		}).AddRow("user-1", "one@example.com", 18.75, 6.5, "balance", 12, 10, 2, 15, 6.5, 42.5, now.Add(-time.Minute)))
 	mock.ExpectQuery(`SELECT\s+api_access_logs.id`).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"log_id", "task_id", "user_id", "email", "api_key_id", "key_name", "key_prefix", "billing_mode",
@@ -43,7 +43,7 @@ func TestAdminOperationsAggregatesRankingAndActiveCalls(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.TopUsers) != 1 || snapshot.TopUsers[0].RequestCount != 12 || math.Abs(snapshot.TopUsers[0].SuccessRate-1000.0/12.0) > 0.0001 {
+	if len(snapshot.TopUsers) != 1 || snapshot.TopUsers[0].RequestCount != 12 || snapshot.TopUsers[0].AvailableBalance != 18.75 || snapshot.TopUsers[0].TodayCreditsSpent != 6.5 || math.Abs(snapshot.TopUsers[0].SuccessRate-1000.0/12.0) > 0.0001 {
 		t.Fatalf("unexpected top users: %+v", snapshot.TopUsers)
 	}
 	if snapshot.ActiveUsers != 1 || snapshot.ActiveRequests != 2 || snapshot.ProcessingRequests != 1 || snapshot.QueuedRequests != 1 || snapshot.SlowRequests != 1 {
@@ -61,8 +61,8 @@ func TestNormalizeAdminOperationsMetric(t *testing.T) {
 	if got := normalizeAdminOperationsMetric("credits"); got != "credits" {
 		t.Fatalf("metric = %q, want credits", got)
 	}
-	if got := normalizeAdminOperationsMetric("unknown"); got != "requests" {
-		t.Fatalf("metric = %q, want requests", got)
+	if got := normalizeAdminOperationsMetric("unknown"); got != "credits" {
+		t.Fatalf("metric = %q, want credits", got)
 	}
 }
 
@@ -79,18 +79,19 @@ func TestAdminOperationsRankingOnlyQueriesHistoricalLogs(t *testing.T) {
 
 	now := time.Date(2026, 7, 18, 12, 0, 0, 0, time.Local)
 	startAt := now.AddDate(0, 0, -6)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	mock.ExpectQuery(`SELECT\s+api_access_logs.user_id`).
-		WithArgs(startAt, 5).
+		WithArgs(todayStart, startAt, 5).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"user_id", "email", "billing_mode", "request_count", "success_count", "failed_count",
+			"user_id", "email", "available_balance", "today_credits_spent", "billing_mode", "request_count", "success_count", "failed_count",
 			"image_count", "credits_spent", "average_duration_seconds", "last_request_at",
-		}).AddRow("user-1", "one@example.com", "balance", 8, 7, 1, 9, 3.5, 25.0, now.Add(-time.Minute)))
+		}).AddRow("user-1", "one@example.com", 20.5, 1.25, "balance", 8, 7, 1, 9, 3.5, 25.0, now.Add(-time.Minute)))
 
 	snapshot, err := NewRepository(database.Wrap(rawDB)).AdminOperationsRanking(context.Background(), startAt, now, "7d", "images", 5)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Range != "7d" || snapshot.Metric != "images" || len(snapshot.TopUsers) != 1 || snapshot.TopUsers[0].ImageCount != 9 {
+	if snapshot.Range != "7d" || snapshot.Metric != "images" || len(snapshot.TopUsers) != 1 || snapshot.TopUsers[0].ImageCount != 9 || snapshot.TopUsers[0].TodayCreditsSpent != 1.25 {
 		t.Fatalf("unexpected ranking snapshot: %+v", snapshot)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
@@ -111,18 +112,19 @@ func TestAdminOperationsRankingUsesPersistedLogBillingAndDurationFallback(t *tes
 
 	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.Local)
 	startAt := now.AddDate(0, 0, -30)
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	mock.ExpectQuery(`(?s)SUM\(CASE WHEN api_access_logs\.status IN \('success', 'succeeded'\) THEN api_access_logs\.charged_credits ELSE 0 END\).*generation_tasks\.duration_seconds <= 300.*EXTRACT\(EPOCH FROM \(api_access_logs\.finished_at - api_access_logs\.created_at\)\) <= 300`).
-		WithArgs(startAt, 10).
+		WithArgs(todayStart, startAt, 10).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"user_id", "email", "billing_mode", "request_count", "success_count", "failed_count",
+			"user_id", "email", "available_balance", "today_credits_spent", "billing_mode", "request_count", "success_count", "failed_count",
 			"image_count", "credits_spent", "average_duration_seconds", "last_request_at",
-		}).AddRow("user-1", "one@example.com", "balance", 12, 10, 2, 15, 6.5, 42.5, now.Add(-time.Minute)))
+		}).AddRow("user-1", "one@example.com", 31.5, 2.75, "balance", 12, 10, 2, 15, 6.5, 42.5, now.Add(-time.Minute)))
 
 	snapshot, err := NewRepository(database.Wrap(rawDB)).AdminOperationsRanking(context.Background(), startAt, now, "30d", "credits", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.TopUsers) != 1 || snapshot.TopUsers[0].CreditsSpent != 6.5 || snapshot.TopUsers[0].AverageDurationSeconds != 42.5 {
+	if len(snapshot.TopUsers) != 1 || snapshot.TopUsers[0].CreditsSpent != 6.5 || snapshot.TopUsers[0].AvailableBalance != 31.5 || snapshot.TopUsers[0].TodayCreditsSpent != 2.75 || snapshot.TopUsers[0].AverageDurationSeconds != 42.5 {
 		t.Fatalf("unexpected persisted ranking values: %+v", snapshot.TopUsers)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

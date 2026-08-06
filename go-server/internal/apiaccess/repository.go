@@ -681,6 +681,7 @@ func (r *Repository) AdminOperationsRanking(ctx context.Context, startAt time.Ti
 		"duration": "average_duration_seconds",
 	}[metric]
 	durationSecondsExpression := adminOperationsLogDurationSecondsExpression()
+	todayStart := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 
 	snapshot := AdminOperationsRankingSnapshot{
 		Range:       strings.TrimSpace(rangeKey),
@@ -692,6 +693,8 @@ func (r *Repository) AdminOperationsRanking(ctx context.Context, startAt time.Ti
 		SELECT
 			api_access_logs.user_id,
 			users.email,
+			COALESCE(users.credits, 0) AS available_balance,
+			COALESCE(today_usage.today_credits_spent, 0) AS today_credits_spent,
 			CASE
 				WHEN COUNT(DISTINCT COALESCE(api_access_keys.billing_mode, 'auto')) > 1 THEN 'mixed'
 				ELSE COALESCE(MAX(api_access_keys.billing_mode), 'auto')
@@ -712,14 +715,22 @@ func (r *Repository) AdminOperationsRanking(ctx context.Context, startAt time.Ti
 			MAX(api_access_logs.created_at) AS last_request_at
 		FROM api_access_logs
 		LEFT JOIN users ON users.id = api_access_logs.user_id
+		LEFT JOIN (
+			SELECT
+				today_logs.user_id,
+				COALESCE(SUM(CASE WHEN today_logs.status IN ('success', 'succeeded') THEN today_logs.charged_credits ELSE 0 END), 0) AS today_credits_spent
+			FROM api_access_logs AS today_logs
+			WHERE today_logs.created_at >= ?
+			GROUP BY today_logs.user_id
+		) AS today_usage ON today_usage.user_id = api_access_logs.user_id
 		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
 		LEFT JOIN generation_tasks ON generation_tasks.id = api_access_logs.task_id
 		WHERE api_access_logs.created_at >= ?
 			AND api_access_logs.status IN ('queued', 'processing', 'success', 'succeeded', 'failed')
-		GROUP BY api_access_logs.user_id, users.email
+		GROUP BY api_access_logs.user_id, users.email, users.credits, today_usage.today_credits_spent
 		ORDER BY `+orderBy+` DESC, request_count DESC, last_request_at DESC
 		LIMIT ?
-	`, startAt, limit)
+	`, todayStart, startAt, limit)
 	if err != nil {
 		return snapshot, err
 	}
@@ -730,6 +741,8 @@ func (r *Repository) AdminOperationsRanking(ctx context.Context, startAt time.Ti
 		if err := topRows.Scan(
 			&item.UserID,
 			&email,
+			&item.AvailableBalance,
+			&item.TodayCreditsSpent,
 			&item.BillingMode,
 			&item.RequestCount,
 			&item.SuccessCount,
@@ -948,7 +961,7 @@ func normalizeAdminOperationsMetric(value string) string {
 	case "images", "credits", "failures", "duration":
 		return strings.ToLower(strings.TrimSpace(value))
 	default:
-		return "requests"
+		return "credits"
 	}
 }
 
