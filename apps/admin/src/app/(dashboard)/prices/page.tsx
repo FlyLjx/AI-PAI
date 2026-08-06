@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Calculator, CircleDollarSign, EyeOff, Loader2, Pencil, Plus, RefreshCw, X } from 'lucide-react';
+import { Calculator, CircleDollarSign, EyeOff, Loader2, Pencil, Plus, RefreshCw, Trash2, UserRound, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable } from '@/components/common/DataTable';
@@ -9,7 +9,7 @@ import { EmptyState } from '@/components/common/EmptyState';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
-import { portalApi, type ProviderModel } from '@/lib/admin-api';
+import { portalApi, type PortalUser, type ProviderModel, type UserModelPriceOverride } from '@/lib/admin-api';
 import { formatDate } from '@/lib/common/utils';
 
 type Provider = {
@@ -65,6 +65,8 @@ const emptyDraft: ModelDraft = {
 };
 
 const PAGE_SIZE = 15;
+const MIN_OVERRIDE_PRICE = 0.001;
+const MAX_OVERRIDE_PRICE = 99999999.9999;
 
 function money(value: number) {
   return `¥${Number(value || 0).toFixed(4)}`;
@@ -111,21 +113,36 @@ export default function AdminPricesPage() {
   const [providerModelsLoading, setProviderModelsLoading] = useState(false);
   const [providerModelsError, setProviderModelsError] = useState('');
   const providerModelsRequest = useRef(0);
+  const [users, setUsers] = useState<PortalUser[]>([]);
+  const [priceOverrides, setPriceOverrides] = useState<UserModelPriceOverride[]>([]);
+  const [overrideLoading, setOverrideLoading] = useState(true);
+  const [overrideSaving, setOverrideSaving] = useState(false);
+  const [overrideDeletingId, setOverrideDeletingId] = useState('');
+  const [overrideUserId, setOverrideUserId] = useState('');
+  const [overrideModelId, setOverrideModelId] = useState('');
+  const [overrideUnitPrice, setOverrideUnitPrice] = useState('');
+  const [overrideDeleteCandidate, setOverrideDeleteCandidate] = useState<UserModelPriceOverride | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setOverrideLoading(true);
     setError('');
     try {
-      const [modelResponse, providerResponse] = await Promise.all([
+      const [modelResponse, providerResponse, userResponse, overrideResponse] = await Promise.all([
         portalApi.models(),
         portalApi.providers(),
+        portalApi.users(),
+        portalApi.userModelPriceOverrides(),
       ]);
       setModels(modelResponse.data as unknown as Model[]);
       setProviders(providerResponse.data as unknown as Provider[]);
+      setUsers(userResponse.data);
+      setPriceOverrides(overrideResponse.data);
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : '模型价格加载失败');
+      setError(requestError instanceof Error ? requestError.message : '模型价格与专属扣费加载失败');
     } finally {
       setLoading(false);
+      setOverrideLoading(false);
     }
   }, []);
 
@@ -133,6 +150,33 @@ export default function AdminPricesPage() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  const reloadOverrides = useCallback(async () => {
+    setOverrideLoading(true);
+    try {
+      const response = await portalApi.userModelPriceOverrides();
+      setPriceOverrides(response.data);
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '专属扣费规则刷新失败');
+    } finally {
+      setOverrideLoading(false);
+    }
+  }, []);
+
+  const overrideUsers = useMemo(
+    () => users.filter((user) => user.role !== 'admin').sort((left, right) => left.email.localeCompare(right.email)),
+    [users],
+  );
+  const overrideModels = useMemo(
+    () => models.filter((model) => model.capability === 'chat_image'),
+    [models],
+  );
+  const overrideModelOptions = useMemo(
+    () => overrideModels.map((model) => ({ value: model.id, label: `${model.displayName} · ${model.modelName}` })),
+    [overrideModels],
+  );
+  const selectedOverrideUserId = overrideUsers.some((user) => user.id === overrideUserId) ? overrideUserId : overrideUsers[0]?.id || '';
+  const selectedOverrideModelId = overrideModels.some((model) => model.id === overrideModelId) ? overrideModelId : overrideModels[0]?.id || '';
 
   const loadProviderModels = useCallback(async (providerId: string) => {
     const requestId = ++providerModelsRequest.current;
@@ -294,6 +338,48 @@ export default function AdminPricesPage() {
     }
   };
 
+  const saveOverride = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const unitPrice = Number(overrideUnitPrice);
+    if (!selectedOverrideUserId) return toast.error('请选择普通用户');
+    if (!selectedOverrideModelId) return toast.error('请选择生图模型');
+    if (!Number.isFinite(unitPrice) || unitPrice < MIN_OVERRIDE_PRICE || unitPrice > MAX_OVERRIDE_PRICE) {
+      return toast.error('单张扣费需要在 0.001 到 99999999.9999 之间');
+    }
+    setOverrideSaving(true);
+    try {
+      await portalApi.saveUserModelPriceOverride({
+        userId: selectedOverrideUserId,
+        modelId: selectedOverrideModelId,
+        unitPrice: Math.round(unitPrice * 10_000) / 10_000,
+      });
+      const user = overrideUsers.find((item) => item.id === selectedOverrideUserId);
+      const model = overrideModels.find((item) => item.id === selectedOverrideModelId);
+      toast.success(`已为 ${user?.email || selectedOverrideUserId} 配置 ${model?.displayName || '该模型'} 的专属扣费`);
+      setOverrideUnitPrice('');
+      await reloadOverrides();
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '专属扣费保存失败');
+    } finally {
+      setOverrideSaving(false);
+    }
+  };
+
+  const deleteOverride = async () => {
+    if (!overrideDeleteCandidate) return;
+    setOverrideDeletingId(overrideDeleteCandidate.id);
+    try {
+      await portalApi.deleteUserModelPriceOverride(overrideDeleteCandidate.id);
+      toast.success('专属扣费规则已移除，用户将恢复使用全局价格');
+      setOverrideDeleteCandidate(null);
+      await reloadOverrides();
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '专属扣费移除失败');
+    } finally {
+      setOverrideDeletingId('');
+    }
+  };
+
   const toggleTier = (tier: string) => {
     setDraft((current) => ({
       ...current,
@@ -326,6 +412,45 @@ export default function AdminPricesPage() {
           ['平均加价率', `${summary.avgMarkup.toFixed(1)}%`, '成本到售价'],
         ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
       </div>
+
+      <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white">
+        <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#DCE4DF] px-4 py-3.5">
+          <div>
+            <div className="flex items-center gap-2"><UserRound className="h-4 w-4 text-[#047857]" /><h2 className="text-sm font-semibold">用户专属扣费</h2></div>
+            <p className="mt-1 text-[11px] text-zinc-500">为单个用户指定某个生图模型的余额单张扣费，未配置时继续使用全局售价。</p>
+          </div>
+          <span className="rounded-full bg-[#F0FDF4] px-2.5 py-1 text-[11px] font-semibold text-[#047857]">{priceOverrides.length} 条规则</span>
+        </div>
+        <form onSubmit={saveOverride} className="grid grid-cols-1 gap-3 border-b border-[#EDF0EE] bg-[#FAFBFA] p-4 sm:grid-cols-[1fr_1fr_180px_auto] sm:items-end">
+          <label>
+            <span className="mb-1 block text-[11px] font-semibold text-zinc-500">指定用户</span>
+            <AppSelect value={selectedOverrideUserId} onValueChange={setOverrideUserId} disabled={!overrideUsers.length} placeholder="选择普通用户" ariaLabel="指定用户" options={overrideUsers.length ? overrideUsers.map((user) => ({ value: user.id, label: `${user.email}${user.status === 'disabled' ? '（已停用）' : ''}` })) : [{ value: '', label: '暂无普通用户' }]} />
+          </label>
+          <label>
+            <span className="mb-1 block text-[11px] font-semibold text-zinc-500">指定模型</span>
+            <AppSelect value={selectedOverrideModelId} onValueChange={setOverrideModelId} disabled={!overrideModels.length} placeholder="选择生图模型" ariaLabel="指定模型" options={overrideModelOptions.length ? overrideModelOptions : [{ value: '', label: '暂无生图模型' }]} />
+          </label>
+          <label>
+            <span className="mb-1 block text-[11px] font-semibold text-zinc-500">单张扣费</span>
+            <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center font-mono text-xs text-zinc-400">¥</span><input required min={MIN_OVERRIDE_PRICE} max={MAX_OVERRIDE_PRICE} step="0.0001" type="number" value={overrideUnitPrice} onChange={(event) => setOverrideUnitPrice(event.target.value)} placeholder="例如 0.008" className="w-full rounded-md border border-[#86EFAC] bg-white py-2 pl-6 pr-2 font-mono text-xs text-[#047857] outline-none focus:border-[#047857]" /></div>
+          </label>
+          <button type="submit" disabled={overrideSaving || !overrideUsers.length || !overrideModels.length} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white hover:bg-[#036b4f] disabled:opacity-50">{overrideSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}保存规则</button>
+        </form>
+        {overrideLoading ? (
+          <div className="grid min-h-[120px] place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[#12B76A]" /></div>
+        ) : priceOverrides.length === 0 ? (
+          <div className="px-4 py-8 text-center text-xs text-zinc-400">暂无用户专属扣费，保存后会显示在这里。</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="min-w-[680px] w-full text-left text-xs">
+              <thead className="border-b border-[#EDF0EE] bg-white text-[10px] font-semibold text-zinc-400"><tr><th className="px-4 py-2.5">用户</th><th className="px-4 py-2.5">模型</th><th className="px-4 py-2.5">专属单价</th><th className="px-4 py-2.5">更新时间</th><th className="px-4 py-2.5 text-right">操作</th></tr></thead>
+              <tbody className="divide-y divide-[#EDF0EE]">
+                {priceOverrides.map((item) => <tr key={item.id} className="hover:bg-[#FAFBFA]"><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.userEmail || item.userId}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.userId}</small></td><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.modelDisplayName || item.modelName}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.modelName}</small></td><td className="px-4 py-3 font-mono font-semibold text-[#047857]">{money(item.unitPrice)}<small className="ml-1 font-sans font-normal text-zinc-400">/ 张</small></td><td className="px-4 py-3 text-zinc-500">{formatDate(item.updatedAt || item.createdAt)}</td><td className="px-4 py-3 text-right"><button type="button" onClick={() => setOverrideDeleteCandidate(item)} disabled={overrideDeletingId === item.id} title="移除专属扣费" className="rounded p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button></td></tr>)}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>}
 
@@ -413,6 +538,7 @@ export default function AdminPricesPage() {
         </div>
       )}
 
+      <ConfirmDialog isOpen={Boolean(overrideDeleteCandidate)} onClose={() => setOverrideDeleteCandidate(null)} onConfirm={() => void deleteOverride()} title="移除专属扣费" description={`确定移除 ${overrideDeleteCandidate?.userEmail || '该用户'} 的 ${overrideDeleteCandidate?.modelDisplayName || '该模型'} 专属扣费吗？移除后将恢复使用全局售价。`} confirmText="移除" type="danger" />
       <ConfirmDialog isOpen={Boolean(deleteCandidate)} onClose={() => setDeleteCandidate(null)} onConfirm={() => void deleteModel()} title="隐藏模型" description={`确定隐藏 ${deleteCandidate?.displayName || '该模型'} 吗？隐藏后不会出现在列表中，但历史调用与统计会保留。`} confirmText="隐藏" type="danger" />
     </div>
   );

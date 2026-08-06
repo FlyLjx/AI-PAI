@@ -4,10 +4,26 @@ import (
 	"context"
 	"time"
 
+	"aipi-go/internal/database"
 	"aipi-go/internal/models"
 	"aipi-go/internal/pricing"
 	"aipi-go/internal/settings"
 )
+
+func (r *Router) modelPriceForUser(ctx context.Context, tx *database.Tx, userID string, model models.Model, sizeTier string) (float64, error) {
+	baseUnit := modelPriceForTier(model, sizeTier)
+	if model.ID == "" || userID == "" {
+		return baseUnit, nil
+	}
+	override, found, err := pricing.NewUserModelPriceRepository(r.db).FindForUserAndModelTx(ctx, tx, userID, model.ID)
+	if err != nil {
+		return 0, err
+	}
+	if found {
+		return override, nil
+	}
+	return baseUnit, nil
+}
 
 func (r *Router) imageUnitPrice(ctx context.Context, userID string, model models.Model, sizeTier string) (float64, pricing.Result, error) {
 	baseUnit := modelPriceForTier(model, sizeTier)

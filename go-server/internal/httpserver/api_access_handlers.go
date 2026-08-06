@@ -296,9 +296,25 @@ func (r *Router) adminAPIAccessKeys(w http.ResponseWriter, req *http.Request) {
 	defer cancel()
 	repo := apiaccess.NewRepository(r.db)
 	config := r.dynamicConcurrencyConfig(ctx)
-	items, err := apiaccess.NewService(repo, users.NewRepository(r.db)).
-		WithDynamicConcurrencyConfig(config).
-		ListAllKeys(ctx)
+	page := queryInt(req, "page", 1)
+	pageSize := queryInt(req, "pageSize", 20)
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	service := apiaccess.NewService(repo, users.NewRepository(r.db)).
+		WithDynamicConcurrencyConfig(config)
+	items, total, err := service.ListAdminKeys(ctx, apiaccess.ListKeysInput{
+		Status:   req.URL.Query().Get("status"),
+		Keyword:  req.URL.Query().Get("keyword"),
+		Page:     page,
+		PageSize: pageSize,
+	})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -312,7 +328,7 @@ func (r *Router) adminAPIAccessKeys(w http.ResponseWriter, req *http.Request) {
 		"items":              items,
 		"stats":              stats,
 		"dynamicConcurrency": config,
-	}})
+	}, "pagination": map[string]any{"total": total, "page": page, "pageSize": pageSize}})
 }
 
 func (r *Router) adminAPIAccessKeyByID(w http.ResponseWriter, req *http.Request) {

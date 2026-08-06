@@ -147,6 +147,61 @@ func TestBalanceBillingQuoteUsesOnlyAccountBalance(t *testing.T) {
 	}
 }
 
+func TestBalanceBillingQuoteUsesUserModelUnitPriceOverride(t *testing.T) {
+	previousDialect := database.CurrentDialect()
+	database.SetDialect("mysql")
+	defer database.SetDialect(string(previousDialect))
+
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+
+	db := database.Wrap(rawDB)
+	mock.ExpectBegin()
+	tx, err := db.BeginTx(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock.ExpectQuery(`(?s)SELECT unit_price.*FROM user_model_price_overrides.*WHERE user_id = \? AND model_id = \?.*LIMIT 1`).
+		WithArgs("user-1", "model-image-2").
+		WillReturnRows(sqlmock.NewRows([]string{"unit_price"}).AddRow(0.008))
+	mock.ExpectQuery(`SELECT credits FROM users WHERE id = \?`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"credits"}).AddRow(10.0))
+	mock.ExpectQuery(`(?s)SELECT COALESCE\(SUM\(cost_credits\), 0\).*FROM generation_tasks`).
+		WithArgs("user-1").
+		WillReturnRows(sqlmock.NewRows([]string{"reserved"}).AddRow(0.0))
+	mock.ExpectRollback()
+
+	router := &Router{db: db}
+	cost, quotaUnits, err := router.generationBillingQuote(
+		context.Background(),
+		tx,
+		"user-1",
+		models.Model{ID: "model-image-2", Price1K: 0.1},
+		"1k",
+		2,
+		generationBillingModeBalance,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cost != 0.016 {
+		t.Fatalf("balance quote with user model override = %v, want 0.016", cost)
+	}
+	if quotaUnits != 0 {
+		t.Fatalf("balance quote subscription units = %d, want 0", quotaUnits)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestAutoBillingKeepsLegacySubscriptionPermissionStatus(t *testing.T) {
 	entitlement := &operations.SubscriptionEntitlement{
 		IsPaid:             true,

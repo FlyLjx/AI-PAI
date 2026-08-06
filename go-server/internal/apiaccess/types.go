@@ -174,6 +174,13 @@ type ListLogsInput struct {
 	PageSize int
 }
 
+type ListKeysInput struct {
+	Status   string
+	Keyword  string
+	Page     int
+	PageSize int
+}
+
 type UsageStats struct {
 	Total            int     `json:"total"`
 	Success          int     `json:"success"`

@@ -123,6 +123,157 @@ func (r *Repository) ListKeys(ctx context.Context, userID string) ([]AccessKey, 
 	return scanAccessKeys(rows)
 }
 
+// ListAdminKeys filters and pages API Keys before loading their usage totals.
+// This keeps the management screen bounded even when api_access_logs is large.
+func (r *Repository) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]AccessKey, int, error) {
+	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
+	where, args := buildAdminKeyWhere(input)
+	var total int
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT COUNT(*)
+		FROM api_access_keys
+		LEFT JOIN users ON users.id = api_access_keys.user_id
+		`+where, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	queryArgs := append(append([]any{}, args...), pageSize, offset)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			api_access_keys.id,
+			api_access_keys.user_id,
+			users.email AS user_email,
+			api_access_keys.name,
+			api_access_keys.key_prefix,
+			api_access_keys.key_hash,
+			api_access_keys.key_plain,
+			api_access_keys.status,
+			api_access_keys.concurrency_limit,
+			api_access_keys.billing_mode,
+			api_access_keys.last_used_at,
+			api_access_keys.deleted_at,
+			api_access_keys.created_at,
+			api_access_keys.updated_at,
+			0 AS request_count,
+			0 AS success_count,
+			0 AS failed_count,
+			0 AS image_count,
+			NULL AS last_error
+		FROM api_access_keys
+		LEFT JOIN users ON users.id = api_access_keys.user_id
+		`+where+`
+		ORDER BY api_access_keys.created_at DESC, api_access_keys.id DESC
+		LIMIT ? OFFSET ?
+	`, queryArgs...)
+	if err != nil {
+		return nil, 0, err
+	}
+	items, err := scanAccessKeys(rows)
+	if err != nil {
+		rows.Close()
+		return nil, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if err := r.attachKeyUsageStats(ctx, items); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
+}
+
+func buildAdminKeyWhere(input ListKeysInput) (string, []any) {
+	conditions := []string{"api_access_keys.deleted_at IS NULL"}
+	args := []any{}
+	status := strings.ToLower(strings.TrimSpace(input.Status))
+	if status == "active" || status == "disabled" {
+		conditions = append(conditions, "api_access_keys.status = ?")
+		args = append(args, status)
+	}
+	if keyword := strings.ToLower(strings.TrimSpace(input.Keyword)); keyword != "" {
+		like := "%" + keyword + "%"
+		conditions = append(conditions, `(
+			LOWER(api_access_keys.id) LIKE ?
+			OR LOWER(api_access_keys.user_id) LIKE ?
+			OR LOWER(api_access_keys.name) LIKE ?
+			OR LOWER(api_access_keys.key_prefix) LIKE ?
+			OR LOWER(COALESCE(users.email, '')) LIKE ?
+		)`)
+		for range 5 {
+			args = append(args, like)
+		}
+	}
+	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func (r *Repository) attachKeyUsageStats(ctx context.Context, keys []AccessKey) error {
+	ids := make([]string, 0, len(keys))
+	for _, key := range keys {
+		ids = append(ids, key.ID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		placeholders[index] = "?"
+		args[index] = id
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			api_key_id,
+			COUNT(*) AS request_count,
+			COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
+			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
+			COALESCE(SUM(CASE WHEN status = 'success' THEN image_count ELSE 0 END), 0) AS image_count,
+			MAX(CASE WHEN status = 'failed' THEN error_message ELSE NULL END) AS last_error
+		FROM api_access_logs
+		WHERE api_key_id IN (`+strings.Join(placeholders, ",")+`)
+		GROUP BY api_key_id
+	`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type usage struct {
+		requestCount int
+		successCount int
+		failedCount  int
+		imageCount   int
+		lastError    sql.NullString
+	}
+	usageByKeyID := map[string]usage{}
+	for rows.Next() {
+		var id string
+		var item usage
+		if err := rows.Scan(&id, &item.requestCount, &item.successCount, &item.failedCount, &item.imageCount, &item.lastError); err != nil {
+			return err
+		}
+		usageByKeyID[id] = item
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for index := range keys {
+		item, found := usageByKeyID[keys[index].ID]
+		if !found {
+			continue
+		}
+		keys[index].RequestCount = item.requestCount
+		keys[index].SuccessCount = item.successCount
+		keys[index].FailedCount = item.failedCount
+		keys[index].ImageCount = item.imageCount
+		if item.lastError.Valid && strings.TrimSpace(item.lastError.String) != "" {
+			keys[index].LastError = &item.lastError.String
+		}
+	}
+	return nil
+}
+
 func keyListSelect() string {
 	return `
 		SELECT

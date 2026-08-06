@@ -41,6 +41,18 @@ export type CreditLog = {
   createdAt: string;
 };
 
+export type UserModelPriceOverride = {
+  id: string;
+  userId: string;
+  userEmail: string;
+  modelId: string;
+  modelName: string;
+  modelDisplayName: string;
+  unitPrice: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type ConsumptionRank = {
   rank: number;
   userId: string;
@@ -621,6 +633,9 @@ export const portalApi = {
   updateUserBalance: (id: string, input: { balance: number; remark: string }) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/balance`, { method: 'PATCH', body: JSON.stringify(input) }),
   userCreditLogs: (id: string, page = 1, pageSize = 10, type = 'all') => api<CreditLog[]>(`/api/users/${encodeURIComponent(id)}/credit-logs${query({ page, pageSize, type: type === 'all' ? undefined : type })}`),
   userConsumptionRanking: (days = 30, limit = 8) => api<ConsumptionRank[]>(`/api/admin/users/consumption-ranking${query({ days, limit })}`),
+  userModelPriceOverrides: () => api<UserModelPriceOverride[]>('/api/admin/user-model-prices'),
+  saveUserModelPriceOverride: (input: { userId: string; modelId: string; unitPrice: number }) => api<UserModelPriceOverride>('/api/admin/user-model-prices', { method: 'POST', body: JSON.stringify(input) }),
+  deleteUserModelPriceOverride: (id: string) => api(`/api/admin/user-model-prices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   deleteUser: (id: string) => api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   verifyUserEmail: (id: string) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/verify-email`, { method: 'POST' }),
   grantSubscription: (id: string, input: Record<string, unknown>) => api(`/api/users/${encodeURIComponent(id)}/subscription`, { method: 'POST', body: JSON.stringify(input) }),
@@ -641,7 +656,7 @@ export const portalApi = {
   updatePlan: (id: string, input: Partial<Plan>) => api<Plan>(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deletePlan: (id: string) => api(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   recharges: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; orderType?: string; startDate?: string; endDate?: string } = {}) => api<RechargeOrder[], RechargeSummary>(`/api/recharge/orders${query(input)}`),
-  adminKeys: () => api<{ items: APIKey[]; stats: Record<string, number>; dynamicConcurrency: DynamicConcurrencyConfig }>('/api/admin/api-access/keys'),
+  adminKeys: (input: { page?: number; pageSize?: number; keyword?: string; status?: string } = {}) => api<{ items: APIKey[]; stats: Record<string, number>; dynamicConcurrency: DynamicConcurrencyConfig }>('/api/admin/api-access/keys' + query(input)),
   updateAdminKey: (id: string, input: { status?: string; concurrencyLimit?: number }) => api<APIKey>(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   adminUsage: (input: { page?: number; pageSize?: number; keyword?: string; status?: string } = {}) => api<UsageLog[], UsageSummary>(`/api/admin/api-access/logs${query(input)}`),

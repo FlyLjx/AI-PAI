@@ -25,6 +25,19 @@ func EnsureSchema(db *sql.DB) error {
 			return err
 		}
 	}
+	if _, err := db.ExecContext(ctx, Rebind(`
+		CREATE TABLE IF NOT EXISTS user_model_price_overrides (
+			id VARCHAR(36) PRIMARY KEY,
+			user_id VARCHAR(36) NOT NULL,
+			model_id VARCHAR(36) NOT NULL,
+			unit_price NUMERIC(12,4) NOT NULL DEFAULT 0.0000,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			CONSTRAINT uq_user_model_price_overrides_user_model UNIQUE (user_id, model_id)
+		)
+	`)); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "generation_tasks", "output_format", "VARCHAR(20) NULL", "size"); err != nil {
 		return err
 	}

@@ -102,6 +102,18 @@ func (s Service) ListAllKeys(ctx context.Context) ([]PublicAccessKey, error) {
 	return publicKeys(keys, s.dynamicConcurrencyConfig), nil
 }
 
+func (s Service) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]PublicAccessKey, int, error) {
+	_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
+	keys, total, err := s.keys.ListAdminKeys(ctx, input)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.attachWindowRequestCounts(ctx, keys); err != nil {
+		return nil, 0, err
+	}
+	return publicKeys(keys, s.dynamicConcurrencyConfig), total, nil
+}
+
 func (s Service) attachWindowRequestCounts(ctx context.Context, keys []AccessKey) error {
 	config := NormalizeDynamicConcurrencyConfig(s.dynamicConcurrencyConfig)
 	if !config.Enabled {

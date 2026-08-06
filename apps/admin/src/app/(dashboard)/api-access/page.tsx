@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Activity, Check, CircleStop, Clipboard, Eye, KeyRound, Loader2, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
@@ -148,6 +148,7 @@ export default function AdminAPIAccessPage() {
   const [keySearch, setKeySearch] = useState('');
   const [keyStatus, setKeyStatus] = useState('all');
   const [keyPage, setKeyPage] = useState(1);
+  const [keyTotal, setKeyTotal] = useState(0);
   const [logSearch, setLogSearch] = useState('');
   const [logStatusFilter, setLogStatusFilter] = useState('all');
   const [logPage, setLogPage] = useState(1);
@@ -160,23 +161,34 @@ export default function AdminAPIAccessPage() {
   const [cancelingTaskId, setCancelingTaskId] = useState('');
   const [detailLog, setDetailLog] = useState<DetailedUsageLog | null>(null);
   const [detailTab, setDetailTab] = useState<'request' | 'response'>('request');
+  const keyRequestSequence = useRef(0);
   const logRequestSequence = useRef(0);
 
-  const loadKeys = useCallback(async () => {
+  const loadKeys = useCallback(async (page = 1) => {
+    const requestSequence = ++keyRequestSequence.current;
     setKeysLoading(true);
     setError('');
     try {
-      const response = await portalApi.adminKeys();
+      const response = await portalApi.adminKeys({
+        page,
+        pageSize: keyPageSize,
+        keyword: keySearch.trim() || undefined,
+        status: keyStatus === 'all' ? undefined : keyStatus,
+      });
+      if (requestSequence !== keyRequestSequence.current) return;
       setKeys(response.data.items || []);
       setStats(response.data.stats || {});
       setDynamicConcurrency(response.data.dynamicConcurrency || defaultDynamicConcurrency);
       setConcurrencyDraft(Object.fromEntries((response.data.items || []).map((key) => [key.id, Number(key.baseConcurrencyLimit || key.concurrencyLimit || 10)])));
+      setKeyTotal(response.pagination?.total ?? response.data.items?.length ?? 0);
+      setKeyPage(page);
     } catch (requestError) {
+      if (requestSequence !== keyRequestSequence.current) return;
       setError(requestError instanceof Error ? requestError.message : 'API Key 加载失败');
     } finally {
-      setKeysLoading(false);
+      if (requestSequence === keyRequestSequence.current) setKeysLoading(false);
     }
-  }, []);
+  }, [keySearch, keyStatus]);
 
   const loadLogs = useCallback(async (page = 1) => {
     const requestSequence = ++logRequestSequence.current;
@@ -209,11 +221,11 @@ export default function AdminAPIAccessPage() {
   }, [logSearch, logStatusFilter]);
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([loadKeys(), loadLogs(logPage)]);
-  }, [loadKeys, loadLogs, logPage]);
+    await Promise.all([loadKeys(keyPage), loadLogs(logPage)]);
+  }, [keyPage, loadKeys, loadLogs, logPage]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadKeys(), 0);
+    const timer = window.setTimeout(() => void loadKeys(1), 300);
     return () => window.clearTimeout(timer);
   }, [loadKeys]);
 
@@ -236,17 +248,8 @@ export default function AdminAPIAccessPage() {
     };
   }, [detailLog]);
 
-  const filteredKeys = useMemo(() => {
-    const keyword = keySearch.trim().toLowerCase();
-    return keys.filter((key) => {
-      const matchesKeyword = !keyword || `${key.userEmail || key.userId} ${key.name} ${key.keyPrefix}`.toLowerCase().includes(keyword);
-      return matchesKeyword && (keyStatus === 'all' || key.status === keyStatus);
-    });
-  }, [keySearch, keyStatus, keys]);
-
-  const keyTotalPages = Math.max(1, Math.ceil(filteredKeys.length / keyPageSize));
+  const keyTotalPages = Math.max(1, Math.ceil(keyTotal / keyPageSize));
   const effectiveKeyPage = Math.min(keyPage, keyTotalPages);
-  const pagedKeys = useMemo(() => filteredKeys.slice((effectiveKeyPage - 1) * keyPageSize, effectiveKeyPage * keyPageSize), [effectiveKeyPage, filteredKeys]);
   const logSuccessRate = logSummary.total > 0 ? `${((logSummary.success / logSummary.total) * 100).toFixed(1)}%` : '0.0%';
 
   const toggleKey = async (key: APIKey) => {
@@ -255,7 +258,7 @@ export default function AdminAPIAccessPage() {
       const nextStatus = key.status === 'active' ? 'disabled' : 'active';
       await portalApi.updateAdminKey(key.id, { status: nextStatus });
       toast.success(nextStatus === 'active' ? 'API Key 已启用' : 'API Key 已禁用');
-      await loadKeys();
+      await loadKeys(keyPage);
     } catch (requestError) {
       toast.error(requestError instanceof Error ? requestError.message : 'Key 状态更新失败');
     } finally {
@@ -270,7 +273,7 @@ export default function AdminAPIAccessPage() {
     try {
       await portalApi.updateAdminKey(key.id, { concurrencyLimit: value });
       toast.success('基础并发已保存');
-      await loadKeys();
+      await loadKeys(keyPage);
     } catch (requestError) {
       toast.error(requestError instanceof Error ? requestError.message : '并发上限保存失败');
     } finally {
@@ -284,7 +287,7 @@ export default function AdminAPIAccessPage() {
       await portalApi.deleteAdminKey(deleteCandidate.id);
       toast.success('API Key 已删除');
       setDeleteCandidate(null);
-      await loadKeys();
+      await loadKeys(Math.min(keyPage, Math.max(1, Math.ceil(Math.max(0, keyTotal - 1) / keyPageSize))));
     } catch (requestError) {
       toast.error(requestError instanceof Error ? requestError.message : 'API Key 删除失败');
     }
@@ -344,8 +347,8 @@ export default function AdminAPIAccessPage() {
           ['成功率', logSuccessRate, '成功 / 请求总数'],
           ['输出图片', logSummary.imageCount, '全部匹配记录'],
         ] : [
-          ['Key 总数', stats.totalKeys ?? keys.length, '用户创建'],
-          ['启用 Key', stats.activeKeys ?? keys.filter((key) => key.status === 'active').length, '可正常调用'],
+          ['Key 总数', stats.totalKeys ?? keyTotal, '用户创建'],
+          ['启用 Key', stats.activeKeys ?? 0, '可正常调用'],
           ['今日请求', stats.todayRequests ?? 0, 'OpenAI 图片接口'],
           ['今日成功', stats.todaySuccess ?? 0, '完成请求'],
           ['今日图片', stats.todayImageCount ?? 0, '返回图片数'],
@@ -374,14 +377,14 @@ export default function AdminAPIAccessPage() {
             { key: 'used', label: '最近使用' },
             { key: 'actions', label: '操作', className: 'text-right' },
           ]}
-          data={pagedKeys}
+          data={keys}
           searchPlaceholder="搜索用户、Key 名称或前缀"
           searchValue={keySearch}
           onSearchChange={(value) => { setKeySearch(value); setKeyPage(1); }}
-          filterControls={<><AppSelect value={keyStatus} options={KEY_STATUS_OPTIONS} onValueChange={(value) => { setKeyStatus(value); setKeyPage(1); }} compact ariaLabel="筛选 API Key 状态" /><span className="text-[11px] text-zinc-400">共 {filteredKeys.length} 条 · 本页 {pagedKeys.length} 条</span></>}
+          filterControls={<><AppSelect value={keyStatus} options={KEY_STATUS_OPTIONS} onValueChange={(value) => { setKeyStatus(value); setKeyPage(1); }} compact ariaLabel="筛选 API Key 状态" /><span className="text-[11px] text-zinc-400">{keysLoading ? '正在查询...' : `共 ${keyTotal} 条 · 本页 ${keys.length} 条`}</span></>}
           currentPage={effectiveKeyPage}
           totalPages={keyTotalPages}
-          onPageChange={setKeyPage}
+          onPageChange={(page) => void loadKeys(page)}
           emptyState={<EmptyState title="暂无 API Key" description="客户在开发者工作台创建 Key 后会显示在这里。" icon={KeyRound} />}
           renderRow={(key) => (
             <tr key={key.id} className="hover:bg-[#FAFBFA]">

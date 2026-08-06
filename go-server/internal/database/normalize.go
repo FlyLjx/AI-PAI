@@ -60,6 +60,8 @@ func normalizeOnDuplicateKey(query string) string {
 		return postgresUpsert(query, "ai_models", "id", []string{"display_name", "cost_1k", "cost_2k", "cost_4k", "markup_percent", "price_change_percent", "price_1k", "price_2k", "price_4k", "append_size_to_prompt", "enabled_size_tiers", "sort_order"}, true)
 	case strings.Contains(query, "INSERT INTO announcement_receipts"):
 		return strings.Replace(query, "ON DUPLICATE KEY UPDATE signed_at = CURRENT_TIMESTAMP", "ON CONFLICT (announcement_id, user_id) DO UPDATE SET signed_at = CURRENT_TIMESTAMP", 1)
+	case strings.Contains(query, "INSERT INTO user_model_price_overrides"):
+		return postgresUpsert(query, "user_model_price_overrides", "user_id, model_id", []string{"unit_price"}, true)
 	default:
 		return query
 	}

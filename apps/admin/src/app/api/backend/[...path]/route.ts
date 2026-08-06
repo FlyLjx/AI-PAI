@@ -16,6 +16,8 @@ const ADMIN_ROUTES: Rule[] = [
   { pattern: /^\/api\/users\/[^/]+\/subscription$/, methods: ['POST', 'DELETE'] },
   { pattern: /^\/api\/users\/[^/]+\/subscription-quota$/, methods: ['PATCH'] },
   { pattern: /^\/api\/admin\/users\/consumption-ranking$/, methods: ['GET'] },
+  { pattern: /^\/api\/admin\/user-model-prices$/, methods: ['GET', 'POST'] },
+  { pattern: /^\/api\/admin\/user-model-prices\/[^/]+$/, methods: ['DELETE'] },
   { pattern: /^\/api\/api-providers$/, methods: ['GET', 'POST'] },
   { pattern: /^\/api\/api-providers\/[^/]+$/, methods: ['PATCH', 'DELETE'] },
   { pattern: /^\/api\/api-providers\/[^/]+\/test$/, methods: ['POST'] },

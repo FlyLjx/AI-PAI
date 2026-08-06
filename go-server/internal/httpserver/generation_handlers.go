@@ -223,7 +223,11 @@ func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, us
 		}
 	}
 
-	price := generationBalanceCost(modelPriceForTier(model, sizeTier), quantity)
+	unitPrice, err := r.modelPriceForUser(ctx, tx, userID, model, sizeTier)
+	if err != nil {
+		return 0, 0, err
+	}
+	price := generationBalanceCost(unitPrice, quantity)
 	var credits float64
 	var reserved float64
 	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ?`, userID).Scan(&credits); err != nil {
