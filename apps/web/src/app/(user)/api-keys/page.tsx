@@ -73,7 +73,8 @@ function billingModeMeta(mode?: APIKeyBillingMode | null) {
   };
 }
 
-function BillingModeBadge({ mode }: { mode?: APIKeyBillingMode | null }) {
+function BillingModeBadge({ mode, subscriptionEnabled = true }: { mode?: APIKeyBillingMode | null; subscriptionEnabled?: boolean }) {
+  if (mode === 'subscription' && !subscriptionEnabled) return null;
   const meta = billingModeMeta(mode);
   return (
     <span className={`inline-flex h-6 items-center whitespace-nowrap rounded border px-2 text-[11px] font-semibold ${meta.className}`}>
@@ -85,6 +86,7 @@ function BillingModeBadge({ mode }: { mode?: APIKeyBillingMode | null }) {
 export default function ApiKeysPage() {
   const [user, setUser] = useState<PortalUser | null>(null);
   const [apiKeys, setApiKeys] = useState<APIKey[]>([]);
+  const [subscriptionEnabled, setSubscriptionEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [pendingId, setPendingId] = useState('');
@@ -111,11 +113,18 @@ export default function ApiKeysPage() {
       return;
     }
     setUser(current);
+    setSubscriptionEnabled(false);
     setLoading(true);
     setError('');
     try {
-      const response = await portalApi.listKeys(current);
+      const [response, subscriptionResponse] = await Promise.all([
+        portalApi.listKeys(current),
+        portalApi.subscription(current).catch(() => null),
+      ]);
       setApiKeys((response.data || []).map(scrubKey));
+      const hasSubscriptionAccess = subscriptionResponse !== null;
+      setSubscriptionEnabled(hasSubscriptionAccess);
+      if (!hasSubscriptionAccess) setNewBillingMode('balance');
     } catch (loadError) {
       setError(errorMessage(loadError));
     } finally {
@@ -150,6 +159,11 @@ export default function ApiKeysPage() {
     if (!user.emailVerifiedAt) {
       closeCreateModal();
       toast.error('请先完成邮箱验证后创建 API Key');
+      return;
+    }
+    if (newBillingMode === 'subscription' && !subscriptionEnabled) {
+      closeCreateModal();
+      toast.error('当前账号暂未开放订阅功能');
       return;
     }
     setCreating(true);
@@ -329,7 +343,7 @@ export default function ApiKeysPage() {
             <tr key={key.id}>
               <td className="px-4 py-3 font-semibold">{key.name}</td>
               <td className="px-4 py-3 mono text-[12px]">{maskedPrefix(key)}</td>
-              <td className="px-4 py-3"><BillingModeBadge mode={key.billingMode} /></td>
+              <td className="px-4 py-3"><BillingModeBadge mode={key.billingMode} subscriptionEnabled={subscriptionEnabled} /></td>
               <td className="px-4 py-3">
                 <StatusBadge status={key.status === 'active' ? 'active' : 'disabled'} />
               </td>
@@ -348,7 +362,7 @@ export default function ApiKeysPage() {
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1.5">
                   <StatusBadge status={key.status === 'active' ? 'active' : 'disabled'} />
-                  <BillingModeBadge mode={key.billingMode} />
+                  <BillingModeBadge mode={key.billingMode} subscriptionEnabled={subscriptionEnabled} />
                 </div>
               </div>
               <div className="mt-3 grid grid-cols-2 gap-2 border-y border-[#edf0ee] py-3 text-[11px] text-zinc-500">
@@ -387,7 +401,7 @@ export default function ApiKeysPage() {
                 </div>
                 <div className="flex items-center justify-between border-y border-[#edf0ee] py-2.5 text-[12px] text-zinc-500">
                   <span>固定计费方式</span>
-                  <BillingModeBadge mode={createdCredential.billingMode} />
+                  <BillingModeBadge mode={createdCredential.billingMode} subscriptionEnabled={subscriptionEnabled} />
                 </div>
                 <div className="field">
                   <label htmlFor="created-api-key">{createdCredential.name}</label>
@@ -425,7 +439,7 @@ export default function ApiKeysPage() {
                 </div>
                 <fieldset className="space-y-2">
                   <legend className="text-[12px] font-semibold text-[#17201b]">计费方式</legend>
-                  <div className="grid grid-cols-2 gap-1 rounded-[7px] border border-[#dce4df] bg-[#f6f8f6] p-1">
+                  <div className={`grid gap-1 rounded-[7px] border border-[#dce4df] bg-[#f6f8f6] p-1 ${subscriptionEnabled ? 'grid-cols-2' : 'grid-cols-1'}`}>
                     <button
                       type="button"
                       aria-pressed={newBillingMode === 'balance'}
@@ -434,14 +448,16 @@ export default function ApiKeysPage() {
                     >
                       <WalletCards size={15} />账户余额
                     </button>
-                    <button
-                      type="button"
-                      aria-pressed={newBillingMode === 'subscription'}
-                      onClick={() => setNewBillingMode('subscription')}
-                      className={`flex h-10 items-center justify-center gap-1.5 rounded-[5px] border text-[12px] font-semibold transition-colors ${newBillingMode === 'subscription' ? 'border-[#86efac] bg-[#f0fdf4] text-[#047857]' : 'border-transparent text-zinc-500 hover:bg-white'}`}
-                    >
-                      <Crown size={15} />订阅额度
-                    </button>
+                    {subscriptionEnabled && (
+                      <button
+                        type="button"
+                        aria-pressed={newBillingMode === 'subscription'}
+                        onClick={() => setNewBillingMode('subscription')}
+                        className={`flex h-10 items-center justify-center gap-1.5 rounded-[5px] border text-[12px] font-semibold transition-colors ${newBillingMode === 'subscription' ? 'border-[#86efac] bg-[#f0fdf4] text-[#047857]' : 'border-transparent text-zinc-500 hover:bg-white'}`}
+                      >
+                        <Crown size={15} />订阅额度
+                      </button>
+                    )}
                   </div>
                   <p className="text-[11px] leading-5 text-zinc-500" aria-live="polite">
                     {newBillingMode === 'balance'

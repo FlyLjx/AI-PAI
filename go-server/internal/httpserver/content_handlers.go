@@ -2,6 +2,8 @@ package httpserver
 
 import (
 	"context"
+	"errors"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -94,6 +96,10 @@ func (r *Router) announcements(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) announcementByID(w http.ResponseWriter, req *http.Request) {
 	path := strings.Trim(strings.TrimPrefix(req.URL.Path, "/api/announcements/"), "/")
+	if strings.HasSuffix(path, "/claim-reward") {
+		r.claimAnnouncementReward(w, req, strings.TrimSuffix(path, "/claim-reward"))
+		return
+	}
 	if strings.HasSuffix(path, "/sign") {
 		r.signAnnouncement(w, req, strings.TrimSuffix(path, "/sign"))
 		return
@@ -178,15 +184,62 @@ func announcementMailBroadcastInput(item content.Announcement) mailBroadcastInpu
 	if item.TargetType == "users" {
 		targetType = "specific"
 	}
+	body := item.Content
+	if item.RewardCredits > 0 {
+		body += "\n\n本公告附带 " + formatNotificationCredits(item.RewardCredits) + " 余额奖励，登录后点击公告中的“领取奖励”即可到账，每个账号限领一次。"
+	}
 	return mailBroadcastInput{
 		Subject:    item.Title,
-		Content:    item.Content,
+		Content:    body,
 		ActionText: "查看公告",
 		ActionPath: "/dashboard",
 		TargetType: targetType,
 		UserIDs:    item.UserIDs,
 		Category:   "announcement",
 	}
+}
+
+func (r *Router) claimAnnouncementReward(w http.ResponseWriter, req *http.Request, id string) {
+	if req.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+	var input struct {
+		UserID string `json:"userId"`
+	}
+	if err := decodeCompatJSON(req, &input); err != nil {
+		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
+		return
+	}
+	userID, err := r.requireFrontUser(req, input.UserID)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	announcementID := strings.Trim(strings.TrimSpace(id), "/")
+	if announcementID == "" || strings.Contains(announcementID, "/") {
+		writeError(w, newAppError(http.StatusNotFound, "公告不存在"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	result, err := content.NewRepository(r.db).ClaimAnnouncementReward(ctx, announcementID, userID)
+	if err != nil {
+		switch {
+		case errors.Is(err, content.ErrAnnouncementNotFound),
+			errors.Is(err, content.ErrAnnouncementNotEligible),
+			errors.Is(err, content.ErrAnnouncementInactive):
+			writeError(w, newAppError(http.StatusNotFound, "公告不存在或暂不可领取"))
+		case errors.Is(err, content.ErrAnnouncementNoReward):
+			writeError(w, newAppError(http.StatusBadRequest, "该公告没有可领取的奖励"))
+		case errors.Is(err, content.ErrAnnouncementBalanceCap):
+			writeError(w, newAppError(http.StatusBadRequest, "领取奖励后余额超出上限"))
+		default:
+			writeError(w, err)
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": result})
 }
 
 func (r *Router) signAnnouncement(w http.ResponseWriter, req *http.Request, id string) {
@@ -219,11 +272,30 @@ func (r *Router) signAnnouncement(w http.ResponseWriter, req *http.Request, id s
 		writeError(w, err)
 		return
 	}
-	allowed := slices.ContainsFunc(items, func(item content.Announcement) bool {
+	announcementIndex := slices.IndexFunc(items, func(item content.Announcement) bool {
 		return item.ID == announcementID && item.DisplayMode == "popup"
 	})
-	if !allowed {
+	if announcementIndex < 0 {
 		writeError(w, newAppError(http.StatusNotFound, "公告不存在或无需确认"))
+		return
+	}
+	item := items[announcementIndex]
+	if item.RewardCredits > 0 {
+		result, err := repo.ClaimAnnouncementReward(ctx, announcementID, userID)
+		if err != nil {
+			switch {
+			case errors.Is(err, content.ErrAnnouncementNotFound), errors.Is(err, content.ErrAnnouncementNotEligible), errors.Is(err, content.ErrAnnouncementInactive):
+				writeError(w, newAppError(http.StatusNotFound, "公告不存在或暂不可领取"))
+			case errors.Is(err, content.ErrAnnouncementNoReward):
+				writeError(w, newAppError(http.StatusBadRequest, "该公告没有可领取的奖励"))
+			case errors.Is(err, content.ErrAnnouncementBalanceCap):
+				writeError(w, newAppError(http.StatusBadRequest, "领取奖励后余额超出上限"))
+			default:
+				writeError(w, err)
+			}
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"data": result})
 		return
 	}
 	if err := repo.SignAnnouncement(ctx, announcementID, userID); err != nil {
@@ -239,6 +311,10 @@ func normalizeAnnouncementInput(input *content.Announcement) error {
 	input.DisplayMode = defaultString(strings.TrimSpace(input.DisplayMode), "popup")
 	input.TargetType = defaultString(strings.TrimSpace(input.TargetType), "all")
 	input.Status = defaultString(strings.TrimSpace(input.Status), "active")
+	if math.IsNaN(input.RewardCredits) || math.IsInf(input.RewardCredits, 0) || input.RewardCredits < 0 || input.RewardCredits > 99999999.9999 {
+		return newAppError(http.StatusBadRequest, "公告奖励金额必须在 0 到 99999999.9999 之间")
+	}
+	input.RewardCredits = math.Round(input.RewardCredits*10000) / 10000
 
 	if input.Title == "" {
 		return newAppError(http.StatusBadRequest, "请输入公告标题")

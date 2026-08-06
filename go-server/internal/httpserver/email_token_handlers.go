@@ -47,7 +47,7 @@ func (r *Router) verifyEmail(w http.ResponseWriter, req *http.Request) {
 	}
 	user = r.settleInviteRewards(req.Context(), user)
 	r.publishCurrentUser(context.Background(), user.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(req.Context(), user)})
+	writeJSON(w, http.StatusOK, map[string]any{"data": r.frontUserWithSubscription(req.Context(), user)})
 }
 
 func (r *Router) resendEmailVerification(w http.ResponseWriter, req *http.Request, id string) {
@@ -231,7 +231,7 @@ func (r *Router) verifyEmailChange(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	r.publishCurrentUser(context.Background(), user.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(req.Context(), user)})
+	writeJSON(w, http.StatusOK, map[string]any{"data": r.frontUserWithSubscription(req.Context(), user)})
 }
 
 func (r *Router) forgotPassword(w http.ResponseWriter, req *http.Request) {

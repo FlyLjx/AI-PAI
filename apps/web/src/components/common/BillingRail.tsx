@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { Crown, Wallet } from 'lucide-react';
 import type { PortalUser } from '@/lib/portal-api';
 
-export function BillingRail({ user }: { user: PortalUser }) {
-  const subscription = user.subscription;
+export function BillingRail({ user, subscriptionEnabled = false }: { user: PortalUser; subscriptionEnabled?: boolean }) {
+  const subscription = subscriptionEnabled ? user.subscription : null;
   const paid = Boolean(subscription?.isPaid || subscription?.tier === 'paid');
   const remaining = Number(subscription?.effectiveQuotaRemaining ?? subscription?.quotaRemaining ?? 0);
   const limit = Number(subscription?.quotaLimit ?? 0);

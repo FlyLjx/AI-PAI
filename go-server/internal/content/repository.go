@@ -2,7 +2,11 @@ package content
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"errors"
+	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -23,12 +27,19 @@ func (r *Repository) FindAnnouncements(ctx context.Context, onlyVisible bool, us
 		SELECT announcements.id, announcements.title, announcements.content,
 			COALESCE(announcements.display_mode, 'popup') AS display_mode,
 			announcements.target_type, announcements.status, announcements.sort_order,
+			COALESCE(announcements.reward_credits, 0) AS reward_credits,
+			CASE WHEN EXISTS (
+				SELECT 1 FROM announcement_receipts reward_receipt
+				WHERE reward_receipt.announcement_id = announcements.id
+				  AND reward_receipt.user_id = ?
+				  AND reward_receipt.reward_claimed_at IS NOT NULL
+			) THEN 1 ELSE 0 END AS reward_claimed,
 			GROUP_CONCAT(DISTINCT announcement_users.user_id) AS user_ids,
 			announcements.created_at, announcements.updated_at
 		FROM announcements
 		LEFT JOIN announcement_users ON announcement_users.announcement_id = announcements.id
 	`
-	args := []any{}
+	args := []any{userID}
 	if onlyVisible {
 		query += `
 			WHERE announcements.status = 'active'
@@ -44,6 +55,7 @@ func (r *Repository) FindAnnouncements(ctx context.Context, onlyVisible bool, us
 				SELECT 1 FROM announcement_receipts
 				WHERE announcement_receipts.announcement_id = announcements.id
 				  AND announcement_receipts.user_id = ?
+				  AND (COALESCE(announcements.reward_credits, 0) <= 0 OR announcement_receipts.reward_claimed_at IS NOT NULL)
 			  ))
 		`
 		args = append(args, userID, userID, includeSigned, userID, userID)
@@ -70,6 +82,8 @@ func (r *Repository) FindAnnouncement(ctx context.Context, id string) (*Announce
 		SELECT announcements.id, announcements.title, announcements.content,
 			COALESCE(announcements.display_mode, 'popup') AS display_mode,
 			announcements.target_type, announcements.status, announcements.sort_order,
+			COALESCE(announcements.reward_credits, 0) AS reward_credits,
+			0 AS reward_claimed,
 			GROUP_CONCAT(DISTINCT announcement_users.user_id) AS user_ids,
 			announcements.created_at, announcements.updated_at
 		FROM announcements
@@ -87,8 +101,8 @@ func (r *Repository) FindAnnouncement(ctx context.Context, id string) (*Announce
 
 func (r *Repository) SaveAnnouncement(ctx context.Context, item Announcement) (*Announcement, error) {
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO announcements (id, title, content, display_mode, target_type, status, sort_order)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO announcements (id, title, content, display_mode, target_type, status, sort_order, reward_credits)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON DUPLICATE KEY UPDATE
 			title = VALUES(title),
 			content = VALUES(content),
@@ -96,8 +110,9 @@ func (r *Repository) SaveAnnouncement(ctx context.Context, item Announcement) (*
 			target_type = VALUES(target_type),
 			status = VALUES(status),
 			sort_order = VALUES(sort_order),
+			reward_credits = VALUES(reward_credits),
 			updated_at = CURRENT_TIMESTAMP
-	`, item.ID, item.Title, item.Content, defaultStringLocal(item.DisplayMode, "popup"), defaultStringLocal(item.TargetType, "all"), defaultStringLocal(item.Status, "active"), item.SortOrder)
+	`, item.ID, item.Title, item.Content, defaultStringLocal(item.DisplayMode, "popup"), defaultStringLocal(item.TargetType, "all"), defaultStringLocal(item.Status, "active"), item.SortOrder, item.RewardCredits)
 	if err != nil {
 		return nil, err
 	}
@@ -150,14 +165,144 @@ type scanner interface {
 func scanAnnouncement(row scanner) (Announcement, error) {
 	var item Announcement
 	var userIDs sql.NullString
+	var rewardClaimed int
 	var createdAt, updatedAt time.Time
-	if err := row.Scan(&item.ID, &item.Title, &item.Content, &item.DisplayMode, &item.TargetType, &item.Status, &item.SortOrder, &userIDs, &createdAt, &updatedAt); err != nil {
+	if err := row.Scan(&item.ID, &item.Title, &item.Content, &item.DisplayMode, &item.TargetType, &item.Status, &item.SortOrder, &item.RewardCredits, &rewardClaimed, &userIDs, &createdAt, &updatedAt); err != nil {
 		return item, err
 	}
+	item.RewardCredits = math.Round(item.RewardCredits*10000) / 10000
+	item.RewardClaimed = rewardClaimed > 0
 	item.UserIDs = splitIDs(userIDs.String)
 	item.CreatedAt = appclock.DatabaseTime(createdAt).Format(time.RFC3339)
 	item.UpdatedAt = appclock.DatabaseTime(updatedAt).Format(time.RFC3339)
 	return item, nil
+}
+
+func (r *Repository) ClaimAnnouncementReward(ctx context.Context, announcementID string, userID string) (RewardClaimResult, error) {
+	announcementID = strings.TrimSpace(announcementID)
+	userID = strings.TrimSpace(userID)
+	if announcementID == "" || userID == "" {
+		return RewardClaimResult{}, ErrAnnouncementNotFound
+	}
+
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return RewardClaimResult{}, err
+	}
+	defer tx.Rollback()
+
+	var title, targetType, status string
+	var rewardCredits float64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT title, COALESCE(reward_credits, 0), target_type, status
+		FROM announcements
+		WHERE id = ?
+		LIMIT 1
+		FOR UPDATE
+	`, announcementID).Scan(&title, &rewardCredits, &targetType, &status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return RewardClaimResult{}, ErrAnnouncementNotFound
+		}
+		return RewardClaimResult{}, err
+	}
+	if status != "active" {
+		return RewardClaimResult{}, ErrAnnouncementInactive
+	}
+	rewardCredits = math.Round(rewardCredits*10000) / 10000
+	if rewardCredits <= 0 {
+		return RewardClaimResult{}, ErrAnnouncementNoReward
+	}
+	if targetType == "users" {
+		var targetCount int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COUNT(*)
+			FROM announcement_users
+			WHERE announcement_id = ? AND user_id = ?
+		`, announcementID, userID).Scan(&targetCount); err != nil {
+			return RewardClaimResult{}, err
+		}
+		if targetCount == 0 {
+			return RewardClaimResult{}, ErrAnnouncementNotEligible
+		}
+	}
+
+	var claimedAt sql.NullTime
+	receiptErr := tx.QueryRowContext(ctx, `
+		SELECT reward_claimed_at
+		FROM announcement_receipts
+		WHERE announcement_id = ? AND user_id = ?
+		LIMIT 1
+		FOR UPDATE
+	`, announcementID, userID).Scan(&claimedAt)
+	if receiptErr == nil && claimedAt.Valid {
+		if err := tx.Commit(); err != nil {
+			return RewardClaimResult{}, err
+		}
+		return RewardClaimResult{RewardCredits: rewardCredits, Granted: false}, nil
+	}
+	if receiptErr != nil && !errors.Is(receiptErr, sql.ErrNoRows) {
+		return RewardClaimResult{}, receiptErr
+	}
+
+	var currentBalance float64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT credits
+		FROM users
+		WHERE id = ? AND status = 'active'
+		LIMIT 1
+		FOR UPDATE
+	`, userID).Scan(&currentBalance); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return RewardClaimResult{}, ErrAnnouncementNotEligible
+		}
+		return RewardClaimResult{}, err
+	}
+	currentBalance = math.Round(currentBalance*10000) / 10000
+	balanceAfter := math.Round((currentBalance+rewardCredits)*10000) / 10000
+	if balanceAfter > 99999999.9999 {
+		return RewardClaimResult{}, ErrAnnouncementBalanceCap
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE users
+		SET credits = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, balanceAfter, userID); err != nil {
+		return RewardClaimResult{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark)
+		VALUES (?, ?, 'manual_adjust', ?, ?, ?)
+	`, newContentID(), userID, rewardCredits, balanceAfter, "公告奖励："+title); err != nil {
+		return RewardClaimResult{}, err
+	}
+	if errors.Is(receiptErr, sql.ErrNoRows) {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO announcement_receipts (announcement_id, user_id, signed_at, reward_claimed_at)
+			VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+		`, announcementID, userID); err != nil {
+			return RewardClaimResult{}, err
+		}
+	} else if _, err := tx.ExecContext(ctx, `
+		UPDATE announcement_receipts
+		SET signed_at = CURRENT_TIMESTAMP, reward_claimed_at = CURRENT_TIMESTAMP
+		WHERE announcement_id = ? AND user_id = ?
+	`, announcementID, userID); err != nil {
+		return RewardClaimResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return RewardClaimResult{}, err
+	}
+	return RewardClaimResult{RewardCredits: rewardCredits, Granted: true, BalanceAfter: balanceAfter}, nil
+}
+
+func newContentID() string {
+	var bytes [16]byte
+	if _, err := rand.Read(bytes[:]); err != nil {
+		return fmt.Sprintf("%032x", time.Now().UTC().UnixNano())
+	}
+	bytes[6] = (bytes[6] & 0x0f) | 0x40
+	bytes[8] = (bytes[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%s-%s-%s-%s-%s", bytes[0:4], bytes[4:6], bytes[6:8], bytes[8:10], bytes[10:16])
 }
 
 func splitIDs(value string) []string {

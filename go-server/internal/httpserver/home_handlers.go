@@ -33,10 +33,13 @@ func (r *Router) homeBootstrap(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	plans, err := operationRepo.Plans(ctx, true)
-	if err != nil {
-		writeError(w, err)
-		return
+	plans := []operations.SubscriptionPlan{}
+	if subscriptionAccessAllowed(values, userID) {
+		plans, err = operationRepo.Plans(ctx, true)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 
 	if userID == "" {

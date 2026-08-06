@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 import { BillingRail } from './BillingRail';
 import { WEB_BUILD_COMMIT, WEB_BUILD_VERSION, reloadForBuild } from '@/lib/build-version';
 import { formatDate } from '@/lib/common/utils';
-import { APIError, clearSession, getSession, portalApi, refreshSession, type Announcement, type OpenAIImageStatusSnapshot, type PortalUser } from '@/lib/portal-api';
+import { APIError, clearSession, getSession, portalApi, refreshSession, saveSession, type Announcement, type OpenAIImageStatusSnapshot, type PortalUser } from '@/lib/portal-api';
 
 type NavItem = { label: string; href: string; icon: React.ComponentType<{ size?: number; className?: string }> };
 
@@ -41,6 +41,10 @@ type OpenAIAlertBanner = {
   componentCount: number;
 };
 
+function announcementRewardLabel(value: number): string {
+  return Number(value || 0).toFixed(4).replace(/0+$/, '').replace(/\.$/, '') || '0';
+}
+
 function Navigation({ items, pathname, mobile = false, onNavigate }: { items: NavItem[]; pathname: string; mobile?: boolean; onNavigate: () => void }) {
   return (
     <nav className={mobile ? 'grid grid-cols-2 gap-2' : 'space-y-1'}>
@@ -62,6 +66,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<PortalUser | null>(() => getSession());
+  const [subscriptionEnabled, setSubscriptionEnabled] = useState(false);
+  const [subscriptionAccessForUserId, setSubscriptionAccessForUserId] = useState('');
   const [ready, setReady] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [verificationSending, setVerificationSending] = useState(false);
@@ -69,6 +75,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [openAIStatus, setOpenAIStatus] = useState<OpenAIImageStatusSnapshot | null>(null);
   const [signingAnnouncementId, setSigningAnnouncementId] = useState('');
+  const [claimingAnnouncementId, setClaimingAnnouncementId] = useState('');
   const userId = user?.id;
   const userToken = user?.token;
 
@@ -88,6 +95,24 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }).finally(() => active && setReady(true));
     return () => { active = false; };
   }, [pathname, router]);
+
+  useEffect(() => {
+    let active = true;
+    const current = getSession();
+    if (!current) return () => { active = false; };
+    void portalApi.subscription(current)
+      .then(() => {
+        if (!active) return;
+        setSubscriptionEnabled(true);
+        setSubscriptionAccessForUserId(current.id);
+      })
+      .catch(() => {
+        if (!active) return;
+        setSubscriptionEnabled(false);
+        setSubscriptionAccessForUserId(current.id);
+      });
+    return () => { active = false; };
+  }, [userId, userToken]);
 
   useEffect(() => {
     if (verificationCooldown < 1) return;
@@ -286,6 +311,44 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const claimAnnouncementReward = async (announcement: Announcement, dismiss = false) => {
+    if (!user || announcement.rewardCredits <= 0 || claimingAnnouncementId) return;
+    setClaimingAnnouncementId(announcement.id);
+    try {
+      const response = await portalApi.claimAnnouncementReward(user, announcement.id);
+      const result = response.data;
+      if (result.granted) {
+        const nextBalance = Number(result.balanceAfter);
+        const nextUser = saveSession({
+          ...user,
+          credits: Number.isFinite(nextBalance) && nextBalance > 0
+            ? nextBalance
+            : Number(user.credits || 0) + Number(result.rewardCredits || announcement.rewardCredits),
+        });
+        setUser(nextUser);
+        toast.success(`奖励已到账 +${announcementRewardLabel(result.rewardCredits)} 余额`);
+      } else {
+        toast.success('该公告奖励已经领取过了');
+      }
+      setAnnouncements((current) => dismiss
+        ? current.filter((item) => item.id !== announcement.id)
+        : current.map((item) => item.id === announcement.id ? { ...item, rewardClaimed: true } : item));
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '奖励领取失败');
+    } finally {
+      setClaimingAnnouncementId('');
+    }
+  };
+
+  const handlePopupAction = async () => {
+    if (!activePopup) return;
+    if (activePopup.rewardCredits > 0) {
+      await claimAnnouncementReward(activePopup, true);
+      return;
+    }
+    await signAnnouncement();
+  };
+
   return (
     <div className="app-frame">
       <aside className="app-sidebar">
@@ -293,7 +356,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="brand-mark">AI</span>
           <span><strong>AI-PAI</strong><small title={`Commit ${WEB_BUILD_COMMIT}`}>API 中转站 · {WEB_BUILD_VERSION}</small></span>
         </Link>
-        <BillingRail user={user} />
+        <BillingRail user={user} subscriptionEnabled={subscriptionEnabled && subscriptionAccessForUserId === user.id} />
         <div className="sidebar-section-label">开发者工作台</div>
         <div className="sidebar-scroll"><Navigation items={USER_NAV_ITEMS} pathname={pathname} onNavigate={() => setMobileOpen(false)} /></div>
         <div className="sidebar-account">
@@ -357,9 +420,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </section>
             )}
             {bannerAnnouncements.map((item) => (
-              <section key={item.id} className="flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-blue-950">
-                <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-md bg-white text-blue-700"><Megaphone size={15} /></span>
-                <div className="min-w-0 flex-1"><strong className="block text-xs">{item.title}</strong><p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-blue-800">{item.content}</p></div>
+              <section key={item.id} className="flex flex-col gap-3 rounded-md border border-blue-200 bg-blue-50 px-4 py-3 text-blue-950 sm:flex-row sm:items-start">
+                <div className="flex min-w-0 flex-1 items-start gap-3">
+                  <span className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-md bg-white text-blue-700"><Megaphone size={15} /></span>
+                  <div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><strong className="block text-xs">{item.title}</strong>{item.rewardCredits > 0 && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800"><Gift size={12} />奖励 +{announcementRewardLabel(item.rewardCredits)}</span>}</div><p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-5 text-blue-800">{item.content}</p></div>
+                </div>
+                {item.rewardCredits > 0 && <button type="button" onClick={() => void claimAnnouncementReward(item)} disabled={item.rewardClaimed || Boolean(claimingAnnouncementId)} className="btn shrink-0 justify-center border-amber-200 bg-white text-amber-800 hover:border-amber-300 hover:bg-amber-50 disabled:opacity-60">{claimingAnnouncementId === item.id && <LoaderCircle size={14} className="animate-spin" />}{item.rewardClaimed ? '已领取' : '领取奖励'}</button>}
               </section>
             ))}
           </div>
@@ -385,17 +451,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <div className="border-b border-[#EDF0EE] bg-[#FAFBFA] px-5 py-4">
               <div className="flex items-center gap-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-amber-50 text-amber-700"><BellRing size={18} /></span>
-                <div className="min-w-0"><small className="block text-[10px] font-semibold text-amber-700">站内公告{popupAnnouncements.length > 1 ? ` · 1/${popupAnnouncements.length}` : ''}</small><strong id="announcement-dialog-title" className="mt-0.5 block break-words text-sm">{activePopup.title}</strong></div>
+                <div className="min-w-0"><small className="block text-[10px] font-semibold text-amber-700">站内公告{popupAnnouncements.length > 1 ? ` · 1/${popupAnnouncements.length}` : ''}</small><strong id="announcement-dialog-title" className="mt-0.5 block break-words text-sm">{activePopup.title}</strong>{activePopup.rewardCredits > 0 && <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800"><Gift size={12} />可领取 +{announcementRewardLabel(activePopup.rewardCredits)} 余额</span>}</div>
               </div>
             </div>
             <div className="px-5 py-5">
               <p id="announcement-dialog-content" className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-6 text-zinc-700">{activePopup.content}</p>
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-[#EDF0EE] bg-[#FAFBFA] px-5 py-3">
-              <small className="text-[10px] text-zinc-400">确认后不再重复显示</small>
-              <button type="button" onClick={() => void signAnnouncement()} disabled={Boolean(signingAnnouncementId)} className="btn primary min-w-24 justify-center disabled:opacity-60">
-                {signingAnnouncementId && <LoaderCircle size={14} className="animate-spin" />}
-                {signingAnnouncementId ? '确认中' : '我知道了'}
+              <small className="text-[10px] text-zinc-400">{activePopup.rewardCredits > 0 ? '领取后奖励立即到账，每个账号限领一次' : '确认后不再重复显示'}</small>
+              <button type="button" onClick={() => void handlePopupAction()} disabled={Boolean(signingAnnouncementId || claimingAnnouncementId)} className="btn primary min-w-24 justify-center disabled:opacity-60">
+                {(signingAnnouncementId || claimingAnnouncementId) && <LoaderCircle size={14} className="animate-spin" />}
+                {claimingAnnouncementId ? '领取中' : signingAnnouncementId ? '确认中' : activePopup.rewardCredits > 0 ? '领取奖励' : '我知道了'}
               </button>
             </div>
           </section>

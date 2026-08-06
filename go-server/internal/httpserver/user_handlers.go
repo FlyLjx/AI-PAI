@@ -59,7 +59,7 @@ func (r *Router) userLogin(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"data": mergeUserToken(r.publicUserWithSubscription(ctx, user), token),
+		"data": mergeUserToken(r.frontUserWithSubscription(ctx, user), token),
 	})
 }
 
@@ -69,6 +69,18 @@ func (r *Router) publicUserWithSubscription(ctx context.Context, user *users.Use
 	}
 	publicUser := users.ToPublicUser(user)
 	subscription, err := r.currentSubscriptionEntitlement(ctx, user.ID)
+	if err == nil {
+		publicUser.Subscription = subscription
+	}
+	return publicUser
+}
+
+func (r *Router) frontUserWithSubscription(ctx context.Context, user *users.User) users.PublicUser {
+	if user == nil || user.ID == "" {
+		return users.PublicUser{}
+	}
+	publicUser := users.ToPublicUser(user)
+	subscription, err := r.currentSubscriptionEntitlementForFrontUser(ctx, user.ID)
 	if err == nil {
 		publicUser.Subscription = subscription
 	}
@@ -97,7 +109,7 @@ func (r *Router) publishCurrentUser(ctx context.Context, userID string) {
 	if err != nil || user == nil {
 		return
 	}
-	r.userHub.PublishUserData(user.ID, r.publicUserWithSubscription(userCtx, user))
+	r.userHub.PublishUserData(user.ID, r.frontUserWithSubscription(userCtx, user))
 }
 
 func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
@@ -185,7 +197,7 @@ func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusForbidden, "用户已被禁用"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(ctx, user)})
+	writeJSON(w, http.StatusOK, map[string]any{"data": r.frontUserWithSubscription(ctx, user)})
 }
 
 func (r *Router) userDetails(w http.ResponseWriter, req *http.Request, id string, public bool) {
@@ -222,6 +234,9 @@ func (r *Router) userDetails(w http.ResponseWriter, req *http.Request, id string
 		publicTasks = append(publicTasks, tasks.ToPublic(&taskItems[index]))
 	}
 	publicUser := r.publicUserWithSubscription(ctx, user)
+	if public {
+		publicUser = r.frontUserWithSubscription(ctx, user)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
 		"user":            publicUser,
 		"tasks":           publicTasks,
@@ -269,7 +284,7 @@ func (r *Router) changeUserPassword(w http.ResponseWriter, req *http.Request, id
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": r.publicUserWithSubscription(ctx, updated)})
+	writeJSON(w, http.StatusOK, map[string]any{"data": r.frontUserWithSubscription(ctx, updated)})
 }
 
 func (r *Router) updateUserStatus(w http.ResponseWriter, req *http.Request, id string) {

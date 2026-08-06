@@ -105,6 +105,7 @@ export default function BillingPage() {
   const [user, setUser] = useState<PortalUser | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [subscriptionEnabled, setSubscriptionEnabled] = useState(false);
   const [settings, setSettings] = useState<Record<string, unknown>>({});
   const [activeTab, setActiveTab] = useState<BillingTab>('balance');
   const [loading, setLoading] = useState(true);
@@ -135,18 +136,30 @@ export default function BillingPage() {
     }
     if (!silent) setLoading(true);
     setError('');
+    setSubscriptionEnabled(false);
+    setPlans([]);
+    setSubscription(null);
     const results = await Promise.allSettled([
       refreshSession(current),
-      portalApi.plans(),
+      portalApi.plans(current),
       portalApi.subscription(current),
       portalApi.publicSettings(),
     ]);
     const [userResult, plansResult, subscriptionResult, settingsResult] = results;
     setUser(userResult.status === 'fulfilled' ? userResult.value : current);
-    if (plansResult.status === 'fulfilled') setPlans((plansResult.value.data || []).filter((plan) => plan.status === 'active'));
-    if (subscriptionResult.status === 'fulfilled') setSubscription(subscriptionResult.value.data);
+    if (plansResult.status === 'fulfilled') {
+      setSubscriptionEnabled(true);
+      setPlans((plansResult.value.data || []).filter((plan) => plan.status === 'active'));
+    }
+    if (subscriptionResult.status === 'fulfilled') {
+      setSubscriptionEnabled(true);
+      setSubscription(subscriptionResult.value.data);
+    }
     if (settingsResult.status === 'fulfilled') setSettings(settingsResult.value.data || {});
-    const failure = results.find((result) => result.status === 'rejected');
+    const failure = results.find((result, index) => {
+      if (result.status !== 'rejected') return false;
+      return (index !== 1 && index !== 2) || !(result.reason instanceof APIError && result.reason.status === 403);
+    });
     if (failure?.status === 'rejected') setError(errorMessage(failure.reason));
     if (!silent) setLoading(false);
   }, []);
@@ -186,7 +199,7 @@ export default function BillingPage() {
   const minimumAmount = Math.max(1, Number(settings.rechargeMinAmount || 1));
   const configuredRechargeRate = Number(settings.rechargeRate);
   const rechargeRate = Number.isFinite(configuredRechargeRate) && configuredRechargeRate > 0 ? configuredRechargeRate : 10;
-  const subscriptionActive = Boolean(subscription?.isPaid && subscription?.status === 'active');
+  const subscriptionActive = subscriptionEnabled && Boolean(subscription?.isPaid && subscription?.status === 'active');
   const remainingQuota = Number(subscription?.effectiveQuotaRemaining ?? subscription?.quotaRemaining ?? 0);
   const quotaLimit = Number(subscription?.quotaLimit ?? 0);
   const recommendedPlanId = useMemo(() => plans.reduce<Plan | null>((recommended, plan) => {
@@ -197,6 +210,10 @@ export default function BillingPage() {
 
   const createPayment = async (input: { amount?: number; subscriptionPlanId?: string }, title: string, pendingKey: string) => {
     if (!user) return;
+    if (input.subscriptionPlanId && !subscriptionEnabled) {
+      toast.error('当前账号暂未开放订阅功能');
+      return;
+    }
     setPayingFor(pendingKey);
     setPaymentError('');
     try {
@@ -224,6 +241,7 @@ export default function BillingPage() {
   };
 
   const startPlanPayment = (plan: Plan) => {
+    if (!subscriptionEnabled) return;
     void createPayment({ subscriptionPlanId: plan.id }, `${plan.name}订阅`, `plan-${plan.id}`);
   };
 
@@ -328,7 +346,7 @@ export default function BillingPage() {
 
   return (
     <div className="page-stack">
-      <PageHeader title="计费中心" description="余额按量扣费与订阅额度可同时使用">
+      <PageHeader title="计费中心" description={subscriptionEnabled ? '余额按量扣费与订阅额度可同时使用' : '余额充值与按量调用额度管理'}>
         <button className="btn" type="button" onClick={refreshBilling} disabled={loading || historyLoading}>
           <RefreshCw size={14} className={loading || historyLoading ? 'animate-spin' : ''} />刷新
         </button>
@@ -338,13 +356,15 @@ export default function BillingPage() {
 
       <section className="metric-grid">
         <StatBlock title="账户余额" value={loading && !user ? '--' : formatCNY(Number(user?.credits || 0))} subtext="按量请求自动扣减" icon={CircleDollarSign} color="green" />
-        <StatBlock title="订阅状态" value={loading ? '--' : subscriptionActive ? subscription?.planName || '已订阅' : '未订阅'} subtext={subscriptionActive ? `有效至 ${subscription?.expiresAt ? formatDate(subscription.expiresAt, false) : '-'}` : '可独立购买套餐'} icon={Crown} color="amber" />
-        <StatBlock title="订阅剩余" value={loading ? '--' : subscriptionActive ? remainingQuota.toLocaleString() : '0'} subtext={subscriptionActive ? `总额度 ${quotaLimit.toLocaleString()}` : '未开通订阅额度'} icon={WalletCards} color="cyan" />
+        {subscriptionEnabled && <>
+          <StatBlock title="订阅状态" value={loading ? '--' : subscriptionActive ? subscription?.planName || '已订阅' : '未订阅'} subtext={subscriptionActive ? `有效至 ${subscription?.expiresAt ? formatDate(subscription.expiresAt, false) : '-'}` : '可独立购买套餐'} icon={Crown} color="amber" />
+          <StatBlock title="订阅剩余" value={loading ? '--' : subscriptionActive ? remainingQuota.toLocaleString() : '0'} subtext={subscriptionActive ? `总额度 ${quotaLimit.toLocaleString()}` : '未开通订阅额度'} icon={WalletCards} color="cyan" />
+        </>}
         <StatBlock title="充值兑换" value={`1 : ${rechargeRate.toLocaleString()}`} subtext={`最低 ${formatCNY(minimumAmount)}`} icon={ShieldCheck} color="neutral" />
       </section>
 
       <div className="section-panel overflow-hidden">
-        <div className="grid grid-cols-2 border-b border-[#dce4df] bg-[#fafbf9] p-1.5">
+        <div className={`grid border-b border-[#dce4df] bg-[#fafbf9] p-1.5 ${subscriptionEnabled ? 'grid-cols-2' : 'grid-cols-1'}`}>
           <button
             type="button"
             className={`min-h-9 rounded-md px-3 text-xs font-bold ${activeTab === 'balance' ? 'bg-white text-[#087443] shadow-sm' : 'text-zinc-500'}`}
@@ -353,17 +373,19 @@ export default function BillingPage() {
           >
             <CircleDollarSign size={14} className="mr-1.5 inline" />余额充值
           </button>
-          <button
-            type="button"
-            className={`min-h-9 rounded-md px-3 text-xs font-bold ${activeTab === 'subscription' ? 'bg-white text-[#92400e] shadow-sm' : 'text-zinc-500'}`}
-            onClick={() => setActiveTab('subscription')}
-            aria-pressed={activeTab === 'subscription'}
-          >
-            <Crown size={14} className="mr-1.5 inline" />订阅套餐
-          </button>
+          {subscriptionEnabled && (
+            <button
+              type="button"
+              className={`min-h-9 rounded-md px-3 text-xs font-bold ${activeTab === 'subscription' ? 'bg-white text-[#92400e] shadow-sm' : 'text-zinc-500'}`}
+              onClick={() => setActiveTab('subscription')}
+              aria-pressed={activeTab === 'subscription'}
+            >
+              <Crown size={14} className="mr-1.5 inline" />订阅套餐
+            </button>
+          )}
         </div>
 
-        {activeTab === 'balance' ? (
+        {activeTab === 'balance' || !subscriptionEnabled ? (
           <div className="section-body grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
             <div>
               <div className="mb-4 flex items-center justify-between gap-3">
@@ -516,8 +538,8 @@ export default function BillingPage() {
           <div className="flex min-w-0 items-center gap-2.5">
             <span className="billing-icon"><ReceiptText size={16} /></span>
             <div className="min-w-0">
-              <strong id="billing-history-title" className="block text-sm">充值与订阅记录</strong>
-              <small className="mt-0.5 block text-[11px] text-zinc-500">余额充值与订阅订单，共 {historyTotal.toLocaleString()} 条</small>
+              <strong id="billing-history-title" className="block text-sm">{subscriptionEnabled ? '充值与订阅记录' : '充值记录'}</strong>
+              <small className="mt-0.5 block text-[11px] text-zinc-500">{subscriptionEnabled ? '余额充值与订阅订单' : '余额充值订单'}，共 {historyTotal.toLocaleString()} 条</small>
             </div>
           </div>
           <button className="btn self-start sm:self-auto" type="button" onClick={() => void loadOrderHistory(historyPage)} disabled={historyLoading}>
@@ -529,7 +551,7 @@ export default function BillingPage() {
           <div className="section-panel empty-row" role="status"><LoaderCircle size={14} className="mr-2 inline animate-spin" />正在读取订单记录...</div>
         ) : historyError ? (
           <div className="flex flex-col items-start gap-3 rounded-[7px] border border-red-200 bg-red-50 p-4 text-[11px] text-red-700 sm:flex-row sm:items-center" role="alert">
-            <span className="min-w-0 flex-1">充值与订阅记录暂未更新：{historyError}</span>
+            <span className="min-w-0 flex-1">{subscriptionEnabled ? '充值与订阅记录暂未更新' : '充值记录暂未更新'}：{historyError}</span>
             <button className="btn shrink-0" type="button" onClick={() => void loadOrderHistory(historyPage)}>重新加载</button>
           </div>
         ) : (
@@ -600,7 +622,7 @@ export default function BillingPage() {
                 </article>
               );
             }}
-            emptyState={<EmptyState title="暂无订单记录" description="完成余额充值或购买订阅后，订单会显示在这里。" icon={ReceiptText} />}
+            emptyState={<EmptyState title="暂无订单记录" description={subscriptionEnabled ? '完成余额充值或购买订阅后，订单会显示在这里。' : '完成余额充值后，订单会显示在这里。'} icon={ReceiptText} />}
           />
         )}
       </section>

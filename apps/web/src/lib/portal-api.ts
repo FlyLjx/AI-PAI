@@ -372,6 +372,8 @@ export type Announcement = {
   targetType: 'all' | 'users';
   status: 'active' | 'disabled';
   sortOrder: number;
+  rewardCredits: number;
+  rewardClaimed: boolean;
   userIds: string[];
   createdAt: string;
   updatedAt: string;
@@ -523,6 +525,7 @@ export const portalApi = {
   pricingModels: () => api<PricingModel[]>('/api/models/pricing'),
   announcements: (user: PortalUser) => api<Announcement[]>(`/api/announcements/public${query({ userId: user.id })}`, {}, user.token),
   signAnnouncement: (user: PortalUser, id: string) => api<{ signed: boolean }>(`/api/announcements/${encodeURIComponent(id)}/sign`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }, user.token),
+  claimAnnouncementReward: (user: PortalUser, id: string) => api<{ rewardCredits: number; granted: boolean; balanceAfter: number }>(`/api/announcements/${encodeURIComponent(id)}/claim-reward`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }, user.token),
   listKeys: (user: PortalUser) => api<APIKey[]>(`/api/api-access/keys${query({ userId: user.id })}`, {}, user.token),
   createKey: (user: PortalUser, name: string, billingMode: SelectableAPIKeyBillingMode) => api<APIKey>('/api/api-access/keys', { method: 'POST', body: JSON.stringify({ userId: user.id, name, billingMode }) }, user.token),
   revealKey: (user: PortalUser, id: string) => api<{ key: string }>(`/api/api-access/keys/${encodeURIComponent(id)}/reveal`, { method: 'POST' }, user.token),
@@ -532,7 +535,7 @@ export const portalApi = {
   usageTrend: (user: PortalUser, startDate: string, endDate: string) => api<UsageTrendPoint[]>(`/api/api-access/logs/trend${query({ userId: user.id, startDate, endDate })}`, {}, user.token),
   stability: () => api<StabilitySnapshot>('/api/upstream/stability'),
   openAIImageStatus: () => api<OpenAIImageStatusSnapshot>('/api/upstream/openai-status'),
-  plans: () => api<Plan[]>('/api/subscriptions/public/plans'),
+  plans: (user: PortalUser) => api<Plan[]>(`/api/subscriptions/public/plans${query({ userId: user.id })}`, {}, user.token),
   subscription: (user: PortalUser) => api<Subscription | null>(`/api/subscriptions/public/current${query({ userId: user.id })}`, {}, user.token),
   recharge: (user: PortalUser, input: { amount?: number; subscriptionPlanId?: string }) => api<Record<string, unknown>>('/api/recharge', { method: 'POST', body: JSON.stringify({ userId: user.id, ...input }) }, user.token),
   rechargeHistory: (user: PortalUser, page = 1, pageSize = 10) => api<RechargeOrder[]>(`/api/recharge/history${query({ userId: user.id, page, pageSize })}`, {}, user.token),

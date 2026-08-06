@@ -32,7 +32,7 @@ func (r *Router) settings(w http.ResponseWriter, req *http.Request) {
 		defer cancel()
 		data, err := settings.NewRepository(r.db).Update(ctx, input)
 		if err != nil {
-			if errors.Is(err, settings.ErrInvalidRechargeRate) || errors.Is(err, settings.ErrInvalidTaskTimeout) || errors.Is(err, settings.ErrInvalidDynamicConcurrency) || errors.Is(err, settings.ErrInvalidInviteSettings) || errors.Is(err, settings.ErrInvalidAdminNotification) || errors.Is(err, settings.ErrInvalidSystemLogCleanup) {
+			if errors.Is(err, settings.ErrInvalidRechargeRate) || errors.Is(err, settings.ErrInvalidTaskTimeout) || errors.Is(err, settings.ErrInvalidDynamicConcurrency) || errors.Is(err, settings.ErrInvalidInviteSettings) || errors.Is(err, settings.ErrInvalidAdminNotification) || errors.Is(err, settings.ErrInvalidSystemLogCleanup) || errors.Is(err, settings.ErrInvalidSubscriptionAccessUser) {
 				writeError(w, newAppError(http.StatusBadRequest, err.Error()))
 				return
 			}

@@ -1,12 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CreditCard, Gauge, Gift, Headset, Loader2, Mail, RefreshCw, Save, Server, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
+import { CreditCard, Gauge, Gift, Headset, Loader2, Mail, RefreshCw, Save, Server, ShieldAlert, ShieldCheck, Trash2, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import { SystemUpdatePanel } from '@/components/settings/SystemUpdatePanel';
-import { portalApi, type Plan } from '@/lib/admin-api';
+import { portalApi, type Plan, type PortalUser } from '@/lib/admin-api';
 
 type SettingsForm = {
   siteName: string;
@@ -34,6 +34,7 @@ type SettingsForm = {
   dynamicConcurrencyRequestStep: number;
   dynamicConcurrencyIncrement: number;
   rechargeRate: number;
+  subscriptionAccessUserId: string;
   inviteEnabled: boolean;
   inviteInviterRewardType: 'balance' | 'subscription';
   inviteInviterRewardCredits: number;
@@ -99,6 +100,7 @@ const emptySettings: SettingsForm = {
   dynamicConcurrencyRequestStep: 50,
   dynamicConcurrencyIncrement: 5,
   rechargeRate: 10,
+  subscriptionAccessUserId: '',
   inviteEnabled: false,
   inviteInviterRewardType: 'subscription',
   inviteInviterRewardCredits: 0,
@@ -181,6 +183,7 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     dynamicConcurrencyRequestStep: positiveInteger(data.dynamicConcurrencyRequestStep, 50),
     dynamicConcurrencyIncrement: positiveInteger(data.dynamicConcurrencyIncrement, 5),
     rechargeRate: Number.isFinite(rechargeRate) && rechargeRate > 0 ? rechargeRate : 10,
+    subscriptionAccessUserId: String(data.subscriptionAccessUserId || ''),
     inviteEnabled: data.inviteEnabled !== false,
     inviteInviterRewardType: data.inviteInviterRewardType === 'balance' ? 'balance' : 'subscription',
     inviteInviterRewardCredits: Number(data.inviteInviterRewardCredits || 0),
@@ -231,14 +234,16 @@ export default function AdminSettingsPage() {
   const [emailPasswordConfigured, setEmailPasswordConfigured] = useState(false);
   const [alipayPrivateKeyConfigured, setAlipayPrivateKeyConfigured] = useState(false);
   const [plans, setPlans] = useState<Plan[]>([]);
+  const [users, setUsers] = useState<PortalUser[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [response, planResponse] = await Promise.all([portalApi.settings(), portalApi.adminPlans()]);
+      const [response, planResponse, usersResponse] = await Promise.all([portalApi.settings(), portalApi.adminPlans(), portalApi.users()]);
       const values = response.data;
       setPlans((planResponse.data || []).filter((plan) => plan.status === 'active'));
+      setUsers(usersResponse.data || []);
       setForm(normalizeSettings(values));
       setEmailPasswordConfigured(Boolean(values.emailPassword));
       setAlipayPrivateKeyConfigured(Boolean(values.alipayPrivateKey));
@@ -257,6 +262,10 @@ export default function AdminSettingsPage() {
   }, [load]);
 
   const updateField = <K extends keyof SettingsForm>(key: K, value: SettingsForm[K]) => setForm((current) => ({ ...current, [key]: value }));
+
+  const subscriptionUsers = users
+    .filter((user) => user.role === 'user' && (user.status === 'active' || user.id === form.subscriptionAccessUserId))
+    .sort((left, right) => left.email.localeCompare(right.email));
 
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -372,6 +381,14 @@ export default function AdminSettingsPage() {
               <div className="flex items-center gap-2 border-b border-[#DCE4DF] pb-2.5"><ShieldCheck className="h-4 w-4 text-[#0891B2]" /><div><h2 className="text-xs font-semibold">注册与账户</h2><p className="mt-0.5 text-[10px] text-zinc-400">API 客户开户规则</p></div></div>
               <label className="flex items-center justify-between gap-4 rounded-md border border-[#DCE4DF] p-3"><span><strong className="block text-[11px]">开放用户注册</strong><small className="mt-0.5 block text-[10px] text-zinc-400">关闭后仅管理员可创建 API 客户</small></span><input type="checkbox" checked={form.registerMode === 'open'} onChange={(event) => updateField('registerMode', event.target.checked ? 'open' : 'closed')} className="h-4 w-4 accent-[#047857]" /></label>
               <label className="flex items-center justify-between gap-4 rounded-md border border-[#DCE4DF] p-3"><span><strong className="block text-[11px]">注册邮箱验证</strong><small className="mt-0.5 block text-[10px] text-zinc-400">启用后须验证邮箱才能完成开户</small></span><input type="checkbox" checked={form.registerEmailVerification} onChange={(event) => updateField('registerEmailVerification', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
+            </section>
+
+            <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:col-span-2">
+              <div className="flex items-center gap-2 border-b border-[#DCE4DF] pb-2.5"><UserRound className="h-4 w-4 text-[#D97706]" /><div><h2 className="text-xs font-semibold">订阅开放范围</h2><p className="mt-0.5 text-[10px] text-zinc-400">只向选中的一个账号展示订阅入口；余额充值继续向所有账号开放</p></div></div>
+              <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">订阅开放账号</span><AppSelect value={form.subscriptionAccessUserId} options={[{ value: '', label: '暂不开放（默认）' }, ...subscriptionUsers.map((user) => ({ value: user.id, label: `${user.email}${user.status !== 'active' ? ' · 已停用' : ''}` }))]} onValueChange={(value) => updateField('subscriptionAccessUserId', value)} ariaLabel="订阅开放账号" /></label>
+                <div className="rounded-md border border-[#DCE4DF] bg-[#FAFBFA] px-3 py-2.5 text-[11px] leading-5 text-zinc-500"><strong className="block text-zinc-700">生效规则</strong><span>未选择账号时订阅模块保持关闭；选择后只有该账号可以读取套餐、当前订阅和订阅订单。</span></div>
+              </div>
             </section>
 
             <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:col-span-2">

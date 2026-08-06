@@ -3,6 +3,7 @@ package httpserver
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -21,15 +22,46 @@ func (r *Router) currentSubscriptionEntitlement(ctx context.Context, userID stri
 	if err != nil {
 		return nil, err
 	}
-	return r.currentSubscriptionEntitlementWithLimits(ctx, userID, operations.FreeQuotaLimits{
-		Hourly:  generationQuotaSetting(values["freeHourlyGenerationQuota"], defaultFreeHourlyGenerationQuota),
-		Daily:   generationQuotaSetting(values["freeDailyGenerationQuota"], defaultFreeDailyGenerationQuota),
-		Monthly: generationQuotaSetting(values["freeGenerationQuota"], defaultFreeGenerationQuota),
-	})
+	return r.currentSubscriptionEntitlementWithLimits(ctx, userID, freeQuotaLimitsFromSettings(values))
 }
 
 func (r *Router) currentSubscriptionEntitlementWithLimits(ctx context.Context, userID string, limits operations.FreeQuotaLimits) (*operations.SubscriptionEntitlement, error) {
 	return operations.NewRepository(r.db).CurrentSubscription(ctx, userID, limits)
+}
+
+func freeQuotaLimitsFromSettings(values settings.Settings) operations.FreeQuotaLimits {
+	return operations.FreeQuotaLimits{
+		Hourly:  generationQuotaSetting(values["freeHourlyGenerationQuota"], defaultFreeHourlyGenerationQuota),
+		Daily:   generationQuotaSetting(values["freeDailyGenerationQuota"], defaultFreeDailyGenerationQuota),
+		Monthly: generationQuotaSetting(values["freeGenerationQuota"], defaultFreeGenerationQuota),
+	}
+}
+
+func subscriptionAccessAllowed(values settings.Settings, userID string) bool {
+	configuredUserID := strings.TrimSpace(anyString(values["subscriptionAccessUserId"]))
+	return configuredUserID != "" && configuredUserID == strings.TrimSpace(userID)
+}
+
+func (r *Router) requireSubscriptionAccess(ctx context.Context, userID string) error {
+	values, err := settings.NewRepository(r.db).Get(ctx)
+	if err != nil {
+		return err
+	}
+	if !subscriptionAccessAllowed(values, userID) {
+		return newAppError(http.StatusForbidden, "当前账号暂未开放订阅功能")
+	}
+	return nil
+}
+
+func (r *Router) currentSubscriptionEntitlementForFrontUser(ctx context.Context, userID string) (*operations.SubscriptionEntitlement, error) {
+	values, err := settings.NewRepository(r.db).Get(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if !subscriptionAccessAllowed(values, userID) {
+		return nil, nil
+	}
+	return r.currentSubscriptionEntitlementWithLimits(ctx, userID, freeQuotaLimitsFromSettings(values))
 }
 
 func generationQuotaSetting(value any, fallback int) int {

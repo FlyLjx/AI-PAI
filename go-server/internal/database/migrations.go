@@ -61,6 +61,12 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "announcements", "display_mode", "VARCHAR(20) NOT NULL DEFAULT 'popup'", "content"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "announcements", "reward_credits", "NUMERIC(12,4) NOT NULL DEFAULT 0", "display_mode"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "announcement_receipts", "reward_claimed_at", "TIMESTAMP NULL", "signed_at"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "user_invites", "reward_type", "VARCHAR(20) NOT NULL DEFAULT 'credits'", "reward_credits"); err != nil {
 		return err
 	}
@@ -768,6 +774,7 @@ func schemaBootstrapStatements() []string {
 				title VARCHAR(120) NOT NULL,
 				content TEXT NOT NULL,
 				display_mode VARCHAR(20) NOT NULL DEFAULT 'popup',
+				reward_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
 				target_type VARCHAR(20) NOT NULL DEFAULT 'all',
 				status VARCHAR(16) NOT NULL DEFAULT 'active',
 				sort_order INTEGER NOT NULL DEFAULT 0,
@@ -784,6 +791,7 @@ func schemaBootstrapStatements() []string {
 				announcement_id VARCHAR(36) NOT NULL,
 				user_id VARCHAR(36) NOT NULL,
 				signed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+				reward_claimed_at TIMESTAMP NULL,
 				PRIMARY KEY (announcement_id, user_id)
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_announcement_receipts_user_id ON announcement_receipts (user_id)`,
@@ -1053,6 +1061,7 @@ func schemaBootstrapStatements() []string {
 			announcement_id VARCHAR(36) NOT NULL,
 			user_id VARCHAR(36) NOT NULL,
 			signed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			reward_claimed_at DATETIME NULL,
 			PRIMARY KEY (announcement_id, user_id),
 			INDEX idx_announcement_receipts_user_id (user_id)
 		)`,

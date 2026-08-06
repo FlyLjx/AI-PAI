@@ -193,6 +193,12 @@ func (r *Router) createUserAPIAccessKey(w http.ResponseWriter, req *http.Request
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
+	if strings.EqualFold(strings.TrimSpace(input.BillingMode), apiaccess.BillingModeSubscription) {
+		if err := r.requireSubscriptionAccess(ctx, userID); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	item, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).CreateUserKey(ctx, userID, input.Name, input.BillingMode)
 	if err != nil {
 		if errors.Is(err, apiaccess.ErrInvalidBillingMode) {

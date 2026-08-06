@@ -44,14 +44,28 @@ func (r *Router) adminPlans(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) planCollection(w http.ResponseWriter, req *http.Request, public bool) {
+	var frontUserID string
 	if !public {
 		if _, err := r.requireAdmin(req); err != nil {
+			writeError(w, err)
+			return
+		}
+	} else {
+		var err error
+		frontUserID, err = r.requireFrontUser(req, req.URL.Query().Get("userId"))
+		if err != nil {
 			writeError(w, err)
 			return
 		}
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
+	if public {
+		if err := r.requireSubscriptionAccess(ctx, frontUserID); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	repo := operations.NewRepository(r.db)
 	switch req.Method {
 	case http.MethodGet:
@@ -135,6 +149,10 @@ func (r *Router) currentSubscription(w http.ResponseWriter, req *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
+	if err := r.requireSubscriptionAccess(ctx, userID); err != nil {
+		writeError(w, err)
+		return
+	}
 	data, err := r.currentSubscriptionEntitlement(ctx, userID)
 	if err != nil {
 		writeError(w, err)
@@ -538,6 +556,10 @@ func (r *Router) recharge(w http.ResponseWriter, req *http.Request) {
 	orderType := "recharge"
 	var subscriptionPlanID *string
 	if input.SubscriptionPlanID != nil && strings.TrimSpace(*input.SubscriptionPlanID) != "" {
+		if !subscriptionAccessAllowed(values, input.UserID) {
+			writeError(w, newAppError(http.StatusForbidden, "当前账号暂未开放订阅功能"))
+			return
+		}
 		planID := strings.TrimSpace(*input.SubscriptionPlanID)
 		plan, findErr := repo.FindPlan(ctx, planID)
 		if errors.Is(findErr, sql.ErrNoRows) || plan == nil || plan.Status != "active" || operations.IsAdminCustomSubscriptionPlan(plan) {
@@ -757,6 +779,14 @@ func (r *Router) rechargeHistory(w http.ResponseWriter, req *http.Request) {
 	defer cancel()
 	input := operationPage(req)
 	input.UserID = userID
+	values, err := settings.NewRepository(r.db).Get(ctx)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	if !subscriptionAccessAllowed(values, userID) {
+		input.OrderType = "recharge"
+	}
 	items, total, err := operations.NewRepository(r.db).Orders(ctx, input)
 	if err != nil {
 		writeError(w, err)
@@ -791,6 +821,12 @@ func (r *Router) rechargeByID(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusForbidden, "只能查看自己的充值订单"))
 		return
 	}
+	if order.OrderType == "subscription" {
+		if err := r.requireSubscriptionAccess(ctx, userID); err != nil {
+			writeError(w, err)
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": order})
 }
 
@@ -823,6 +859,12 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 	if order.UserID != userID {
 		writeError(w, newAppError(http.StatusForbidden, "只能同步自己的充值订单"))
 		return
+	}
+	if order.OrderType == "subscription" {
+		if err := r.requireSubscriptionAccess(ctx, userID); err != nil {
+			writeError(w, err)
+			return
+		}
 	}
 	if strings.TrimSpace(input.UserID) != "" && strings.TrimSpace(input.UserID) != order.UserID {
 		writeError(w, newAppError(http.StatusNotFound, "订阅订单不存在"))

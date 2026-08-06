@@ -17,6 +17,7 @@ var ErrInvalidDynamicConcurrency = errors.New("动态并发配置不正确")
 var ErrInvalidInviteSettings = errors.New("邀请奖励或注册风控配置不正确")
 var ErrInvalidAdminNotification = errors.New("管理员通知配置不正确")
 var ErrInvalidSystemLogCleanup = errors.New("系统日志自动清理配置不正确")
+var ErrInvalidSubscriptionAccessUser = errors.New("订阅开放账号配置不正确")
 
 type Repository struct {
 	db *database.DB
@@ -66,6 +67,13 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 				return nil, ErrInvalidRechargeRate
 			}
 			value = rate
+		}
+		if key == "subscriptionAccessUserId" {
+			userID, ok := value.(string)
+			if !ok {
+				return nil, ErrInvalidSubscriptionAccessUser
+			}
+			value = strings.TrimSpace(userID)
 		}
 		if key == "taskTimeoutMinutes" {
 			number, ok := numericSettingValue(value)

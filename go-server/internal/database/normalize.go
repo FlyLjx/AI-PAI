@@ -55,7 +55,7 @@ func normalizeOnDuplicateKey(query string) string {
 	case strings.Contains(query, "INSERT INTO system_settings"):
 		return postgresUpsert(query, "system_settings", "setting_key", []string{"setting_value"}, false)
 	case strings.Contains(query, "INSERT INTO announcements"):
-		return postgresUpsert(query, "announcements", "id", []string{"title", "content", "display_mode", "target_type", "status", "sort_order"}, true)
+		return postgresUpsert(query, "announcements", "id", []string{"title", "content", "display_mode", "target_type", "status", "sort_order", "reward_credits"}, true)
 	case strings.Contains(query, "INSERT INTO ai_models"):
 		return postgresUpsert(query, "ai_models", "id", []string{"display_name", "cost_1k", "cost_2k", "cost_4k", "markup_percent", "price_change_percent", "price_1k", "price_2k", "price_4k", "append_size_to_prompt", "enabled_size_tiers", "sort_order"}, true)
 	case strings.Contains(query, "INSERT INTO announcement_receipts"):

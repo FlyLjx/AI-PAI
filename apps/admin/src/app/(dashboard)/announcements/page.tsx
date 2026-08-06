@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  BellRing, Check, Eye, EyeOff, Loader2, Mail, Megaphone, Pencil, Plus, RefreshCw,
+  BellRing, Check, Eye, EyeOff, Gift, Loader2, Mail, Megaphone, Pencil, Plus, RefreshCw,
   Search, Trash2, Users, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -23,6 +23,7 @@ const emptyDraft: AnnouncementDraft = {
   targetType: 'all',
   status: 'active',
   sortOrder: 100,
+  rewardCredits: 0,
   userIds: [],
 };
 
@@ -48,8 +49,13 @@ function toDraft(item: Announcement): AnnouncementDraft {
     targetType: item.targetType,
     status: item.status,
     sortOrder: Number(item.sortOrder || 0),
+    rewardCredits: Number(item.rewardCredits || 0),
     userIds: item.userIds || [],
   };
+}
+
+function formatReward(value: number): string {
+  return Number(value || 0).toFixed(4).replace(/0+$/, '').replace(/\.$/, '') || '0';
 }
 
 function displayLabel(mode: Announcement['displayMode']) {
@@ -265,7 +271,7 @@ export default function AnnouncementsPage() {
           emptyState={<EmptyState title="暂无公告" description="创建公告后，可通过横幅或弹窗通知用户。" icon={Megaphone} />}
           renderRow={(item) => (
             <tr key={item.id} className="hover:bg-[#FAFBFA]">
-              <td className="max-w-[320px] px-4 py-3"><strong className="block truncate font-medium" title={item.title}>{item.title}</strong><small className="mt-0.5 block truncate text-[10px] text-zinc-400" title={item.content}>{item.content}</small></td>
+              <td className="max-w-[320px] px-4 py-3"><strong className="block truncate font-medium" title={item.title}>{item.title}</strong><div className="mt-1 flex items-center gap-2"><small className="min-w-0 truncate text-[10px] text-zinc-400" title={item.content}>{item.content}</small>{item.rewardCredits > 0 && <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"><Gift className="h-3 w-3" />+{formatReward(item.rewardCredits)}</span>}</div></td>
               <td className="px-4 py-3"><span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${item.displayMode === 'popup' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-blue-200 bg-blue-50 text-blue-700'}`}>{displayLabel(item.displayMode)}</span></td>
               <td className="px-4 py-3 text-[11px] text-zinc-600">{item.targetType === 'all' ? '全部用户' : `${item.userIds.length} 位用户`}</td>
               <td className="px-4 py-3 font-mono text-[11px]">{item.sortOrder}</td>
@@ -276,7 +282,7 @@ export default function AnnouncementsPage() {
           )}
           renderMobileItem={(item) => (
             <article key={item.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
-              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{item.title}</strong><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-zinc-500">{item.content}</p></div><span className={`status-pill ${item.status}`}>{item.status === 'active' ? '展示中' : '已停用'}</span></div>
+              <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{item.title}</strong><p className="mt-1 line-clamp-2 text-[11px] leading-5 text-zinc-500">{item.content}</p>{item.rewardCredits > 0 && <span className="mt-2 inline-flex items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"><Gift className="h-3 w-3" />奖励 +{formatReward(item.rewardCredits)} 余额</span>}</div><span className={`status-pill ${item.status}`}>{item.status === 'active' ? '展示中' : '已停用'}</span></div>
               <div className="mt-3 flex items-center gap-2 border-y border-[#EDF0EE] py-2 text-[10px] text-zinc-500"><span>{displayLabel(item.displayMode)}</span><span>·</span><span>{item.targetType === 'all' ? '全部用户' : `${item.userIds.length} 位用户`}</span><span>·</span><span>排序 {item.sortOrder}</span></div>
               <div className="mt-2 flex items-center justify-between"><small className="text-[10px] text-zinc-400">{formatDate(item.updatedAt)}</small>{rowActions(item)}</div>
             </article>
@@ -291,10 +297,11 @@ export default function AnnouncementsPage() {
             <div className="space-y-4 p-5">
               <label className="block"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">公告标题</span><input required maxLength={120} value={draft.title} onChange={(event) => updateDraft('title', event.target.value)} placeholder="例如：服务维护通知" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
               <label className="block"><span className="mb-1 flex items-center justify-between text-[11px] font-semibold text-zinc-500"><span>公告内容</span><small className="font-normal text-zinc-400">支持换行</small></span><textarea required rows={6} value={draft.content} onChange={(event) => updateDraft('content', event.target.value)} placeholder="输入需要通知用户的具体内容" className="w-full resize-y rounded-md border border-[#DCE4DF] px-3 py-2 text-xs leading-6 outline-none focus:border-[#12B76A]" /></label>
-              <div className="grid grid-cols-1 gap-4 border-t border-[#EDF0EE] pt-4 sm:grid-cols-3">
+              <div className="grid grid-cols-1 gap-4 border-t border-[#EDF0EE] pt-4 sm:grid-cols-4">
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">展示方式</span><AppSelect value={draft.displayMode} onValueChange={(value) => updateDraft('displayMode', value as Announcement['displayMode'])} ariaLabel="公告展示方式" options={MODE_OPTIONS.slice(1)} /></label>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">公告状态</span><AppSelect value={draft.status} onValueChange={(value) => { const nextStatus = value as Announcement['status']; updateDraft('status', nextStatus); if (nextStatus !== 'active') setSendEmail(false); }} ariaLabel="公告状态" options={STATUS_OPTIONS.slice(1)} /></label>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">排序值</span><input type="number" value={draft.sortOrder} onChange={(event) => updateDraft('sortOrder', Number(event.target.value))} className="h-9 w-full rounded-md border border-[#DCE4DF] px-3 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
+                <label><span className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-zinc-500"><Gift className="h-3.5 w-3.5 text-amber-600" />奖励余额</span><input type="number" min="0" max="99999999.9999" step="0.0001" value={draft.rewardCredits} onChange={(event) => updateDraft('rewardCredits', Number(event.target.value))} placeholder="0 表示无奖励" className="h-9 w-full rounded-md border border-[#DCE4DF] px-3 font-mono text-xs outline-none focus:border-[#12B76A]" /><small className="mt-1 block text-[9px] leading-4 text-zinc-400">每个账号仅限领取一次</small></label>
               </div>
               <section className="border-t border-[#EDF0EE] pt-4">
                 <div className="grid grid-cols-2 gap-2">

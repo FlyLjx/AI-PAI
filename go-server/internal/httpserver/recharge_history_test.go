@@ -29,11 +29,13 @@ func TestRechargeHistoryReturnsOnlyAuthenticatedUserOrders(t *testing.T) {
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
 			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
 		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 0, "user", "active", now, now, now))
-	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id WHERE recharge_orders.user_id=\?`).
-		WithArgs("user-1").
+	mock.ExpectQuery(`SELECT setting_key, setting_value FROM system_settings`).
+		WillReturnRows(sqlmock.NewRows([]string{"setting_key", "setting_value"}))
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id WHERE recharge_orders.user_id=\? AND recharge_orders.order_type=\?`).
+		WithArgs("user-1", "recharge").
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-	mock.ExpectQuery(`SELECT recharge_orders.id, .* FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id WHERE recharge_orders.user_id=\? ORDER BY recharge_orders.created_at DESC, recharge_orders.id DESC LIMIT \? OFFSET \?`).
-		WithArgs("user-1", 10, 0).
+	mock.ExpectQuery(`SELECT recharge_orders.id, .* FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id WHERE recharge_orders.user_id=\? AND recharge_orders.order_type=\? ORDER BY recharge_orders.created_at DESC, recharge_orders.id DESC LIMIT \? OFFSET \?`).
+		WithArgs("user-1", "recharge", 10, 0).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "user_id", "email", "out_trade_no", "trade_no", "order_type", "subscription_plan_id",
 			"amount", "credits", "status", "pay_url", "qr_code", "paid_at", "created_at", "updated_at",

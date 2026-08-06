@@ -55,6 +55,7 @@ export default function DashboardPage() {
   const [keys, setKeys] = useState<APIKey[]>([]);
   const [logs, setLogs] = useState<UsageLog[]>([]);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
+  const [subscriptionEnabled, setSubscriptionEnabled] = useState(false);
   const [totalCalls, setTotalCalls] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -70,6 +71,8 @@ export default function DashboardPage() {
 
     setLoading(true);
     setError('');
+    setSubscriptionEnabled(false);
+    setSubscription(null);
     const results = await Promise.allSettled([
       refreshSession(current),
       portalApi.listKeys(current),
@@ -85,9 +88,15 @@ export default function DashboardPage() {
       setLogs(usageResult.value.data || []);
       setTotalCalls(usageResult.value.pagination?.total || 0);
     }
-    if (subscriptionResult.status === 'fulfilled') setSubscription(subscriptionResult.value.data);
+    if (subscriptionResult.status === 'fulfilled') {
+      setSubscriptionEnabled(true);
+      setSubscription(subscriptionResult.value.data);
+    }
 
-    const failure = results.find((result) => result.status === 'rejected');
+    const failure = results.find((result, index) => {
+      if (result.status !== 'rejected') return false;
+      return index !== 3 || !(result.reason instanceof APIError && result.reason.status === 403);
+    });
     if (failure?.status === 'rejected') setError(errorMessage(failure.reason));
     setLoading(false);
   }, []);
@@ -113,7 +122,7 @@ export default function DashboardPage() {
   const remainingQuota = Number(
     subscription?.effectiveQuotaRemaining ?? subscription?.quotaRemaining ?? 0,
   );
-  const subscriptionActive = Boolean(subscription?.isPaid && subscription?.status === 'active');
+  const subscriptionActive = subscriptionEnabled && Boolean(subscription?.isPaid && subscription?.status === 'active');
   const refreshDashboard = () => {
     setTrendRefreshSignal((current) => current + 1);
     void loadDashboard();
@@ -142,13 +151,15 @@ export default function DashboardPage() {
           icon={CircleDollarSign}
           color="green"
         />
-        <StatBlock
-          title="订阅额度"
-          value={loading && !subscription ? '--' : subscriptionActive ? remainingQuota.toLocaleString() : '未订阅'}
-          subtext={subscriptionActive ? `${subscription?.planName || '订阅套餐'}剩余额度` : '可在计费中心开通'}
-          icon={WalletCards}
-          color="amber"
-        />
+        {subscriptionEnabled && (
+          <StatBlock
+            title="订阅额度"
+            value={loading && !subscription ? '--' : subscriptionActive ? remainingQuota.toLocaleString() : '未订阅'}
+            subtext={subscriptionActive ? `${subscription?.planName || '订阅套餐'}剩余额度` : '可在计费中心开通'}
+            icon={WalletCards}
+            color="amber"
+          />
+        )}
         <StatBlock
           title="可用 API Key"
           value={loading ? '--' : activeKeys}
@@ -224,8 +235,8 @@ export default function DashboardPage() {
           <ArrowRight size={14} className="text-zinc-400" />
         </Link>
         <Link href="/billing" className="section-panel flex items-center gap-3 p-4 no-underline hover:border-[#86efac]">
-          <span className="billing-icon is-subscription"><ImageIcon size={16} /></span>
-          <span className="min-w-0 flex-1"><strong className="block text-xs">补充调用额度</strong><small className="text-[11px] text-zinc-500">余额充值或订阅套餐</small></span>
+          <span className={`billing-icon ${subscriptionEnabled ? 'is-subscription' : ''}`}>{subscriptionEnabled ? <ImageIcon size={16} /> : <CircleDollarSign size={16} />}</span>
+          <span className="min-w-0 flex-1"><strong className="block text-xs">补充调用额度</strong><small className="text-[11px] text-zinc-500">{subscriptionEnabled ? '余额充值或订阅套餐' : '余额充值'}</small></span>
           <ArrowRight size={14} className="text-zinc-400" />
         </Link>
       </section>

@@ -353,6 +353,7 @@ export type Announcement = {
   targetType: 'all' | 'users';
   status: 'active' | 'disabled';
   sortOrder: number;
+  rewardCredits: number;
   userIds: string[];
   createdAt: string;
   updatedAt: string;

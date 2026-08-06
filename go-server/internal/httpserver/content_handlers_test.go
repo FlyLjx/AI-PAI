@@ -10,10 +10,11 @@ import (
 
 func TestNormalizeAnnouncementInput(t *testing.T) {
 	input := content.Announcement{
-		Title:      "  维护通知  ",
-		Content:    "  服务将在今晚维护。  ",
-		TargetType: "users",
-		UserIDs:    []string{" user-1 ", "user-1", "", "user-2"},
+		Title:         "  维护通知  ",
+		Content:       "  服务将在今晚维护。  ",
+		TargetType:    "users",
+		RewardCredits: 1.23456,
+		UserIDs:       []string{" user-1 ", "user-1", "", "user-2"},
 	}
 	if err := normalizeAnnouncementInput(&input); err != nil {
 		t.Fatalf("normalize announcement: %v", err)
@@ -23,6 +24,9 @@ func TestNormalizeAnnouncementInput(t *testing.T) {
 	}
 	if input.DisplayMode != "popup" || input.Status != "active" {
 		t.Fatalf("unexpected defaults: %#v", input)
+	}
+	if input.RewardCredits != 1.2346 {
+		t.Fatalf("unexpected reward credits: %v", input.RewardCredits)
 	}
 	if len(input.UserIDs) != 2 || input.UserIDs[0] != "user-1" || input.UserIDs[1] != "user-2" {
 		t.Fatalf("unexpected user ids: %#v", input.UserIDs)

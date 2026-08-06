@@ -36,6 +36,15 @@ func TestRechargeSettingsRemainAvailable(t *testing.T) {
 	}
 }
 
+func TestSubscriptionAccessSettingDefaultsClosedAndRemainsPrivate(t *testing.T) {
+	if Defaults["subscriptionAccessUserId"] != "" {
+		t.Fatalf("subscription access default = %v, want empty", Defaults["subscriptionAccessUserId"])
+	}
+	if _, ok := Public(Defaults)["subscriptionAccessUserId"]; ok {
+		t.Fatal("subscription access user id must not be public")
+	}
+}
+
 func TestDynamicConcurrencyDefaults(t *testing.T) {
 	want := Settings{
 		"dynamicConcurrencyEnabled":     true,
