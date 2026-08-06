@@ -450,7 +450,7 @@ func (r *Router) userCreditLogs(w http.ResponseWriter, req *http.Request, id str
 		writeError(w, err)
 		return
 	}
-	items, total, err := repo.ListCreditLogs(ctx, id, logType, page, pageSize)
+	items, total, err := repo.ListCreditLogs(ctx, id, logType, page, pageSize, req.URL.Query().Get("sortBy"), req.URL.Query().Get("sortOrder"))
 	if err != nil {
 		writeError(w, err)
 		return

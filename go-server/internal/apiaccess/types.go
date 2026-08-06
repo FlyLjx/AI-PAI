@@ -166,19 +166,23 @@ type AdminPublicUsageLog struct {
 }
 
 type ListLogsInput struct {
-	UserID   string
-	APIKeyID string
-	Status   string
-	Keyword  string
-	Page     int
-	PageSize int
+	UserID    string
+	APIKeyID  string
+	Status    string
+	Keyword   string
+	Page      int
+	PageSize  int
+	SortBy    string
+	SortOrder string
 }
 
 type ListKeysInput struct {
-	Status   string
-	Keyword  string
-	Page     int
-	PageSize int
+	Status    string
+	Keyword   string
+	Page      int
+	PageSize  int
+	SortBy    string
+	SortOrder string
 }
 
 type UsageStats struct {

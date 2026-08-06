@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
+import { SortableHeader, type SortState } from '@/components/common/DataTable';
 import { PageHeader } from '@/components/common/PageHeader';
 import { formatDate } from '@/lib/common/utils';
 import {
@@ -86,6 +87,7 @@ export default function AdminMailLogsPage() {
   const [summary, setSummary] = useState<MailDeliverySummary>(emptySummary);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [sort, setSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
   const [status, setStatus] = useState('all');
   const [category, setCategory] = useState('all');
   const [searchInput, setSearchInput] = useState('');
@@ -115,6 +117,8 @@ export default function AdminMailLogsPage() {
         keyword: keyword || undefined,
         status: status === 'all' ? undefined : status,
         category: category === 'all' ? undefined : category,
+        sortBy: sort.key,
+        sortOrder: sort.direction,
       });
       const nextItems = response.data.items || [];
       setItems(nextItems);
@@ -126,7 +130,7 @@ export default function AdminMailLogsPage() {
     } finally {
       setLoading(false);
     }
-  }, [category, keyword, page, status]);
+  }, [category, keyword, page, sort.direction, sort.key, status]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -320,7 +324,27 @@ export default function AdminMailLogsPage() {
               <div className="max-h-[620px] overflow-auto">
                 <table className="w-full min-w-[720px] text-left text-xs">
                   <thead className="sticky top-0 z-10 bg-[#F7F8F6] text-[10px] text-zinc-500">
-                    <tr><th className="px-4 py-3">主题</th><th className="px-4 py-3">收件人</th><th className="px-4 py-3">分类</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">时间</th></tr>
+                    <tr>
+                      {[
+                        { key: 'subject', label: '主题' },
+                        { key: 'recipient', label: '收件人' },
+                        { key: 'category', label: '分类' },
+                        { key: 'status', label: '状态' },
+                        { key: 'createdAt', label: '时间' },
+                      ].map((header) => (
+                        <SortableHeader
+                          key={header.key}
+                          header={header}
+                          sortState={sort}
+                          onSort={(key) => {
+                            const direction = sort.key === key && sort.direction === 'asc' ? 'desc' : 'asc';
+                            setSort({ key, direction });
+                            setPage(1);
+                          }}
+                          className="sticky top-0 z-10 bg-[#F7F8F6]"
+                        />
+                      ))}
+                    </tr>
                   </thead>
                   <tbody className="divide-y divide-[#EDF0EE]">
                     {items.map((item) => {

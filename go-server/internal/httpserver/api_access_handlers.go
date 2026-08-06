@@ -66,12 +66,14 @@ func (r *Router) userAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	input := apiaccess.ListLogsInput{
-		UserID:   userID,
-		APIKeyID: req.URL.Query().Get("apiKeyId"),
-		Status:   req.URL.Query().Get("status"),
-		Keyword:  req.URL.Query().Get("keyword"),
-		Page:     queryInt(req, "page", 1),
-		PageSize: queryInt(req, "pageSize", 10),
+		UserID:    userID,
+		APIKeyID:  req.URL.Query().Get("apiKeyId"),
+		Status:    req.URL.Query().Get("status"),
+		Keyword:   req.URL.Query().Get("keyword"),
+		Page:      queryInt(req, "page", 1),
+		PageSize:  queryInt(req, "pageSize", 10),
+		SortBy:    req.URL.Query().Get("sortBy"),
+		SortOrder: req.URL.Query().Get("sortOrder"),
 	}
 	service := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db))
 	items, total, err := service.ListLogs(ctx, input)
@@ -310,10 +312,12 @@ func (r *Router) adminAPIAccessKeys(w http.ResponseWriter, req *http.Request) {
 	service := apiaccess.NewService(repo, users.NewRepository(r.db)).
 		WithDynamicConcurrencyConfig(config)
 	items, total, err := service.ListAdminKeys(ctx, apiaccess.ListKeysInput{
-		Status:   req.URL.Query().Get("status"),
-		Keyword:  req.URL.Query().Get("keyword"),
-		Page:     page,
-		PageSize: pageSize,
+		Status:    req.URL.Query().Get("status"),
+		Keyword:   req.URL.Query().Get("keyword"),
+		Page:      page,
+		PageSize:  pageSize,
+		SortBy:    req.URL.Query().Get("sortBy"),
+		SortOrder: req.URL.Query().Get("sortOrder"),
 	})
 	if err != nil {
 		writeError(w, err)
@@ -395,12 +399,14 @@ func (r *Router) adminAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 		pageSize = 100
 	}
 	input := apiaccess.ListLogsInput{
-		UserID:   req.URL.Query().Get("userId"),
-		APIKeyID: req.URL.Query().Get("apiKeyId"),
-		Status:   req.URL.Query().Get("status"),
-		Keyword:  req.URL.Query().Get("keyword"),
-		Page:     page,
-		PageSize: pageSize,
+		UserID:    req.URL.Query().Get("userId"),
+		APIKeyID:  req.URL.Query().Get("apiKeyId"),
+		Status:    req.URL.Query().Get("status"),
+		Keyword:   req.URL.Query().Get("keyword"),
+		Page:      page,
+		PageSize:  pageSize,
+		SortBy:    req.URL.Query().Get("sortBy"),
+		SortOrder: req.URL.Query().Get("sortOrder"),
 	}
 	service := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db))
 	items, total, err := service.ListAdminLogs(ctx, input)

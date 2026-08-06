@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/mail"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -113,6 +114,38 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 				return nil, ErrInvalidAdminNotification
 			}
 			value = normalized
+		}
+		if key == "barkEnabled" {
+			if _, ok := value.(bool); !ok {
+				return nil, ErrInvalidAdminNotification
+			}
+		}
+		if key == "barkServerUrl" {
+			server, ok := value.(string)
+			if !ok {
+				return nil, ErrInvalidAdminNotification
+			}
+			server = strings.TrimSpace(server)
+			if server == "" {
+				server = Defaults["barkServerUrl"].(string)
+			}
+			parsed, err := url.Parse(server)
+			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
+				return nil, ErrInvalidAdminNotification
+			}
+			value = strings.TrimRight(server, "/")
+		}
+		if key == "barkDeviceKey" || key == "barkGroup" || key == "barkSound" {
+			text, ok := value.(string)
+			if !ok {
+				return nil, ErrInvalidAdminNotification
+			}
+			value = strings.TrimSpace(text)
+		}
+		if key == "barkNotifyError" || key == "barkNotifyRecharge" || key == "barkNotifyUpstream" || key == "barkNotifySystem" {
+			if _, ok := value.(bool); !ok {
+				return nil, ErrInvalidAdminNotification
+			}
 		}
 		if key == "adminRechargeNotificationEnabled" || key == "adminUpstreamNotificationEnabled" || key == "adminOpenAIStatusNotificationEnabled" || key == "upstreamMaintenanceEnabled" {
 			if _, ok := value.(bool); !ok {
@@ -307,6 +340,9 @@ func parseValue(key string, value string) any {
 		if normalized, err := NormalizeNotificationEmails(value); err == nil {
 			return normalized
 		}
+		return Defaults[key]
+	}
+	if key == "barkServerUrl" && strings.TrimSpace(value) == "" {
 		return Defaults[key]
 	}
 	return value

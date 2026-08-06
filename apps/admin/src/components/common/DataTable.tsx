@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { ChevronLeft, ChevronRight, Search } from 'lucide-react';
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Search } from 'lucide-react';
 import { AppSelect } from './AppSelect';
 
 type PaginationItem = number | 'ellipsis-left' | 'ellipsis-right';
@@ -25,14 +25,23 @@ function paginationItems(currentPage: number, totalPages: number): PaginationIte
   return items;
 }
 
-interface Header {
+export type SortDirection = 'asc' | 'desc';
+
+export type SortState = {
+  key: string;
+  direction: SortDirection;
+};
+
+export interface TableHeader<T> {
   key: string;
   label: string;
   className?: string;
+  sortable?: boolean;
+  sortValue?: (item: T) => unknown;
 }
 
 interface DataTableProps<T> {
-  headers: Header[];
+  headers: TableHeader<T>[];
   data: T[];
   renderRow: (item: T, index: number) => React.ReactNode;
   renderMobileItem: (item: T, index: number) => React.ReactNode;
@@ -49,8 +58,98 @@ interface DataTableProps<T> {
   currentPage?: number;
   totalPages?: number;
   onPageChange?: (page: number) => void;
+  pageSize?: number;
+  clientSidePagination?: boolean;
+
+  // Sorting
+  sortKey?: string;
+  sortDirection?: SortDirection;
+  onSort?: (key: string, direction: SortDirection) => void;
+  serverSideSorting?: boolean;
 
   emptyState?: React.ReactNode;
+}
+
+function fallbackSortValue<T>(item: T, key: string): unknown {
+  if (item && typeof item === 'object') return (item as Record<string, unknown>)[key];
+  return undefined;
+}
+
+function isEmptySortValue(value: unknown) {
+  return value === null || value === undefined || value === '' || (typeof value === 'number' && Number.isNaN(value));
+}
+
+function compareSortValues(left: unknown, right: unknown): number {
+  const leftEmpty = isEmptySortValue(left);
+  const rightEmpty = isEmptySortValue(right);
+  if (leftEmpty && rightEmpty) return 0;
+  if (leftEmpty) return 1;
+  if (rightEmpty) return -1;
+
+  if (typeof left === 'number' && typeof right === 'number') {
+    if (Number.isNaN(left) && Number.isNaN(right)) return 0;
+    if (Number.isNaN(left)) return 1;
+    if (Number.isNaN(right)) return -1;
+    return left - right;
+  }
+
+  if (typeof left === 'boolean' && typeof right === 'boolean') {
+    return Number(left) - Number(right);
+  }
+
+  return String(left).localeCompare(String(right), 'zh-CN', { numeric: true, sensitivity: 'base' });
+}
+
+export function sortItems<T>(items: T[], header: TableHeader<T>, direction: SortDirection): T[] {
+  const multiplier = direction === 'asc' ? 1 : -1;
+  return items
+    .map((item, index) => ({ item, index }))
+    .sort((left, right) => {
+      const leftValue = header.sortValue ? header.sortValue(left.item) : fallbackSortValue(left.item, header.key);
+      const rightValue = header.sortValue ? header.sortValue(right.item) : fallbackSortValue(right.item, header.key);
+      const result = compareSortValues(leftValue, rightValue);
+      if (isEmptySortValue(leftValue) || isEmptySortValue(rightValue)) {
+        return result === 0 ? left.index - right.index : result;
+      }
+      return result === 0 ? left.index - right.index : result * multiplier;
+    })
+    .map(({ item }) => item);
+}
+
+export function SortableHeader<T>({
+  header,
+  sortState,
+  onSort,
+  className = '',
+}: {
+  header: TableHeader<T>;
+  sortState?: SortState | null;
+  onSort?: (key: string) => void;
+  className?: string;
+}) {
+  const sortable = header.sortable !== false;
+  const active = sortState?.key === header.key;
+  const Icon = active
+    ? sortState?.direction === 'asc' ? ArrowUp : ArrowDown
+    : ArrowUpDown;
+
+  return (
+    <th className={`px-4 py-2.5 text-xs font-semibold text-[#17201B]/60 tracking-wider ${header.className || ''} ${className}`}>
+      {sortable ? (
+        <button
+          type="button"
+          onClick={() => onSort?.(header.key)}
+          className={`inline-flex min-h-6 items-center gap-1 text-left transition-colors ${active ? 'text-[#047857]' : 'hover:text-[#047857]'}`}
+          aria-label={`${header.label}排序`}
+          aria-pressed={active}
+          title={`按${header.label}排序`}
+        >
+          <span>{header.label}</span>
+          <Icon className={`h-3.5 w-3.5 shrink-0 ${active ? 'opacity-100' : 'opacity-45'}`} aria-hidden="true" />
+        </button>
+      ) : header.label}
+    </th>
+  );
 }
 
 export function DataTable<T>({
@@ -65,8 +164,33 @@ export function DataTable<T>({
   currentPage,
   totalPages,
   onPageChange,
+  pageSize,
+  clientSidePagination = false,
+  sortKey,
+  sortDirection,
+  onSort,
+  serverSideSorting = false,
   emptyState
 }: DataTableProps<T>) {
+  const [internalSort, setInternalSort] = React.useState<SortState | null>(null);
+  const controlledSort = sortKey ? { key: sortKey, direction: sortDirection || 'asc' } : null;
+  const sortState = controlledSort || internalSort;
+  const activeHeader = sortState ? headers.find((header) => header.key === sortState.key) : undefined;
+  const sortedData = activeHeader && !serverSideSorting ? sortItems(data, activeHeader, sortState?.direction || 'asc') : data;
+  const pageOffset = clientSidePagination && currentPage && pageSize ? (currentPage - 1) * pageSize : 0;
+  const renderedData = clientSidePagination && currentPage && pageSize
+    ? sortedData.slice(pageOffset, pageOffset + pageSize)
+    : sortedData;
+
+  const handleSort = (key: string) => {
+    const nextDirection: SortDirection = sortState?.key === key && sortState.direction === 'asc' ? 'desc' : 'asc';
+    if (onSort) {
+      onSort(key, nextDirection);
+    } else {
+      setInternalSort({ key, direction: nextDirection });
+    }
+  };
+
   const showPagination = !!(currentPage && totalPages && totalPages > 1);
   const pageOptions = showPagination && totalPages
     ? Array.from({ length: totalPages }, (_, index) => ({ value: String(index + 1), label: `第 ${index + 1} 页` }))
@@ -99,7 +223,7 @@ export function DataTable<T>({
       )}
 
       {/* Main Table view */}
-      {data.length === 0 ? (
+      {renderedData.length === 0 ? (
         emptyState || (
           <div className="text-center p-8 bg-white border border-[#DCE4DF] rounded-md text-xs text-[#17201B]/50 font-sans">
             无匹配数据
@@ -112,25 +236,25 @@ export function DataTable<T>({
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="bg-[#F6F8F6] border-b border-[#DCE4DF]">
-                  {headers.map((h) => (
-                    <th
-                      key={h.key}
-                      className={`px-4 py-2.5 text-xs font-semibold text-[#17201B]/60 tracking-wider ${h.className || ''}`}
-                    >
-                      {h.label}
-                    </th>
+                  {headers.map((header) => (
+                    <SortableHeader
+                      key={header.key}
+                      header={header}
+                      sortState={sortState}
+                      onSort={handleSort}
+                    />
                   ))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#DCE4DF] text-xs text-[#17201B]">
-                {data.map((item, idx) => renderRow(item, idx))}
+                {renderedData.map((item, idx) => renderRow(item, pageOffset + idx))}
               </tbody>
             </table>
           </div>
 
           {/* Mobile Collapsed Cards View */}
           <div className="block md:hidden space-y-3.5">
-            {data.map((item, idx) => renderMobileItem(item, idx))}
+            {renderedData.map((item, idx) => renderMobileItem(item, pageOffset + idx))}
           </div>
         </>
       )}

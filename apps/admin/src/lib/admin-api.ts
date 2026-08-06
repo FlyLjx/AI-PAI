@@ -67,6 +67,7 @@ export type ConsumptionRank = {
 export type AdminIdentity = Pick<PortalUser, 'id' | 'email'> & { role: 'admin' };
 
 export type APIKeyBillingMode = 'balance' | 'subscription' | 'auto';
+export type SortOrder = 'asc' | 'desc';
 
 export type DynamicConcurrencyConfig = {
   enabled: boolean;
@@ -631,7 +632,7 @@ export const portalApi = {
   createUser: (input: Record<string, unknown>) => api<PortalUser>('/api/users', { method: 'POST', body: JSON.stringify(input) }),
   updateUser: (id: string, input: Record<string, unknown>) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   updateUserBalance: (id: string, input: { balance: number; remark: string }) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/balance`, { method: 'PATCH', body: JSON.stringify(input) }),
-  userCreditLogs: (id: string, page = 1, pageSize = 10, type = 'all') => api<CreditLog[]>(`/api/users/${encodeURIComponent(id)}/credit-logs${query({ page, pageSize, type: type === 'all' ? undefined : type })}`),
+  userCreditLogs: (id: string, page = 1, pageSize = 10, type = 'all', sortBy?: string, sortOrder?: SortOrder) => api<CreditLog[]>(`/api/users/${encodeURIComponent(id)}/credit-logs${query({ page, pageSize, type: type === 'all' ? undefined : type, sortBy, sortOrder })}`),
   userConsumptionRanking: (days = 30, limit = 8) => api<ConsumptionRank[]>(`/api/admin/users/consumption-ranking${query({ days, limit })}`),
   userModelPriceOverrides: () => api<UserModelPriceOverride[]>('/api/admin/user-model-prices'),
   saveUserModelPriceOverride: (input: { userId: string; modelId: string; unitPrice: number }) => api<UserModelPriceOverride>('/api/admin/user-model-prices', { method: 'POST', body: JSON.stringify(input) }),
@@ -655,28 +656,29 @@ export const portalApi = {
   createPlan: (input: Partial<Plan>) => api<Plan>('/api/subscriptions/plans', { method: 'POST', body: JSON.stringify(input) }),
   updatePlan: (id: string, input: Partial<Plan>) => api<Plan>(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deletePlan: (id: string) => api(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  recharges: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; orderType?: string; startDate?: string; endDate?: string } = {}) => api<RechargeOrder[], RechargeSummary>(`/api/recharge/orders${query(input)}`),
-  adminKeys: (input: { page?: number; pageSize?: number; keyword?: string; status?: string } = {}) => api<{ items: APIKey[]; stats: Record<string, number>; dynamicConcurrency: DynamicConcurrencyConfig }>('/api/admin/api-access/keys' + query(input)),
+  recharges: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; orderType?: string; startDate?: string; endDate?: string; sortBy?: string; sortOrder?: SortOrder } = {}) => api<RechargeOrder[], RechargeSummary>(`/api/recharge/orders${query(input)}`),
+  adminKeys: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; sortBy?: string; sortOrder?: SortOrder } = {}) => api<{ items: APIKey[]; stats: Record<string, number>; dynamicConcurrency: DynamicConcurrencyConfig }>('/api/admin/api-access/keys' + query(input)),
   updateAdminKey: (id: string, input: { status?: string; concurrencyLimit?: number }) => api<APIKey>(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  adminUsage: (input: { page?: number; pageSize?: number; keyword?: string; status?: string } = {}) => api<UsageLog[], UsageSummary>(`/api/admin/api-access/logs${query(input)}`),
+  adminUsage: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; sortBy?: string; sortOrder?: SortOrder } = {}) => api<UsageLog[], UsageSummary>(`/api/admin/api-access/logs${query(input)}`),
   adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
   adminOperationsLive: () => api<AdminOperationsLiveSnapshot>('/api/admin/api-access/operations/live'),
   adminOperationsRanking: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsRankingSnapshot>(`/api/admin/api-access/operations/ranking${query({ range, metric, limit })}`),
   adminOperationsTrend: () => api<AdminOperationsTrendSnapshot>('/api/admin/api-access/operations/trend'),
   sendMailBroadcast: (input: MailBroadcastInput) => api<MailBroadcastResult>('/api/admin/mail-broadcast', { method: 'POST', body: JSON.stringify(input) }),
   previewMailTemplate: (input: MailPreviewInput, signal?: AbortSignal) => api<MailPreviewResult>('/api/admin/mail-preview', { method: 'POST', body: JSON.stringify(input), signal }),
-  adminMailLogs: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; category?: string } = {}) => api<MailDeliveryLogPage>(`/api/admin/mail-logs${query(input)}`),
+  adminMailLogs: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; category?: string; sortBy?: string; sortOrder?: SortOrder } = {}) => api<MailDeliveryLogPage>(`/api/admin/mail-logs${query(input)}`),
   announcements: () => api<Announcement[]>('/api/announcements'),
   createAnnouncement: (input: AnnouncementMutationInput) => api<Announcement>('/api/announcements', { method: 'POST', body: JSON.stringify(input) }),
   updateAnnouncement: (id: string, input: AnnouncementMutationInput) => api<Announcement>(`/api/announcements/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAnnouncement: (id: string) => api(`/api/announcements/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  requestMonitor: (input: { range?: RequestMonitorRange; page?: number; pageSize?: number; keyword?: string; method?: string; status?: string } = {}) => api<RequestMonitorSnapshot>(`/api/admin/request-monitor${query(input)}`),
-  adminInvites: (page = 1, pageSize = 30) => api<AdminInviteRecord[], AdminInviteSummary>(`/api/invites${query({ page, pageSize })}`),
+  requestMonitor: (input: { range?: RequestMonitorRange; page?: number; pageSize?: number; keyword?: string; method?: string; status?: string; sortBy?: string; sortOrder?: SortOrder } = {}) => api<RequestMonitorSnapshot>(`/api/admin/request-monitor${query(input)}`),
+  adminInvites: (page = 1, pageSize = 30, sortBy?: string, sortOrder?: SortOrder) => api<AdminInviteRecord[], AdminInviteSummary>(`/api/invites${query({ page, pageSize, sortBy, sortOrder })}`),
   reviewInvite: (id: string, action: 'approve' | 'reject', note = '') => api(`/api/invites/${encodeURIComponent(id)}/review`, { method: 'PATCH', body: JSON.stringify({ action, note }) }),
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),
   settings: () => api<Record<string, unknown>>('/api/settings'),
   updateSettings: (input: Record<string, unknown>) => api('/api/settings', { method: 'PATCH', body: JSON.stringify(input) }),
+  testBark: (input: { title?: string; body?: string } = {}) => api<{ sent: boolean }>('/api/settings/test-bark', { method: 'POST', body: JSON.stringify(input) }),
   systemUpdate: (refresh = false) => api<SystemUpdateInfo>(`/api/admin/system-update${query({ refresh: refresh ? 1 : undefined })}`),
   startSystemUpdate: (force = false) => api<SystemUpdateInfo>('/api/admin/system-update', { method: 'POST', body: JSON.stringify({ force }) }),
   logs: () => api<SystemLogFile[]>('/api/system-logs'),

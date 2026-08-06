@@ -23,13 +23,15 @@ type Record struct {
 }
 
 type Filters struct {
-	Range    string
-	Keyword  string
-	Method   string
-	Status   string
-	Page     int
-	PageSize int
-	Now      time.Time
+	Range     string
+	Keyword   string
+	Method    string
+	Status    string
+	Page      int
+	PageSize  int
+	SortBy    string
+	SortOrder string
+	Now       time.Time
 }
 
 type Summary struct {

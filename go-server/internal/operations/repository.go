@@ -52,6 +52,8 @@ type PageInput struct {
 	OrderType string
 	StartDate string
 	EndDate   string
+	SortBy    string
+	SortOrder string
 }
 
 type dashboardBalanceMetrics struct {
@@ -1318,6 +1320,7 @@ func defaultPlanQuotaImages(durationDays int) int {
 
 func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, int, error) {
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
+	orderBy := inviteSort(input.SortBy, input.SortOrder)
 	total, err := r.count(ctx, `SELECT COUNT(*) FROM user_invites`)
 	if err != nil {
 		return nil, 0, err
@@ -1357,7 +1360,7 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 			SELECT invite_id, COUNT(*) AS rebate_count, COALESCE(SUM(rebate_credits), 0) AS rebate_credits
 			FROM invite_rebate_records GROUP BY invite_id
 		) rebates ON rebates.invite_id=user_invites.id
-		ORDER BY user_invites.created_at DESC LIMIT ? OFFSET ?
+		ORDER BY `+orderBy+` LIMIT ? OFFSET ?
 	`, pageSize, offset)
 	if err != nil {
 		return nil, 0, err
@@ -1372,6 +1375,31 @@ func (r *Repository) Invites(ctx context.Context, input PageInput) ([]Invite, in
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
+}
+
+func inviteSort(sortBy string, sortOrder string) string {
+	direction := operationsSortDirection(sortOrder)
+	sortBy = strings.TrimSpace(sortBy)
+	orderExpression := ""
+	switch sortBy {
+	case "inviter":
+		orderExpression = "LOWER(COALESCE(inviter.email, user_invites.inviter_id))"
+	case "invitee":
+		orderExpression = "LOWER(COALESCE(invitee.email, user_invites.invitee_id))"
+	case "rewardCredits":
+		orderExpression = "user_invites.reward_credits"
+	case "inviteeRewardCredits":
+		orderExpression = "user_invites.invitee_reward_credits"
+	case "rechargeRebateCredits":
+		orderExpression = "COALESCE(rebates.rebate_credits, 0)"
+	case "status":
+		orderExpression = "COALESCE(user_invites.status, 'rewarded')"
+	case "createdAt":
+		orderExpression = "user_invites.created_at"
+	default:
+		return "user_invites.created_at DESC"
+	}
+	return orderExpression + " " + direction + ", user_invites.created_at DESC, user_invites.id DESC"
 }
 
 func (r *Repository) AdminInviteSummary(ctx context.Context) (AdminInviteSummary, error) {
@@ -2947,6 +2975,7 @@ func sqlDateString(value any) string {
 func (r *Repository) Orders(ctx context.Context, input PageInput) ([]RechargeOrder, int, error) {
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
 	whereSQL, args := buildOrderWhere(input)
+	orderBy := rechargeOrderSort(input.SortBy, input.SortOrder)
 	total, err := r.countWithArgs(ctx, `SELECT COUNT(*) FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id `+whereSQL, args)
 	if err != nil {
 		return nil, 0, err
@@ -2956,7 +2985,7 @@ func (r *Repository) Orders(ctx context.Context, input PageInput) ([]RechargeOrd
 			recharge_orders.order_type, recharge_orders.subscription_plan_id, recharge_orders.amount, recharge_orders.credits,
 			recharge_orders.status, recharge_orders.pay_url, recharge_orders.qr_code, recharge_orders.paid_at, recharge_orders.created_at, recharge_orders.updated_at
 		FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id
-		`+whereSQL+` ORDER BY recharge_orders.created_at DESC, recharge_orders.id DESC LIMIT ? OFFSET ?
+		`+whereSQL+` ORDER BY `+orderBy+` LIMIT ? OFFSET ?
 	`, append(args, pageSize, offset)...)
 	if err != nil {
 		return nil, 0, err
@@ -2971,6 +3000,40 @@ func (r *Repository) Orders(ctx context.Context, input PageInput) ([]RechargeOrd
 		items = append(items, item)
 	}
 	return items, total, rows.Err()
+}
+
+func rechargeOrderSort(sortBy string, sortOrder string) string {
+	direction := operationsSortDirection(sortOrder)
+	sortBy = strings.TrimSpace(sortBy)
+	orderExpression := ""
+	switch sortBy {
+	case "createdAt":
+		orderExpression = "recharge_orders.created_at"
+	case "outTradeNo":
+		orderExpression = "LOWER(recharge_orders.out_trade_no)"
+	case "tradeNo":
+		orderExpression = "LOWER(COALESCE(recharge_orders.trade_no, ''))"
+	case "user":
+		orderExpression = "LOWER(COALESCE(users.email, recharge_orders.user_id))"
+	case "orderType":
+		orderExpression = "recharge_orders.order_type"
+	case "amount":
+		orderExpression = "recharge_orders.amount"
+	case "status":
+		orderExpression = "recharge_orders.status"
+	case "paidAt":
+		orderExpression = "recharge_orders.paid_at"
+	default:
+		return "recharge_orders.created_at DESC, recharge_orders.id DESC"
+	}
+	return orderExpression + " " + direction + ", recharge_orders.created_at DESC, recharge_orders.id DESC"
+}
+
+func operationsSortDirection(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "asc") {
+		return "ASC"
+	}
+	return "DESC"
 }
 
 func (r *Repository) OrderSummary(ctx context.Context, input PageInput) (RechargeOrderSummary, error) {

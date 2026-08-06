@@ -128,6 +128,7 @@ func (r *Repository) ListKeys(ctx context.Context, userID string) ([]AccessKey, 
 func (r *Repository) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]AccessKey, int, error) {
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
 	where, args := buildAdminKeyWhere(input)
+	orderBy, usageSort := adminKeyOrder(input.SortBy, input.SortOrder)
 	var total int
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
@@ -138,6 +139,33 @@ func (r *Repository) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]
 	}
 
 	queryArgs := append(append([]any{}, args...), pageSize, offset)
+	selectUsage := `
+			0 AS request_count,
+			0 AS success_count,
+			0 AS failed_count,
+			0 AS image_count,
+			NULL AS last_error`
+	usageJoin := ""
+	if usageSort {
+		selectUsage = `
+			COALESCE(key_usage.request_count, 0) AS request_count,
+			COALESCE(key_usage.success_count, 0) AS success_count,
+			COALESCE(key_usage.failed_count, 0) AS failed_count,
+			COALESCE(key_usage.image_count, 0) AS image_count,
+			key_usage.last_error AS last_error`
+		usageJoin = `
+		LEFT JOIN (
+			SELECT
+				api_key_id,
+				COUNT(*) AS request_count,
+				COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
+				COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
+				COALESCE(SUM(CASE WHEN status = 'success' THEN image_count ELSE 0 END), 0) AS image_count,
+				MAX(CASE WHEN status = 'failed' THEN error_message ELSE NULL END) AS last_error
+			FROM api_access_logs
+			GROUP BY api_key_id
+		) AS key_usage ON key_usage.api_key_id = api_access_keys.id`
+	}
 	rows, err := r.db.QueryContext(ctx, `
 		SELECT
 			api_access_keys.id,
@@ -154,15 +182,12 @@ func (r *Repository) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]
 			api_access_keys.deleted_at,
 			api_access_keys.created_at,
 			api_access_keys.updated_at,
-			0 AS request_count,
-			0 AS success_count,
-			0 AS failed_count,
-			0 AS image_count,
-			NULL AS last_error
+		`+selectUsage+`
 		FROM api_access_keys
 		LEFT JOIN users ON users.id = api_access_keys.user_id
+		`+usageJoin+`
 		`+where+`
-		ORDER BY api_access_keys.created_at DESC, api_access_keys.id DESC
+		ORDER BY `+orderBy+`
 		LIMIT ? OFFSET ?
 	`, queryArgs...)
 	if err != nil {
@@ -179,10 +204,57 @@ func (r *Repository) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
-	if err := r.attachKeyUsageStats(ctx, items); err != nil {
-		return nil, 0, err
+	if !usageSort {
+		if err := r.attachKeyUsageStats(ctx, items); err != nil {
+			return nil, 0, err
+		}
 	}
 	return items, total, nil
+}
+
+func adminKeyOrder(sortBy string, sortOrder string) (string, bool) {
+	direction := sortDirectionSQL(sortOrder)
+	sortBy = strings.TrimSpace(sortBy)
+	metric := false
+	orderExpression := ""
+	switch sortBy {
+	case "createdAt":
+		orderExpression = "api_access_keys.created_at"
+	case "name":
+		orderExpression = "LOWER(api_access_keys.name)"
+	case "user":
+		orderExpression = "LOWER(COALESCE(users.email, api_access_keys.user_id))"
+	case "status":
+		orderExpression = "api_access_keys.status"
+	case "billingMode":
+		orderExpression = "COALESCE(api_access_keys.billing_mode, 'auto')"
+	case "concurrencyLimit":
+		orderExpression = "api_access_keys.concurrency_limit"
+	case "requestCount":
+		orderExpression = "COALESCE(key_usage.request_count, 0)"
+		metric = true
+	case "successCount":
+		orderExpression = "COALESCE(key_usage.success_count, 0)"
+		metric = true
+	case "failedCount":
+		orderExpression = "COALESCE(key_usage.failed_count, 0)"
+		metric = true
+	case "imageCount":
+		orderExpression = "COALESCE(key_usage.image_count, 0)"
+		metric = true
+	case "lastUsedAt":
+		orderExpression = "api_access_keys.last_used_at"
+	default:
+		return "api_access_keys.created_at DESC, api_access_keys.id DESC", false
+	}
+	return orderExpression + " " + direction + ", api_access_keys.created_at DESC, api_access_keys.id DESC", metric
+}
+
+func sortDirectionSQL(value string) string {
+	if strings.EqualFold(strings.TrimSpace(value), "asc") {
+		return "ASC"
+	}
+	return "DESC"
 }
 
 func buildAdminKeyWhere(input ListKeysInput) (string, []any) {
@@ -600,6 +672,7 @@ func (r *Repository) ListLogs(ctx context.Context, input ListLogsInput) ([]Usage
 	page, pageSize, offset := normalizePage(input.Page, input.PageSize)
 	_ = page
 	where, args := buildLogWhere(input)
+	orderBy := adminLogOrder(input.SortBy, input.SortOrder)
 	countFrom := logCountFrom(input)
 	var total int
 	if err := r.db.QueryRowContext(ctx, `
@@ -608,9 +681,9 @@ func (r *Repository) ListLogs(ctx context.Context, input ListLogsInput) ([]Usage
 		`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	queryArgs := append(args, pageSize, offset)
+	queryArgs := append(append([]any{}, args...), pageSize, offset)
 	rows, err := r.db.QueryContext(ctx, usageLogSelect()+` `+where+`
-		ORDER BY api_access_logs.created_at DESC, api_access_logs.id DESC
+		ORDER BY `+orderBy+`
 		LIMIT ? OFFSET ?
 	`, queryArgs...)
 	if err != nil {
@@ -626,6 +699,37 @@ func (r *Repository) ListLogs(ctx context.Context, input ListLogsInput) ([]Usage
 		items = append(items, *item)
 	}
 	return items, total, rows.Err()
+}
+
+func adminLogOrder(sortBy string, sortOrder string) string {
+	direction := sortDirectionSQL(sortOrder)
+	sortBy = strings.TrimSpace(sortBy)
+	orderExpression := ""
+	switch sortBy {
+	case "createdAt":
+		orderExpression = "api_access_logs.created_at"
+	case "user":
+		orderExpression = "LOWER(COALESCE(users.email, api_access_logs.user_id))"
+	case "endpoint":
+		orderExpression = "LOWER(api_access_logs.endpoint)"
+	case "model":
+		orderExpression = "LOWER(api_access_logs.model)"
+	case "imageCount":
+		orderExpression = "api_access_logs.image_count"
+	case "quantity":
+		orderExpression = "api_access_logs.quantity"
+	case "chargedCredits":
+		orderExpression = "api_access_logs.charged_credits"
+	case "modelCostCredits":
+		orderExpression = "api_access_logs.model_cost_credits"
+	case "durationSeconds":
+		orderExpression = "COALESCE(generation_tasks.duration_seconds, 0)"
+	case "status":
+		orderExpression = "api_access_logs.status"
+	default:
+		return "api_access_logs.created_at DESC, api_access_logs.id DESC"
+	}
+	return orderExpression + " " + direction + ", api_access_logs.created_at DESC, api_access_logs.id DESC"
 }
 
 func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageStats, error) {

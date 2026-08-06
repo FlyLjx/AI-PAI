@@ -34,6 +34,7 @@ type serviceNotificationManager struct {
 	logger   *slog.Logger
 	now      func() time.Time
 	sendMail func(smtpSettings, string, string, string, ...mailAction) error
+	sendBark barkSender
 
 	mu   sync.Mutex
 	sent map[string]time.Time
@@ -53,6 +54,7 @@ func newServiceNotificationManager(db *database.DB, logger *slog.Logger) *servic
 		logger:   logger,
 		now:      time.Now,
 		sendMail: sendSMTPMail,
+		sendBark: sendBarkNotification,
 		sent:     map[string]time.Time{},
 	}
 }

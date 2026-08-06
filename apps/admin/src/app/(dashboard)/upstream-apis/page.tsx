@@ -115,11 +115,6 @@ export default function UpstreamAPIsPage() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
-  const visible = useMemo(
-    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
-    [currentPage, filtered],
-  );
-
   const summary = useMemo(() => ({
     total: filtered.length,
     active: filtered.filter((provider) => provider.status === 'active').length,
@@ -336,15 +331,17 @@ export default function UpstreamAPIsPage() {
       ) : (
         <DataTable
           headers={[
-            { key: 'name', label: '接口名称' },
-            { key: 'type', label: '类型' },
-            { key: 'url', label: 'Base URL' },
-            { key: 'key', label: 'API Key' },
-            { key: 'status', label: '状态' },
-            { key: 'updated', label: '更新时间' },
-            { key: 'actions', label: '操作', className: 'text-right' },
+            { key: 'name', label: '接口名称', sortValue: (item) => item.name },
+            { key: 'type', label: '类型', sortValue: (item) => item.type },
+            { key: 'url', label: 'Base URL', sortValue: (item) => item.baseUrl },
+            { key: 'key', label: 'API Key', sortValue: (item) => item.apiKey },
+            { key: 'status', label: '状态', sortValue: (item) => item.status === 'active' ? 1 : 0 },
+            { key: 'updated', label: '更新时间', sortValue: (item) => Date.parse(item.updatedAt || '') || 0 },
+            { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={visible}
+          data={filtered}
+          pageSize={PAGE_SIZE}
+          clientSidePagination
           searchPlaceholder="搜索名称、地址或类型"
           searchValue={search}
           onSearchChange={(value) => { setSearch(value); setPage(1); }}

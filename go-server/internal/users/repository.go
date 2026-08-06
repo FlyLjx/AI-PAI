@@ -53,7 +53,7 @@ func (r *Repository) FindAll(ctx context.Context) ([]User, error) {
 	return items, rows.Err()
 }
 
-func (r *Repository) ListCreditLogs(ctx context.Context, userID string, logType string, page int, pageSize int) ([]CreditLog, int, error) {
+func (r *Repository) ListCreditLogs(ctx context.Context, userID string, logType string, page int, pageSize int, sort ...string) ([]CreditLog, int, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -70,6 +70,14 @@ func (r *Repository) ListCreditLogs(ctx context.Context, userID string, logType 
 		where += ` AND type = ?`
 		args = append(args, logType)
 	}
+	sortBy, sortOrder := "", ""
+	if len(sort) > 0 {
+		sortBy = sort[0]
+	}
+	if len(sort) > 1 {
+		sortOrder = sort[1]
+	}
+	orderBy := creditLogSort(sortBy, sortOrder)
 
 	var total int
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM credit_logs`+where, args...).Scan(&total); err != nil {
@@ -81,7 +89,7 @@ func (r *Repository) ListCreditLogs(ctx context.Context, userID string, logType 
 		SELECT id, user_id, type, amount, balance_after, COALESCE(remark, ''), created_at
 		FROM credit_logs
 	`+where+`
-		ORDER BY created_at DESC, id DESC
+		ORDER BY `+orderBy+`
 		LIMIT ? OFFSET ?
 	`, queryArgs...)
 	if err != nil {
@@ -106,6 +114,28 @@ func (r *Repository) ListCreditLogs(ctx context.Context, userID string, logType 
 	}
 	r.resolveCreditLogAdminRemarks(ctx, items)
 	return items, total, nil
+}
+
+func creditLogSort(sortBy string, sortOrder string) string {
+	direction := "DESC"
+	if strings.EqualFold(strings.TrimSpace(sortOrder), "asc") {
+		direction = "ASC"
+	}
+	sortBy = strings.TrimSpace(sortBy)
+	orderExpression := ""
+	switch sortBy {
+	case "type":
+		orderExpression = "type"
+	case "amount":
+		orderExpression = "CASE WHEN type = 'deduct' THEN -ABS(amount) ELSE amount END"
+	case "balanceAfter":
+		orderExpression = "balance_after"
+	case "createdAt":
+		orderExpression = "created_at"
+	default:
+		return "created_at DESC, id DESC"
+	}
+	return orderExpression + " " + direction + ", created_at DESC, id DESC"
 }
 
 func (r *Repository) FindByEmail(ctx context.Context, email string) (*User, error) {

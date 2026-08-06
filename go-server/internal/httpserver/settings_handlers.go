@@ -126,6 +126,10 @@ func (r *Router) testSettingEndpoint(w http.ResponseWriter, req *http.Request) {
 		r.sendTestEmail(w, req, values)
 		return
 	}
+	if strings.HasSuffix(req.URL.Path, "/test-bark") {
+		r.sendTestBark(w, req, values)
+		return
+	}
 	writeError(w, newAppError(http.StatusNotFound, "测试接口不存在"))
 }
 
@@ -153,6 +157,32 @@ func (r *Router) sendTestEmail(w http.ResponseWriter, req *http.Request, values 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"sent": true, "email": email}})
+}
+
+func (r *Router) sendTestBark(w http.ResponseWriter, req *http.Request, values settings.Settings) {
+	var input struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	_ = decodeCompatJSON(req, &input)
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		title = emailBrandName(anyString(values["siteName"])) + " Bark 测试通知"
+	}
+	body := strings.TrimSpace(input.Body)
+	if body == "" {
+		body = "Bark 推送配置已生效。\n发送时间：" + time.Now().Format("2006-01-02 15:04:05")
+	}
+	barkConfig := barkSettingsFromMap(values)
+	if err := barkConfig.validateConfigured(); err != nil {
+		writeError(w, err)
+		return
+	}
+	if err := sendBarkNotification(req.Context(), barkConfig, title, body, ""); err != nil {
+		writeError(w, newAppError(http.StatusBadGateway, err.Error()))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"sent": true}})
 }
 
 func (r *Router) getSettings(w http.ResponseWriter, req *http.Request, publicOnly bool) {

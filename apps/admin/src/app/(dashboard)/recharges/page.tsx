@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CalendarDays, Loader2, ReceiptText, RefreshCw } from 'lucide-react';
 import { AppSelect } from '@/components/common/AppSelect';
-import { DataTable } from '@/components/common/DataTable';
+import { DataTable, type SortState } from '@/components/common/DataTable';
 import { DateRangePicker } from '@/components/common/DateRangePicker';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -57,6 +57,7 @@ export default function AdminRechargesPage() {
   const [error, setError] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [sort, setSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -81,6 +82,8 @@ export default function AdminRechargesPage() {
         status: statusFilter === 'all' ? undefined : statusFilter,
         startDate: range.start || undefined,
         endDate: range.end || undefined,
+        sortBy: sort.key,
+        sortOrder: sort.direction,
       });
       if (sequence !== requestSequence.current) return;
       const responseTotal = response.pagination?.total ?? response.data.length;
@@ -100,7 +103,7 @@ export default function AdminRechargesPage() {
     } finally {
       if (sequence === requestSequence.current) setLoading(false);
     }
-  }, [range.end, range.start, search, statusFilter, typeFilter]);
+  }, [range.end, range.start, search, sort.direction, sort.key, statusFilter, typeFilter]);
 
   useEffect(() => {
     if (period === 'custom' && (!customStart || !customEnd)) return;
@@ -140,14 +143,14 @@ export default function AdminRechargesPage() {
       ) : (
         <DataTable
           headers={[
-            { key: 'order', label: '订单号' },
+            { key: 'outTradeNo', label: '订单号' },
             { key: 'user', label: 'API 客户' },
-            { key: 'type', label: '订单类型' },
+            { key: 'orderType', label: '订单类型' },
             { key: 'amount', label: '金额', className: 'text-right' },
             { key: 'status', label: '支付状态' },
-            { key: 'trade', label: '渠道流水号' },
-            { key: 'created', label: '创建时间' },
-            { key: 'paid', label: '支付时间' },
+            { key: 'tradeNo', label: '渠道流水号' },
+            { key: 'createdAt', label: '创建时间' },
+            { key: 'paidAt', label: '支付时间' },
           ]}
           data={orders}
           searchPlaceholder="搜索用户、商户订单号或支付流水号"
@@ -167,6 +170,10 @@ export default function AdminRechargesPage() {
           currentPage={page}
           totalPages={totalPages}
           onPageChange={(nextPage) => void load(nextPage)}
+          sortKey={sort.key}
+          sortDirection={sort.direction}
+          onSort={(key, direction) => { setSort({ key, direction }); setPage(1); }}
+          serverSideSorting
           emptyState={<EmptyState title="暂无充值流水" description="余额充值或订阅购买后，订单会显示在这里。" icon={ReceiptText} />}
           renderRow={(order) => { const status = statusView(order.status); return (
             <tr key={order.id} className="hover:bg-[#FAFBFA]">

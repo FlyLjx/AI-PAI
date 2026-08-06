@@ -24,7 +24,7 @@ import {
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
-import { DataTable } from '@/components/common/DataTable';
+import { DataTable, SortableHeader, sortItems, type SortState, type TableHeader } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { type ConsumptionRank, type CreditLog, type Plan, type PortalUser, portalApi } from '@/lib/admin-api';
@@ -44,6 +44,12 @@ type CreditLogFilter = 'all' | 'deduct' | 'recharge' | 'manual_adjust' | 'invite
 const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active' };
 const pageSize = 12;
 const creditLogPageSize = 10;
+const consumptionHeaders: TableHeader<ConsumptionRank>[] = [
+  { key: 'user', label: '客户', sortValue: (item) => item.userEmail || item.userId },
+  { key: 'creditsSpent', label: '消费金额', sortValue: (item) => Number(item.creditsSpent || 0) },
+  { key: 'deductCount', label: '扣费次数', sortValue: (item) => Number(item.deductCount || 0) },
+  { key: 'lastDeductAt', label: '最近扣费', sortValue: (item) => Date.parse(item.lastDeductAt || '') || 0 },
+];
 
 function creditLogChange(log: CreditLog) {
   const amount = Number(log.amount || 0);
@@ -143,6 +149,7 @@ export default function AdminUsersPage() {
   const [creditLogFilter, setCreditLogFilter] = useState<CreditLogFilter>('all');
   const [creditLogPage, setCreditLogPage] = useState(1);
   const [creditLogTotal, setCreditLogTotal] = useState(0);
+  const [creditLogSort, setCreditLogSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
   const [creditLogLoading, setCreditLogLoading] = useState(false);
   const [creditLogError, setCreditLogError] = useState('');
   const [creditLogRefresh, setCreditLogRefresh] = useState(0);
@@ -150,6 +157,7 @@ export default function AdminUsersPage() {
   const [consumptionDays, setConsumptionDays] = useState(30);
   const [consumptionLoading, setConsumptionLoading] = useState(false);
   const [consumptionError, setConsumptionError] = useState('');
+  const [consumptionSort, setConsumptionSort] = useState<SortState>({ key: 'creditsSpent', direction: 'desc' });
   const [rankingOpen, setRankingOpen] = useState(false);
   const rankingTriggerRef = useRef<HTMLButtonElement>(null);
   const [grantPlanId, setGrantPlanId] = useState('');
@@ -232,7 +240,7 @@ export default function AdminUsersPage() {
     const timer = window.setTimeout(() => {
       setCreditLogLoading(true);
       setCreditLogError('');
-      void portalApi.userCreditLogs(creditLogUser.id, creditLogPage, creditLogPageSize, creditLogFilter)
+      void portalApi.userCreditLogs(creditLogUser.id, creditLogPage, creditLogPageSize, creditLogFilter, creditLogSort.key, creditLogSort.direction)
         .then((response) => {
           if (!active) return;
           setCreditLogs(response.data);
@@ -250,7 +258,7 @@ export default function AdminUsersPage() {
       active = false;
       window.clearTimeout(timer);
     };
-  }, [creditLogFilter, creditLogPage, creditLogRefresh, creditLogUser]);
+  }, [creditLogFilter, creditLogPage, creditLogRefresh, creditLogSort.direction, creditLogSort.key, creditLogUser]);
 
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -265,7 +273,6 @@ export default function AdminUsersPage() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const creditLogTotalPages = Math.max(1, Math.ceil(creditLogTotal / creditLogPageSize));
-  const visible = filtered.slice((Math.min(page, totalPages) - 1) * pageSize, Math.min(page, totalPages) * pageSize);
   const activePlans = plans.filter((plan) => plan.status === 'active');
   const currentBalance = Number(balanceUser?.credits || 0);
   const nextBalance = Number(balanceValue);
@@ -282,6 +289,10 @@ export default function AdminUsersPage() {
     subscribed: users.filter(subscriptionActive).length,
   }), [users]);
   const consumptionWindowLabel = consumptionDays === 0 ? '全部时间' : `近 ${consumptionDays} 天`;
+  const sortedConsumptionRanking = useMemo(() => {
+    const header = consumptionHeaders.find((item) => item.key === consumptionSort.key) || consumptionHeaders[1];
+    return sortItems(consumptionRanking, header, consumptionSort.direction);
+  }, [consumptionRanking, consumptionSort.direction, consumptionSort.key]);
 
   const resetPage = () => setPage(1);
   const updateDraft = <K extends keyof UserDraft>(key: K, value: UserDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
@@ -414,6 +425,7 @@ export default function AdminUsersPage() {
     setCreditLogError('');
     setCreditLogFilter('all');
     setCreditLogPage(1);
+    setCreditLogSort({ key: 'createdAt', direction: 'desc' });
     setCreditLogUser(user);
   };
 
@@ -569,9 +581,9 @@ export default function AdminUsersPage() {
           <>
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full min-w-[680px] text-left text-[11px]">
-                <thead className="bg-[#F7F8F6] text-[10px] text-zinc-500"><tr><th className="w-11 px-3 py-2 text-center">#</th><th className="px-3 py-2">客户</th><th className="px-3 py-2 text-right">消费金额</th><th className="px-3 py-2 text-right">扣费次数</th><th className="px-3 py-2 text-right">最近扣费</th></tr></thead>
+                <thead className="bg-[#F7F8F6] text-[10px] text-zinc-500"><tr><th className="w-11 px-3 py-2 text-center">#</th>{consumptionHeaders.map((header) => <SortableHeader key={header.key} header={{ ...header, className: header.key === 'creditsSpent' || header.key === 'deductCount' || header.key === 'lastDeductAt' ? 'text-right' : undefined }} sortState={consumptionSort} onSort={(key) => { const direction = consumptionSort.key === key && consumptionSort.direction === 'asc' ? 'desc' : 'asc'; setConsumptionSort({ key, direction }); }} />)}</tr></thead>
                 <tbody className="divide-y divide-[#EDF0EE]">
-                  {consumptionRanking.map((item, index) => {
+                  {sortedConsumptionRanking.map((item, index) => {
                     const statusLabel = userStatusLabel(item.userStatus);
                     const rankTone = index === 0 ? 'bg-amber-50 text-amber-700' : index === 1 ? 'bg-zinc-100 text-zinc-600' : index === 2 ? 'bg-orange-50 text-orange-700' : 'bg-zinc-100 text-zinc-500';
                     return (
@@ -589,7 +601,7 @@ export default function AdminUsersPage() {
             </div>
 
             <div className="divide-y divide-[#EDF0EE] md:hidden">
-              {consumptionRanking.map((item, index) => {
+              {sortedConsumptionRanking.map((item, index) => {
                 const statusLabel = userStatusLabel(item.userStatus);
                 const rankTone = index === 0 ? 'bg-amber-50 text-amber-700' : index === 1 ? 'bg-zinc-100 text-zinc-600' : index === 2 ? 'bg-orange-50 text-orange-700' : 'bg-zinc-100 text-zinc-500';
                 return (
@@ -644,13 +656,15 @@ export default function AdminUsersPage() {
       ) : (
         <DataTable
           headers={[
-            { key: 'account', label: '用户' },
-            { key: 'billing', label: '计费与订阅' },
-            { key: 'balance', label: '余额', className: 'text-right' },
-            { key: 'created', label: '注册时间' },
-            { key: 'actions', label: '操作', className: 'text-right' },
+            { key: 'account', label: '用户', sortValue: (item) => item.email },
+            { key: 'billing', label: '计费与订阅', sortValue: (item) => subscriptionActive(item) ? item.subscription?.planName || item.subscription?.tier || '订阅' : '余额计费' },
+            { key: 'balance', label: '余额', className: 'text-right', sortValue: (item) => Number(item.credits || 0) },
+            { key: 'created', label: '注册时间', sortValue: (item) => Date.parse(item.createdAt || '') || 0 },
+            { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={visible}
+          data={filtered}
+          pageSize={pageSize}
+          clientSidePagination
           searchPlaceholder="搜索邮箱或用户 ID"
           searchValue={search}
           onSearchChange={(value) => { setSearch(value); resetPage(); }}
@@ -853,7 +867,7 @@ export default function AdminUsersPage() {
               ) : (
                 <>
                   <table className="hidden w-full border-collapse text-left text-[11px] sm:table">
-                    <thead className="sticky top-0 z-10 bg-white text-zinc-400"><tr className="border-b border-[#EDF0EE]"><th className="px-5 py-2.5 font-semibold">类型</th><th className="px-4 py-2.5 text-right font-semibold">变动</th><th className="px-4 py-2.5 text-right font-semibold">变动后余额</th><th className="px-4 py-2.5 font-semibold">说明</th><th className="px-5 py-2.5 font-semibold">时间</th></tr></thead>
+                    <thead className="sticky top-0 z-10 bg-white text-zinc-400"><tr className="border-b border-[#EDF0EE]"><SortableHeader header={{ key: 'type', label: '类型' }} sortState={creditLogSort} onSort={(key) => { const direction = creditLogSort.key === key && creditLogSort.direction === 'asc' ? 'desc' : 'asc'; setCreditLogSort({ key, direction }); setCreditLogPage(1); }} className="px-5 py-2.5" /><SortableHeader header={{ key: 'amount', label: '变动', className: 'text-right' }} sortState={creditLogSort} onSort={(key) => { const direction = creditLogSort.key === key && creditLogSort.direction === 'asc' ? 'desc' : 'asc'; setCreditLogSort({ key, direction }); setCreditLogPage(1); }} /><SortableHeader header={{ key: 'balanceAfter', label: '变动后余额', className: 'text-right' }} sortState={creditLogSort} onSort={(key) => { const direction = creditLogSort.key === key && creditLogSort.direction === 'asc' ? 'desc' : 'asc'; setCreditLogSort({ key, direction }); setCreditLogPage(1); }} /><th className="px-4 py-2.5 font-semibold">说明</th><SortableHeader header={{ key: 'createdAt', label: '时间' }} sortState={creditLogSort} onSort={(key) => { const direction = creditLogSort.key === key && creditLogSort.direction === 'asc' ? 'desc' : 'asc'; setCreditLogSort({ key, direction }); setCreditLogPage(1); }} className="px-5 py-2.5" /></tr></thead>
                     <tbody>{creditLogs.map((log) => { const view = creditLogView(log); const remark = creditLogRemark(log.remark); return <tr key={log.id} className="border-b border-[#F0F2F0] last:border-0 hover:bg-[#FAFBFA]"><td className="px-5 py-3"><span className={`inline-flex rounded border px-1.5 py-0.5 font-semibold ${view.tone}`}>{view.label}</span></td><td className={`px-4 py-3 text-right font-mono font-semibold ${view.amountTone}`}>{view.change > 0 ? '+' : '-'}{formatCNY(Math.abs(view.change))}</td><td className="px-4 py-3 text-right font-mono font-semibold text-zinc-700">{formatCNY(Number(log.balanceAfter || 0))}</td><td className="max-w-[210px] px-4 py-3 text-zinc-600"><span className="block truncate" title={remark}>{remark}</span></td><td className="whitespace-nowrap px-5 py-3 text-zinc-400">{formatDate(log.createdAt)}</td></tr>; })}</tbody>
                   </table>
                   <div className="divide-y divide-[#EDF0EE] sm:hidden">{creditLogs.map((log) => { const view = creditLogView(log); const remark = creditLogRemark(log.remark); return <div key={log.id} className="px-4 py-3"><div className="flex items-center justify-between gap-3"><span className={`inline-flex rounded border px-1.5 py-0.5 text-[10px] font-semibold ${view.tone}`}>{view.label}</span><strong className={`font-mono text-xs ${view.amountTone}`}>{view.change > 0 ? '+' : '-'}{formatCNY(Math.abs(view.change))}</strong></div><p className="mt-2 truncate text-[11px] text-zinc-600" title={remark}>{remark}</p><div className="mt-2 flex items-center justify-between text-[10px] text-zinc-400"><span>余额 {formatCNY(Number(log.balanceAfter || 0))}</span><span>{formatDate(log.createdAt)}</span></div></div>; })}</div>

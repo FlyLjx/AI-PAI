@@ -22,12 +22,14 @@ func (r *Router) adminRequestMonitor(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(req.Context(), 10*time.Second)
 	defer cancel()
 	filters := requestmonitor.Filters{
-		Range:    strings.TrimSpace(req.URL.Query().Get("range")),
-		Keyword:  strings.TrimSpace(req.URL.Query().Get("keyword")),
-		Method:   strings.TrimSpace(req.URL.Query().Get("method")),
-		Status:   strings.TrimSpace(req.URL.Query().Get("status")),
-		Page:     queryInt(req, "page", 1),
-		PageSize: queryInt(req, "pageSize", 30),
+		Range:     strings.TrimSpace(req.URL.Query().Get("range")),
+		Keyword:   strings.TrimSpace(req.URL.Query().Get("keyword")),
+		Method:    strings.TrimSpace(req.URL.Query().Get("method")),
+		Status:    strings.TrimSpace(req.URL.Query().Get("status")),
+		Page:      queryInt(req, "page", 1),
+		PageSize:  queryInt(req, "pageSize", 30),
+		SortBy:    strings.TrimSpace(req.URL.Query().Get("sortBy")),
+		SortOrder: strings.TrimSpace(req.URL.Query().Get("sortOrder")),
 	}
 	snapshot, total, err := requestmonitor.NewRepository(r.db).Snapshot(ctx, filters)
 	if err != nil {

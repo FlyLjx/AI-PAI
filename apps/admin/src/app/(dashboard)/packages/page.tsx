@@ -116,11 +116,6 @@ export default function AdminPackagesPage() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
-  const visible = useMemo(
-    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
-    [currentPage, filtered],
-  );
-
   const summary = useMemo(() => ({
     total: filtered.length,
     active: filtered.filter((plan) => plan.status === 'active').length,
@@ -235,15 +230,17 @@ export default function AdminPackagesPage() {
       ) : (
         <DataTable
           headers={[
-            { key: 'name', label: '套餐' },
-            { key: 'price', label: '售价' },
-            { key: 'duration', label: '有效期' },
-            { key: 'quota', label: '图片额度' },
-            { key: 'scope', label: '可用范围' },
-            { key: 'status', label: '状态' },
-            { key: 'actions', label: '操作', className: 'text-right' },
+            { key: 'name', label: '套餐', sortValue: (item) => item.name },
+            { key: 'price', label: '售价', sortValue: (item) => Number(item.amount || 0) },
+            { key: 'duration', label: '有效期', sortValue: (item) => Number(item.durationDays || 0) },
+            { key: 'quota', label: '图片额度', sortValue: (item) => Number(item.quotaImages || 0) },
+            { key: 'scope', label: '可用范围', sortValue: (item) => item.allowedModelIds?.length || item.allowedProviderIds?.length || 0 },
+            { key: 'status', label: '状态', sortValue: (item) => item.status === 'active' ? 1 : 0 },
+            { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={visible}
+          data={filtered}
+          pageSize={PAGE_SIZE}
+          clientSidePagination
           searchPlaceholder="搜索套餐名称、说明或标签"
           searchValue={search}
           onSearchChange={(value) => { setSearch(value); setPage(1); }}

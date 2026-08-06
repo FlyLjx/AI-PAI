@@ -77,7 +77,6 @@ export default function AdminSubscriptionsPage() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
   const currentPage = Math.min(page, totalPages);
-  const visible = filtered.slice((currentPage - 1) * pageSize, currentPage * pageSize);
   const activePlans = plans.filter((plan) => plan.status === 'active');
   const activeUsers = users.filter(isActive);
 
@@ -161,14 +160,16 @@ export default function AdminSubscriptionsPage() {
       ) : (
         <DataTable
           headers={[
-            { key: 'user', label: 'API 客户' },
-            { key: 'plan', label: '订阅套餐' },
-            { key: 'quota', label: '额度使用' },
-            { key: 'period', label: '有效期' },
-            { key: 'status', label: '状态' },
-            { key: 'action', label: '操作', className: 'text-right' },
+            { key: 'user', label: 'API 客户', sortValue: (item) => item.email },
+            { key: 'plan', label: '订阅套餐', sortValue: (item) => item.subscription?.planName || item.subscription?.tier || '' },
+            { key: 'quota', label: '额度使用', sortValue: (item) => Number(item.subscription?.effectiveQuotaRemaining ?? item.subscription?.quotaRemaining ?? 0) },
+            { key: 'period', label: '有效期', sortValue: (item) => Date.parse(item.subscription?.expiresAt || '') || 0 },
+            { key: 'status', label: '状态', sortValue: (item) => isActive(item) ? 1 : 0 },
+            { key: 'action', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={visible}
+          data={filtered}
+          pageSize={pageSize}
+          clientSidePagination
           searchPlaceholder="搜索邮箱、用户 ID 或套餐"
           searchValue={search}
           onSearchChange={(value) => { setSearch(value); setPage(1); }}

@@ -113,11 +113,6 @@ export default function AnnouncementsPage() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
-  const visible = useMemo(
-    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
-    [currentPage, filtered],
-  );
-
   const visibleUsers = useMemo(() => {
     const keyword = userSearch.trim().toLowerCase();
     return users.filter((user) => !keyword || `${user.email} ${user.id}`.toLowerCase().includes(keyword));
@@ -252,15 +247,17 @@ export default function AnnouncementsPage() {
       ) : (
         <DataTable
           headers={[
-            { key: 'title', label: '公告内容' },
-            { key: 'mode', label: '展示方式' },
-            { key: 'target', label: '接收范围' },
-            { key: 'sort', label: '排序' },
-            { key: 'status', label: '状态' },
-            { key: 'updated', label: '更新时间' },
-            { key: 'actions', label: '操作', className: 'text-right' },
+            { key: 'title', label: '公告内容', sortValue: (item) => item.title },
+            { key: 'mode', label: '展示方式', sortValue: (item) => displayLabel(item.displayMode) },
+            { key: 'target', label: '接收范围', sortValue: (item) => item.targetType === 'all' ? 0 : item.userIds.length },
+            { key: 'sort', label: '排序', sortValue: (item) => item.sortOrder },
+            { key: 'status', label: '状态', sortValue: (item) => item.status === 'active' ? 1 : 0 },
+            { key: 'updated', label: '更新时间', sortValue: (item) => Date.parse(item.updatedAt) || 0 },
+            { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={visible}
+          data={filtered}
+          pageSize={PAGE_SIZE}
+          clientSidePagination
           searchPlaceholder="搜索公告标题或内容"
           searchValue={search}
           onSearchChange={(value) => { setSearch(value); setPage(1); }}

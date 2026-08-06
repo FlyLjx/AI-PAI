@@ -22,7 +22,7 @@ import {
   YAxis,
 } from 'recharts';
 import { AppSelect } from '@/components/common/AppSelect';
-import { DataTable } from '@/components/common/DataTable';
+import { DataTable, type SortState } from '@/components/common/DataTable';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
 import {
@@ -104,6 +104,7 @@ export default function RequestMonitorPage() {
   const [keyword, setKeyword] = useState('');
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [sort, setSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<RequestMonitorLog | null>(null);
@@ -126,6 +127,8 @@ export default function RequestMonitorPage() {
         keyword: keyword || undefined,
         method: method === 'all' ? undefined : method,
         status: status === 'all' ? undefined : status,
+        sortBy: sort.key,
+        sortOrder: sort.direction,
       });
       setSnapshot(response.data);
       setTotal(response.pagination?.total || 0);
@@ -135,7 +138,7 @@ export default function RequestMonitorPage() {
     } finally {
       setLoading(false);
     }
-  }, [keyword, method, page, range, status]);
+  }, [keyword, method, page, range, sort.direction, sort.key, status]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
@@ -201,13 +204,13 @@ export default function RequestMonitorPage() {
         <div className="mb-3 flex items-center justify-between gap-3"><div><h2 className="text-sm font-semibold text-[#17201B]">请求明细</h2><p className="mt-0.5 text-[11px] text-zinc-400">参数已自动脱敏，图片与上传文件不保存原始内容</p></div><span className="text-[11px] text-zinc-400">{total.toLocaleString('zh-CN')} 条</span></div>
         <DataTable
           headers={[
-            { key: 'time', label: '请求时间' },
+            { key: 'createdAt', label: '请求时间' },
             { key: 'method', label: '方法' },
             { key: 'path', label: '请求接口' },
             { key: 'source', label: '来源域名 / IP' },
-            { key: 'status', label: '状态' },
-            { key: 'duration', label: '耗时' },
-            { key: 'action', label: '参数' },
+            { key: 'statusCode', label: '状态' },
+            { key: 'durationMs', label: '耗时' },
+            { key: 'action', label: '参数', sortable: false },
           ]}
           data={snapshot.items}
           searchPlaceholder="搜索接口、域名、IP 或 User-Agent"
@@ -217,6 +220,10 @@ export default function RequestMonitorPage() {
           currentPage={page}
           totalPages={totalPages}
           onPageChange={setPage}
+          sortKey={sort.key}
+          sortDirection={sort.direction}
+          onSort={(key, direction) => { setSort({ key, direction }); setPage(1); }}
+          serverSideSorting
           renderRow={(item) => { const responseStatus = statusMeta(item.statusCode); return (
             <tr key={item.id} className="hover:bg-[#FAFBFA]">
               <td className="whitespace-nowrap px-4 py-3 text-zinc-500">{formatDate(item.createdAt)}</td>

@@ -153,6 +153,9 @@ func TestUpdateRejectsInvalidAdminNotificationSettings(t *testing.T) {
 		{"adminUpstreamCheckIntervalMinutes": float64(1441)},
 		{"adminRechargeNotificationEnabled": "true"},
 		{"adminUpstreamNotificationEnabled": float64(1)},
+		{"barkEnabled": "true"},
+		{"barkNotifyError": "true"},
+		{"barkServerUrl": "ftp://bark.example.com"},
 	}
 	for _, input := range tests {
 		rawDB, mock, err := sqlmock.New()
@@ -169,6 +172,15 @@ func TestUpdateRejectsInvalidAdminNotificationSettings(t *testing.T) {
 			t.Fatal(err)
 		}
 		rawDB.Close()
+	}
+}
+
+func TestParseBarkServerFallsBackToDefault(t *testing.T) {
+	if got := parseValue("barkServerUrl", ""); got != Defaults["barkServerUrl"] {
+		t.Fatalf("empty Bark server = %v, want %v", got, Defaults["barkServerUrl"])
+	}
+	if got := parseValue("barkServerUrl", "https://bark.example.com/"); got != "https://bark.example.com/" {
+		t.Fatalf("Bark server = %v", got)
 	}
 }
 

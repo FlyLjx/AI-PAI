@@ -65,12 +65,13 @@ func (repository *Repository) Snapshot(ctx context.Context, filters Filters) (Sn
 	if result.TopSources, err = repository.frequency(ctx, sourceExpression, where, args); err != nil {
 		return result, 0, err
 	}
+	orderBy := requestLogOrder(filters.SortBy, filters.SortOrder)
 
 	rows, err := repository.db.QueryContext(ctx, `
 		SELECT id, method, path, query_params, body_params, source_ip, source_host,
 			origin, referer, user_agent, status_code, duration_ms, response_bytes, created_at
 		FROM http_request_logs `+where+`
-		ORDER BY created_at DESC, id DESC
+		ORDER BY `+orderBy+`
 		LIMIT ? OFFSET ?
 	`, appendArgs(args, filters.PageSize, (filters.Page-1)*filters.PageSize)...)
 	if err != nil {
@@ -187,6 +188,8 @@ func normalizeFilters(filters Filters) Filters {
 	filters.Keyword = strings.ToLower(strings.TrimSpace(filters.Keyword))
 	filters.Method = strings.ToUpper(strings.TrimSpace(filters.Method))
 	filters.Status = strings.ToLower(strings.TrimSpace(filters.Status))
+	filters.SortBy = strings.TrimSpace(filters.SortBy)
+	filters.SortOrder = strings.ToLower(strings.TrimSpace(filters.SortOrder))
 	if filters.Page < 1 {
 		filters.Page = 1
 	}
@@ -202,6 +205,34 @@ func normalizeFilters(filters Filters) Filters {
 		filters.Now = filters.Now.In(appclock.ConfigureDefault())
 	}
 	return filters
+}
+
+func requestLogOrder(sortBy string, sortOrder string) string {
+	direction := "DESC"
+	if strings.EqualFold(strings.TrimSpace(sortOrder), "asc") {
+		direction = "ASC"
+	}
+	sortBy = strings.TrimSpace(sortBy)
+	orderExpression := ""
+	switch sortBy {
+	case "createdAt":
+		orderExpression = "created_at"
+	case "method":
+		orderExpression = "method"
+	case "path":
+		orderExpression = "LOWER(path)"
+	case "source":
+		orderExpression = "LOWER(COALESCE(NULLIF(source_host, ''), NULLIF(source_ip, ''), ''))"
+	case "statusCode":
+		orderExpression = "status_code"
+	case "durationMs":
+		orderExpression = "duration_ms"
+	case "responseBytes":
+		orderExpression = "response_bytes"
+	default:
+		return "created_at DESC, id DESC"
+	}
+	return orderExpression + " " + direction + ", created_at DESC, id DESC"
 }
 
 func filterWhere(filters Filters) (string, []any) {

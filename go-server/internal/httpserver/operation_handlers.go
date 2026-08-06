@@ -914,10 +914,12 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 
 func operationPage(req *http.Request) operations.PageInput {
 	return operations.PageInput{
-		Page:     queryInt(req, "page", 1),
-		PageSize: queryInt(req, "pageSize", queryInt(req, "limit", 20)),
-		Keyword:  strings.TrimSpace(req.URL.Query().Get("keyword")),
-		Status:   strings.TrimSpace(req.URL.Query().Get("status")),
+		Page:      queryInt(req, "page", 1),
+		PageSize:  queryInt(req, "pageSize", queryInt(req, "limit", 20)),
+		Keyword:   strings.TrimSpace(req.URL.Query().Get("keyword")),
+		Status:    strings.TrimSpace(req.URL.Query().Get("status")),
+		SortBy:    strings.TrimSpace(req.URL.Query().Get("sortBy")),
+		SortOrder: strings.TrimSpace(req.URL.Query().Get("sortOrder")),
 	}
 }
 

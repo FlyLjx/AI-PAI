@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { CreditCard, Gauge, Gift, Headset, Loader2, Mail, RefreshCw, Save, Server, ShieldAlert, ShieldCheck, Trash2, UserRound } from 'lucide-react';
+import { Bell, CreditCard, Gauge, Gift, Headset, Loader2, Mail, RefreshCw, Save, Send, Server, ShieldAlert, ShieldCheck, Trash2, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -68,6 +68,13 @@ type SettingsForm = {
   emailFromName: string;
   emailFromAddress: string;
   adminNotificationEmails: string;
+  barkEnabled: boolean;
+  barkServerUrl: string;
+  barkGroup: string;
+  barkSound: string;
+  barkNotifyError: boolean;
+  barkNotifyRecharge: boolean;
+  barkNotifyUpstream: boolean;
   adminRechargeNotificationEnabled: boolean;
   adminUpstreamNotificationEnabled: boolean;
   adminOpenAIStatusNotificationEnabled: boolean;
@@ -134,6 +141,13 @@ const emptySettings: SettingsForm = {
   emailFromName: 'AI-PAI',
   emailFromAddress: '',
   adminNotificationEmails: '',
+  barkEnabled: false,
+  barkServerUrl: 'https://api.day.app',
+  barkGroup: 'AI-PAI',
+  barkSound: '',
+  barkNotifyError: true,
+  barkNotifyRecharge: true,
+  barkNotifyUpstream: true,
   adminRechargeNotificationEnabled: true,
   adminUpstreamNotificationEnabled: true,
   adminOpenAIStatusNotificationEnabled: true,
@@ -217,6 +231,13 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     emailFromName: String(data.emailFromName || data.siteName || 'AI-PAI'),
     emailFromAddress: String(data.emailFromAddress || ''),
     adminNotificationEmails: String(data.adminNotificationEmails || ''),
+    barkEnabled: Boolean(data.barkEnabled),
+    barkServerUrl: String(data.barkServerUrl || 'https://api.day.app'),
+    barkGroup: String(data.barkGroup || 'AI-PAI'),
+    barkSound: String(data.barkSound || ''),
+    barkNotifyError: data.barkNotifyError !== false,
+    barkNotifyRecharge: data.barkNotifyRecharge !== false,
+    barkNotifyUpstream: data.barkNotifyUpstream !== false,
     adminRechargeNotificationEnabled: data.adminRechargeNotificationEnabled !== false,
     adminUpstreamNotificationEnabled: data.adminUpstreamNotificationEnabled !== false,
     adminOpenAIStatusNotificationEnabled: data.adminOpenAIStatusNotificationEnabled !== false,
@@ -230,9 +251,12 @@ export default function AdminSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [emailPassword, setEmailPassword] = useState('');
+  const [barkDeviceKey, setBarkDeviceKey] = useState('');
   const [alipayPrivateKey, setAlipayPrivateKey] = useState('');
   const [emailPasswordConfigured, setEmailPasswordConfigured] = useState(false);
+  const [barkDeviceKeyConfigured, setBarkDeviceKeyConfigured] = useState(false);
   const [alipayPrivateKeyConfigured, setAlipayPrivateKeyConfigured] = useState(false);
+  const [barkTesting, setBarkTesting] = useState(false);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [users, setUsers] = useState<PortalUser[]>([]);
 
@@ -246,8 +270,10 @@ export default function AdminSettingsPage() {
       setUsers(usersResponse.data || []);
       setForm(normalizeSettings(values));
       setEmailPasswordConfigured(Boolean(values.emailPassword));
+      setBarkDeviceKeyConfigured(Boolean(values.barkDeviceKey || values.barkKey));
       setAlipayPrivateKeyConfigured(Boolean(values.alipayPrivateKey));
       setEmailPassword('');
+      setBarkDeviceKey('');
       setAlipayPrivateKey('');
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '系统设置加载失败');
@@ -278,6 +304,8 @@ export default function AdminSettingsPage() {
     if (!Number.isFinite(form.rechargeRate) || form.rechargeRate <= 0) return toast.error('充值比例必须大于 0');
     if (form.inviteRechargeRebateEnabled && (!Number.isFinite(form.inviteRechargeRebatePercent) || form.inviteRechargeRebatePercent <= 0 || form.inviteRechargeRebatePercent > 100)) return toast.error('充值返利比例必须大于 0 且不超过 100%');
     if (!Number.isSafeInteger(form.adminUpstreamCheckIntervalMinutes) || form.adminUpstreamCheckIntervalMinutes < 1 || form.adminUpstreamCheckIntervalMinutes > 1440) return toast.error('上游状态检查间隔必须是 1 到 1440 分钟的整数');
+    if (form.barkEnabled && !barkDeviceKey.trim() && !barkDeviceKeyConfigured) return toast.error('启用 Bark 前请填写 Device Key');
+    if (form.barkEnabled && !form.barkServerUrl.trim()) return toast.error('请填写 Bark 服务地址');
     if (form.inviteEnabled) {
       if (form.inviteInviterRewardType === 'balance' && form.inviteInviterRewardCredits <= 0) return toast.error('请设置邀请人的余额奖励');
       if (form.inviteInviterRewardType === 'subscription' && !form.inviteInviterRewardPlanId) return toast.error('请选择邀请人的订阅奖励');
@@ -305,20 +333,38 @@ export default function AdminSettingsPage() {
         emailFromName: form.emailFromName.trim(),
         emailFromAddress: form.emailFromAddress.trim(),
         adminNotificationEmails: form.adminNotificationEmails.trim(),
+        barkServerUrl: form.barkServerUrl.trim() || 'https://api.day.app',
+        barkGroup: form.barkGroup.trim(),
+        barkSound: form.barkSound.trim(),
       };
       if (emailPassword) input.emailPassword = emailPassword;
+      if (barkDeviceKey.trim()) input.barkDeviceKey = barkDeviceKey.trim();
       if (alipayPrivateKey) input.alipayPrivateKey = alipayPrivateKey;
       const response = await portalApi.updateSettings(input);
       setForm(normalizeSettings(response.data as Record<string, unknown>));
       setEmailPasswordConfigured(Boolean((response.data as Record<string, unknown>).emailPassword));
+      setBarkDeviceKeyConfigured(Boolean((response.data as Record<string, unknown>).barkDeviceKey || (response.data as Record<string, unknown>).barkKey));
       setAlipayPrivateKeyConfigured(Boolean((response.data as Record<string, unknown>).alipayPrivateKey));
       setEmailPassword('');
+      setBarkDeviceKey('');
       setAlipayPrivateKey('');
       toast.success('系统设置已保存');
     } catch (requestError) {
       toast.error(requestError instanceof Error ? requestError.message : '系统设置保存失败');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const testBark = async () => {
+    setBarkTesting(true);
+    try {
+      await portalApi.testBark();
+      toast.success('Bark 测试通知已发送');
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : 'Bark 测试通知发送失败');
+    } finally {
+      setBarkTesting(false);
     }
   };
 
@@ -493,12 +539,32 @@ export default function AdminSettingsPage() {
               </div>
               <label className="flex items-center gap-2 text-[11px] text-zinc-500"><input type="checkbox" checked={form.emailSecure} onChange={(event) => updateField('emailSecure', event.target.checked)} className="h-3.5 w-3.5 accent-[#047857]" />使用 SSL/TLS（465 端口通常开启）</label>
               <div className="space-y-2 border-t border-[#EDF0EE] pt-4">
-                <div><strong className="block text-[11px]">管理员邮件通知</strong><small className="text-[10px] text-zinc-400">可指定固定接收地址；留空时发送给所有启用中的管理员账号邮箱</small></div>
+                <div><strong className="block text-[11px]">管理员通知</strong><small className="text-[10px] text-zinc-400">邮件和 Bark 会按各自开关发送；邮件地址留空时发送给所有启用中的管理员账号邮箱</small></div>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">管理员接收邮箱</span><textarea rows={2} value={form.adminNotificationEmails} onChange={(event) => updateField('adminNotificationEmails', event.target.value)} placeholder="admin@example.com, finance@example.com\n支持逗号、分号或换行分隔" className="w-full resize-y rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-[11px] leading-5" /></label>
                 <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">充值成功通知</strong><small className="text-[10px] text-zinc-400">余额充值或订阅购买到账时发送</small></span><input type="checkbox" checked={form.adminRechargeNotificationEnabled} onChange={(event) => updateField('adminRechargeNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
                 <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">上游状态通知</strong><small className="text-[10px] text-zinc-400">异常与恢复时发送，持续异常 6 小时内不重复</small></span><input type="checkbox" checked={form.adminUpstreamNotificationEnabled} onChange={(event) => updateField('adminUpstreamNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
                 <label className="flex items-center justify-between gap-3 rounded-md border border-[#DCE4DF] px-3 py-2.5"><span><strong className="block text-[11px]">OpenAI Image 订阅</strong><small className="text-[10px] text-zinc-400">订阅 status.openai.com 的图片相关异常与恢复</small></span><input type="checkbox" checked={form.adminOpenAIStatusNotificationEnabled} onChange={(event) => updateField('adminOpenAIStatusNotificationEnabled', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">上游检查间隔（分钟）</span><input disabled={!form.adminUpstreamNotificationEnabled} min={1} max={1440} step={1} type="number" value={form.adminUpstreamCheckIntervalMinutes} onChange={(event) => updateField('adminUpstreamCheckIntervalMinutes', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
+              </div>
+              <div className="space-y-3 border-t border-[#EDF0EE] pt-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-2"><Bell className="h-4 w-4 text-[#D97706]" /><span><strong className="block text-[11px]">Bark 推送</strong><small className="mt-0.5 block text-[10px] text-zinc-400">与邮件通知使用同一套充值、异常和恢复事件</small></span></span>
+                  <label className="flex items-center gap-2 text-[11px] font-semibold text-zinc-500"><input type="checkbox" checked={form.barkEnabled} onChange={(event) => updateField('barkEnabled', event.target.checked)} className="h-4 w-4 accent-[#D97706]" />启用</label>
+                </div>
+                <div className={`space-y-3 ${form.barkEnabled ? '' : 'opacity-55'}`}>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[minmax(0,1fr)_140px]">
+                    <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">Bark 服务地址</span><input value={form.barkServerUrl} onChange={(event) => updateField('barkServerUrl', event.target.value)} placeholder="https://api.day.app" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs disabled:bg-zinc-50" /></label>
+                    <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">分组</span><input value={form.barkGroup} onChange={(event) => updateField('barkGroup', event.target.value)} placeholder="AI-PAI" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs disabled:bg-zinc-50" /></label>
+                  </div>
+                  <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">Device Key</span><input type="password" value={barkDeviceKey} onChange={(event) => setBarkDeviceKey(event.target.value)} placeholder={barkDeviceKeyConfigured ? '已配置，留空保持不变' : '粘贴 Bark Device Key'} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+                  <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">通知声音（可选）</span><input value={form.barkSound} onChange={(event) => updateField('barkSound', event.target.value)} placeholder="留空使用设备默认声音" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs" /></label>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                    <label className="flex items-center justify-between gap-2 rounded-md border border-[#DCE4DF] px-3 py-2 text-[11px] text-zinc-600"><span>充值通知</span><input type="checkbox" checked={form.barkNotifyRecharge} onChange={(event) => updateField('barkNotifyRecharge', event.target.checked)} className="h-4 w-4 accent-[#D97706]" /></label>
+                    <label className="flex items-center justify-between gap-2 rounded-md border border-[#DCE4DF] px-3 py-2 text-[11px] text-zinc-600"><span>异常通知</span><input type="checkbox" checked={form.barkNotifyError} onChange={(event) => updateField('barkNotifyError', event.target.checked)} className="h-4 w-4 accent-[#D97706]" /></label>
+                    <label className="flex items-center justify-between gap-2 rounded-md border border-[#DCE4DF] px-3 py-2 text-[11px] text-zinc-600"><span>上游恢复</span><input type="checkbox" checked={form.barkNotifyUpstream} onChange={(event) => updateField('barkNotifyUpstream', event.target.checked)} className="h-4 w-4 accent-[#D97706]" /></label>
+                  </div>
+                  <div className="flex items-center justify-between gap-3 rounded-md bg-[#FFF9ED] px-3 py-2.5"><small className="text-[10px] leading-4 text-amber-800">保存设置后可发送一条 Bark 测试消息，确认服务地址和 Device Key 可用。</small><button type="button" onClick={() => void testBark()} disabled={barkTesting || !barkDeviceKeyConfigured} className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-amber-300 bg-white px-2.5 py-1.5 text-[10px] font-semibold text-amber-800 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50">{barkTesting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}发送测试</button></div>
+                </div>
               </div>
             </section>
           </div>

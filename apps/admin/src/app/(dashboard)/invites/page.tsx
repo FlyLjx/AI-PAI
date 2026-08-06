@@ -16,6 +16,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { AppSelect } from '@/components/common/AppSelect';
+import { SortableHeader, type SortState } from '@/components/common/DataTable';
 import { PageHeader } from '@/components/common/PageHeader';
 import { formatCNY, formatDate } from '@/lib/common/utils';
 import { portalApi, type AdminInviteRecord, type AdminInviteSummary } from '@/lib/admin-api';
@@ -78,6 +79,7 @@ export default function AdminInvitesPage() {
   const [items, setItems] = useState<AdminInviteRecord[]>([]);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
+  const [sort, setSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [reviewingId, setReviewingId] = useState('');
@@ -89,7 +91,7 @@ export default function AdminInvitesPage() {
     setLoading(true);
     setError('');
     try {
-      const response = await portalApi.adminInvites(page, PAGE_SIZE);
+      const response = await portalApi.adminInvites(page, PAGE_SIZE, sort.key, sort.direction);
       setItems(response.data || []);
       const responseTotal = Number(response.pagination?.total ?? response.summary?.total ?? 0);
       setTotal(responseTotal);
@@ -105,7 +107,7 @@ export default function AdminInvitesPage() {
     } finally {
       setLoading(false);
     }
-  }, [page]);
+  }, [page, sort.direction, sort.key]);
 
   const openReviewDialog = (item: AdminInviteRecord, action: ReviewAction) => {
     setReviewDialog({ item, action });
@@ -180,7 +182,31 @@ export default function AdminInvitesPage() {
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1320px] text-left text-xs">
             <thead className="bg-[#F7F8F6] text-[10px] text-zinc-500">
-              <tr><th className="px-4 py-3">邀请人</th><th className="px-4 py-3">被邀请人</th><th className="px-4 py-3">邀请人奖励</th><th className="px-4 py-3">新用户奖励</th><th className="px-4 py-3">充值返利</th><th className="px-4 py-3">状态</th><th className="px-4 py-3">邀请人IP</th><th className="px-4 py-3">被邀请人IP</th><th className="px-4 py-3">创建时间</th><th className="px-4 py-3">审核</th></tr>
+              <tr>
+                {[
+                  { key: 'inviter', label: '邀请人' },
+                  { key: 'invitee', label: '被邀请人' },
+                  { key: 'rewardCredits', label: '邀请人奖励' },
+                  { key: 'inviteeRewardCredits', label: '新用户奖励' },
+                  { key: 'rechargeRebateCredits', label: '充值返利' },
+                  { key: 'status', label: '状态' },
+                  { key: 'inviterIp', label: '邀请人IP', sortable: false },
+                  { key: 'inviteeIp', label: '被邀请人IP', sortable: false },
+                  { key: 'createdAt', label: '创建时间' },
+                  { key: 'review', label: '审核', sortable: false },
+                ].map((header) => (
+                  <SortableHeader
+                    key={header.key}
+                    header={header}
+                    sortState={sort}
+                    onSort={(key) => {
+                      const direction = sort.key === key && sort.direction === 'asc' ? 'desc' : 'asc';
+                      setSort({ key, direction });
+                      setPage(1);
+                    }}
+                  />
+                ))}
+              </tr>
             </thead>
             <tbody className="divide-y divide-[#EDF0EE]">
               {items.map((item) => {

@@ -28,6 +28,7 @@ import {
 } from 'recharts';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/PageHeader';
+import { SortableHeader, sortItems, type SortState, type TableHeader } from '@/components/common/DataTable';
 import { portalApi, type OpenAIImageStatusSnapshot, type StabilitySnapshot } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
 
@@ -52,6 +53,22 @@ type UsageRow = {
   status?: string;
   createdAt?: string;
 };
+
+const recentTaskHeaders: TableHeader<UsageRow>[] = [
+  { key: 'user', label: '客户', sortValue: (row) => row.userEmail || row.userId || '' },
+  { key: 'model', label: '模型', sortValue: (row) => row.modelDisplayName || row.modelName || row.modelId || '' },
+  { key: 'quantity', label: '数量', sortValue: (row) => Number(row.quantity || 0) },
+  { key: 'status', label: '状态', sortValue: (row) => row.status || '' },
+  { key: 'createdAt', label: '时间', sortValue: (row) => Date.parse(row.createdAt || '') || 0 },
+];
+
+const recentOrderHeaders: TableHeader<RechargeRow>[] = [
+  { key: 'user', label: '客户', sortValue: (row) => row.userEmail || row.userId || '' },
+  { key: 'orderType', label: '类型', sortValue: (row) => row.orderType || '' },
+  { key: 'amount', label: '金额', sortValue: (row) => Number(row.amount || 0) },
+  { key: 'status', label: '状态', sortValue: (row) => row.status || '' },
+  { key: 'createdAt', label: '时间', sortValue: (row) => Date.parse(row.createdAt || '') || 0 },
+];
 
 type TaskTrendPoint = {
   date: string;
@@ -179,6 +196,8 @@ export default function AdminDashboardPage() {
   const [lastUpdated, setLastUpdated] = useState('');
   const [trendDays, setTrendDays] = useState<7 | 15 | 30>(7);
   const [activityView, setActivityView] = useState<'tasks' | 'orders'>('tasks');
+  const [recentTasksSort, setRecentTasksSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
+  const [recentOrdersSort, setRecentOrdersSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -251,8 +270,16 @@ export default function AdminDashboardPage() {
   const customerTrend = dayOverDayTrend(Number(data.today?.users || 0), Number(data.yesterday?.users || 0));
   const balanceConsumptionTrend = dayOverDayTrend(Number(data.today?.balanceConsumed || 0), Number(data.yesterday?.balanceConsumed || 0));
   const runningTasks = Number(data.pending?.runningTasks || 0);
-  const recentOrders = data.recentOrders || [];
-  const recentTasks = data.recentTasks || [];
+  const recentOrders = useMemo(() => data.recentOrders || [], [data.recentOrders]);
+  const recentTasks = useMemo(() => data.recentTasks || [], [data.recentTasks]);
+  const sortedRecentTasks = useMemo(() => {
+    const header = recentTaskHeaders.find((item) => item.key === recentTasksSort.key) || recentTaskHeaders[4];
+    return sortItems(recentTasks, header, recentTasksSort.direction);
+  }, [recentTasks, recentTasksSort.direction, recentTasksSort.key]);
+  const sortedRecentOrders = useMemo(() => {
+    const header = recentOrderHeaders.find((item) => item.key === recentOrdersSort.key) || recentOrderHeaders[4];
+    return sortItems(recentOrders, header, recentOrdersSort.direction);
+  }, [recentOrders, recentOrdersSort.direction, recentOrdersSort.key]);
   const taskTrend = useMemo(() => (data.taskTrend || []).slice(-trendDays), [data.taskTrend, trendDays]);
   const taskTrendSummary = useMemo(() => taskTrend.reduce((summary, point) => ({
     total: summary.total + Number(point.total || 0),
@@ -460,7 +487,7 @@ export default function AdminDashboardPage() {
             {activityView === 'tasks' ? (
               <>
                 <div className="divide-y divide-[#EDF0EE] sm:hidden">
-                  {recentTasks.map((row) => { const status = statusView(row.status); return (
+                  {sortedRecentTasks.map((row) => { const status = statusView(row.status); return (
                     <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3">
                       <span className="min-w-0"><strong className="block truncate text-[11px]">{row.userEmail || row.userId || '-'}</strong><small className="mt-1 block truncate text-[10px] text-zinc-400">{row.modelDisplayName || row.modelName || row.modelId || '-'} · {Number(row.quantity || 0)} 张</small></span>
                       <span className="text-right"><span className={`rounded border px-1.5 py-0.5 text-[9px] ${status.className}`}>{status.label}</span><small className="mt-1.5 block text-[9px] text-zinc-400">{formatDate(row.createdAt || '')}</small></span>
@@ -470,9 +497,9 @@ export default function AdminDashboardPage() {
                 </div>
                 <div className="hidden overflow-x-auto sm:block">
                   <table className="w-full min-w-[640px] text-left text-xs">
-                    <thead className="bg-[#F6F8F6] text-[10px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">模型</th><th className="px-4 py-2">数量</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
+                    <thead className="bg-[#F6F8F6] text-[10px] text-zinc-500"><tr>{recentTaskHeaders.map((header) => <SortableHeader key={header.key} header={header} sortState={recentTasksSort} onSort={(key) => { const direction = recentTasksSort.key === key && recentTasksSort.direction === 'asc' ? 'desc' : 'asc'; setRecentTasksSort({ key, direction }); }} />)}</tr></thead>
                     <tbody className="divide-y divide-[#EDF0EE]">
-                      {recentTasks.map((row) => { const status = statusView(row.status); return (
+                      {sortedRecentTasks.map((row) => { const status = statusView(row.status); return (
                         <tr key={row.id}><td className="max-w-[220px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="max-w-[220px] truncate px-4 py-2.5">{row.modelDisplayName || row.modelName || row.modelId || '-'}</td><td className="px-4 py-2.5 font-mono">{Number(row.quantity || 0)}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[10px] ${status.className}`}>{status.label}</span></td><td className="whitespace-nowrap px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
                       ); })}
                       {!recentTasks.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400">暂无 API 请求</td></tr>}
@@ -483,7 +510,7 @@ export default function AdminDashboardPage() {
             ) : (
               <>
                 <div className="divide-y divide-[#EDF0EE] sm:hidden">
-                  {recentOrders.map((row) => { const status = statusView(row.status); return (
+                  {sortedRecentOrders.map((row) => { const status = statusView(row.status); return (
                     <div key={row.id} className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 px-4 py-3">
                       <span className="min-w-0"><strong className="block truncate text-[11px]">{row.userEmail || row.userId || '-'}</strong><small className="mt-1 block text-[10px] text-zinc-400">{row.orderType === 'subscription' ? '订阅' : '余额'} · {formatCNY(Number(row.amount || 0))}</small></span>
                       <span className="text-right"><span className={`rounded border px-1.5 py-0.5 text-[9px] ${status.className}`}>{status.label}</span><small className="mt-1.5 block text-[9px] text-zinc-400">{formatDate(row.createdAt || '')}</small></span>
@@ -493,9 +520,9 @@ export default function AdminDashboardPage() {
                 </div>
                 <div className="hidden overflow-x-auto sm:block">
                   <table className="w-full min-w-[640px] text-left text-xs">
-                    <thead className="bg-[#F6F8F6] text-[10px] text-zinc-500"><tr><th className="px-4 py-2">客户</th><th className="px-4 py-2">类型</th><th className="px-4 py-2">金额</th><th className="px-4 py-2">状态</th><th className="px-4 py-2">时间</th></tr></thead>
+                    <thead className="bg-[#F6F8F6] text-[10px] text-zinc-500"><tr>{recentOrderHeaders.map((header) => <SortableHeader key={header.key} header={header} sortState={recentOrdersSort} onSort={(key) => { const direction = recentOrdersSort.key === key && recentOrdersSort.direction === 'asc' ? 'desc' : 'asc'; setRecentOrdersSort({ key, direction }); }} />)}</tr></thead>
                     <tbody className="divide-y divide-[#EDF0EE]">
-                      {recentOrders.map((row) => { const status = statusView(row.status); return (
+                      {sortedRecentOrders.map((row) => { const status = statusView(row.status); return (
                         <tr key={row.id}><td className="max-w-[220px] truncate px-4 py-2.5">{row.userEmail || row.userId || '-'}</td><td className="px-4 py-2.5">{row.orderType === 'subscription' ? '订阅' : '余额'}</td><td className="px-4 py-2.5 font-mono">{formatCNY(Number(row.amount || 0))}</td><td className="px-4 py-2.5"><span className={`rounded border px-1.5 py-0.5 text-[10px] ${status.className}`}>{status.label}</span></td><td className="whitespace-nowrap px-4 py-2.5 text-zinc-500">{formatDate(row.createdAt || '')}</td></tr>
                       ); })}
                       {!recentOrders.length && <tr><td colSpan={5} className="px-4 py-8 text-center text-zinc-400">暂无充值记录</td></tr>}

@@ -166,6 +166,7 @@ func (r *Router) adminMailLogs(w http.ResponseWriter, req *http.Request) {
 	}
 
 	whereSQL, args := mailLogWhere(req)
+	orderBy := mailLogOrder(req.URL.Query().Get("sortBy"), req.URL.Query().Get("sortOrder"))
 	var summary mailDeliverySummary
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
@@ -187,7 +188,7 @@ func (r *Router) adminMailLogs(w http.ResponseWriter, req *http.Request) {
 			status, error_message, created_at, sent_at
 		FROM email_delivery_logs
 		`+whereSQL+`
-		ORDER BY created_at DESC, id DESC
+		ORDER BY `+orderBy+`
 		LIMIT ? OFFSET ?
 	`, append(args, pageSize, offset)...)
 	if err != nil {
@@ -255,4 +256,30 @@ func mailLogWhere(req *http.Request) (string, []any) {
 		args = append(args, category)
 	}
 	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func mailLogOrder(sortBy string, sortOrder string) string {
+	direction := "DESC"
+	if strings.EqualFold(strings.TrimSpace(sortOrder), "asc") {
+		direction = "ASC"
+	}
+	sortBy = strings.TrimSpace(sortBy)
+	orderExpression := ""
+	switch sortBy {
+	case "subject":
+		orderExpression = "LOWER(subject)"
+	case "recipient":
+		orderExpression = "LOWER(recipient)"
+	case "category":
+		orderExpression = "category"
+	case "status":
+		orderExpression = "status"
+	case "createdAt":
+		orderExpression = "created_at"
+	case "sentAt":
+		orderExpression = "sent_at"
+	default:
+		return "created_at DESC, id DESC"
+	}
+	return orderExpression + " " + direction + ", created_at DESC, id DESC"
 }

@@ -5,7 +5,7 @@ import { Activity, Check, CircleStop, Clipboard, Eye, KeyRound, Loader2, Refresh
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
-import { DataTable } from '@/components/common/DataTable';
+import { DataTable, type SortState } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { StatusBadge } from '@/components/common/StatusBadge';
@@ -149,10 +149,12 @@ export default function AdminAPIAccessPage() {
   const [keyStatus, setKeyStatus] = useState('all');
   const [keyPage, setKeyPage] = useState(1);
   const [keyTotal, setKeyTotal] = useState(0);
+  const [keySort, setKeySort] = useState<SortState>({ key: 'lastUsedAt', direction: 'desc' });
   const [logSearch, setLogSearch] = useState('');
   const [logStatusFilter, setLogStatusFilter] = useState('all');
   const [logPage, setLogPage] = useState(1);
   const [logTotal, setLogTotal] = useState(0);
+  const [logSort, setLogSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
   const [logSummary, setLogSummary] = useState<UsageSummary>({ total: 0, success: 0, failed: 0, imageCount: 0 });
   const [concurrencyDraft, setConcurrencyDraft] = useState<Record<string, number>>({});
   const [actionId, setActionId] = useState('');
@@ -174,6 +176,8 @@ export default function AdminAPIAccessPage() {
         pageSize: keyPageSize,
         keyword: keySearch.trim() || undefined,
         status: keyStatus === 'all' ? undefined : keyStatus,
+        sortBy: keySort.key,
+        sortOrder: keySort.direction,
       });
       if (requestSequence !== keyRequestSequence.current) return;
       setKeys(response.data.items || []);
@@ -188,7 +192,7 @@ export default function AdminAPIAccessPage() {
     } finally {
       if (requestSequence === keyRequestSequence.current) setKeysLoading(false);
     }
-  }, [keySearch, keyStatus]);
+  }, [keySearch, keySort.direction, keySort.key, keyStatus]);
 
   const loadLogs = useCallback(async (page = 1) => {
     const requestSequence = ++logRequestSequence.current;
@@ -200,6 +204,8 @@ export default function AdminAPIAccessPage() {
         pageSize: logPageSize,
         keyword: logSearch.trim() || undefined,
         status: logStatusFilter === 'all' ? undefined : logStatusFilter,
+        sortBy: logSort.key,
+        sortOrder: logSort.direction,
       });
       if (requestSequence !== logRequestSequence.current) return;
       setLogs(response.data as DetailedUsageLog[]);
@@ -218,7 +224,7 @@ export default function AdminAPIAccessPage() {
     } finally {
       if (requestSequence === logRequestSequence.current) setLogsLoading(false);
     }
-  }, [logSearch, logStatusFilter]);
+  }, [logSearch, logSort.direction, logSort.key, logStatusFilter]);
 
   const refreshAll = useCallback(async () => {
     await Promise.all([loadKeys(keyPage), loadLogs(logPage)]);
@@ -368,14 +374,14 @@ export default function AdminAPIAccessPage() {
         <DataTable
           headers={[
             { key: 'user', label: 'API 客户' },
-            { key: 'key', label: 'Key 名称 / 前缀' },
+            { key: 'name', label: 'Key 名称 / 前缀' },
             { key: 'status', label: '状态' },
             { key: 'billingMode', label: '计费方式' },
-            { key: 'concurrency', label: '基础 / 当前并发' },
-            { key: 'requests', label: '请求统计' },
-            { key: 'images', label: '图片数' },
-            { key: 'used', label: '最近使用' },
-            { key: 'actions', label: '操作', className: 'text-right' },
+            { key: 'concurrencyLimit', label: '基础 / 当前并发' },
+            { key: 'requestCount', label: '请求统计' },
+            { key: 'imageCount', label: '图片数' },
+            { key: 'lastUsedAt', label: '最近使用' },
+            { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
           data={keys}
           searchPlaceholder="搜索用户、Key 名称或前缀"
@@ -385,6 +391,10 @@ export default function AdminAPIAccessPage() {
           currentPage={effectiveKeyPage}
           totalPages={keyTotalPages}
           onPageChange={(page) => void loadKeys(page)}
+          sortKey={keySort.key}
+          sortDirection={keySort.direction}
+          onSort={(key, direction) => { setKeySort({ key, direction }); setKeyPage(1); }}
+          serverSideSorting
           emptyState={<EmptyState title="暂无 API Key" description="客户在开发者工作台创建 Key 后会显示在这里。" icon={KeyRound} />}
           renderRow={(key) => (
             <tr key={key.id} className="hover:bg-[#FAFBFA]">
@@ -415,16 +425,16 @@ export default function AdminAPIAccessPage() {
       ) : (
         <DataTable
           headers={[
-            { key: 'time', label: '请求时间' },
+            { key: 'createdAt', label: '请求时间' },
             { key: 'user', label: 'API 客户 / Key' },
             { key: 'endpoint', label: '接口' },
             { key: 'model', label: '模型' },
-            { key: 'params', label: '参数' },
-            { key: 'billing', label: '扣费 / 成本' },
-            { key: 'duration', label: '生图时间' },
+            { key: 'imageCount', label: '参数 / 图片数' },
+            { key: 'chargedCredits', label: '扣费 / 成本' },
+            { key: 'durationSeconds', label: '生图时间' },
             { key: 'status', label: '状态' },
-            { key: 'error', label: '错误信息' },
-            { key: 'actions', label: '操作', className: 'text-right' },
+            { key: 'error', label: '错误信息', sortable: false },
+            { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
           data={logs}
           searchPlaceholder="搜索用户、Key、接口、模型或提示词"
@@ -434,6 +444,10 @@ export default function AdminAPIAccessPage() {
           currentPage={logPage}
           totalPages={Math.max(1, Math.ceil(logTotal / logPageSize))}
           onPageChange={(page) => void loadLogs(page)}
+          sortKey={logSort.key}
+          sortDirection={logSort.direction}
+          onSort={(key, direction) => { setLogSort({ key, direction }); setLogPage(1); }}
+          serverSideSorting
           emptyState={<EmptyState title="暂无 API 调用" description="客户通过 OpenAI 图片接口发起请求后会生成调用日志。" icon={Activity} />}
           renderRow={(log) => { const status = logStatus(log.status); return (
             <tr key={log.id} className="hover:bg-[#FAFBFA]">

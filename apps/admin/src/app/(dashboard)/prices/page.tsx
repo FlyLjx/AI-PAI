@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Calculator, CircleDollarSign, EyeOff, Loader2, Pencil, Plus, RefreshCw, Trash2, UserRound, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
-import { DataTable } from '@/components/common/DataTable';
+import { DataTable, SortableHeader, sortItems, type SortState, type TableHeader } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -42,6 +42,14 @@ type Model = {
   createdAt?: string;
   updatedAt?: string;
 };
+
+const overrideHeaders: TableHeader<UserModelPriceOverride>[] = [
+  { key: 'user', label: '用户', sortValue: (item) => item.userEmail || item.userId },
+  { key: 'model', label: '模型', sortValue: (item) => item.modelDisplayName || item.modelName },
+  { key: 'price', label: '专属单价', sortValue: (item) => item.unitPrice },
+  { key: 'updated', label: '更新时间', sortValue: (item) => Date.parse(item.updatedAt || item.createdAt) || 0 },
+  { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
+];
 
 type ModelDraft = Omit<Model, 'id' | 'providerName' | 'providerStatus' | 'createdAt' | 'updatedAt'>;
 
@@ -122,6 +130,7 @@ export default function AdminPricesPage() {
   const [overrideModelId, setOverrideModelId] = useState('');
   const [overrideUnitPrice, setOverrideUnitPrice] = useState('');
   const [overrideDeleteCandidate, setOverrideDeleteCandidate] = useState<UserModelPriceOverride | null>(null);
+  const [overrideSort, setOverrideSort] = useState<SortState>({ key: 'updated', direction: 'desc' });
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -177,6 +186,16 @@ export default function AdminPricesPage() {
   );
   const selectedOverrideUserId = overrideUsers.some((user) => user.id === overrideUserId) ? overrideUserId : overrideUsers[0]?.id || '';
   const selectedOverrideModelId = overrideModels.some((model) => model.id === overrideModelId) ? overrideModelId : overrideModels[0]?.id || '';
+  const sortedOverrides = useMemo(() => {
+    const header = overrideHeaders.find((item) => item.key === overrideSort.key) || overrideHeaders[3];
+    return sortItems(priceOverrides, header, overrideSort.direction);
+  }, [overrideSort, priceOverrides]);
+  const handleOverrideSort = (key: string) => {
+    setOverrideSort((current) => ({
+      key,
+      direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc',
+    }));
+  };
 
   const loadProviderModels = useCallback(async (providerId: string) => {
     const requestId = ++providerModelsRequest.current;
@@ -213,11 +232,6 @@ export default function AdminPricesPage() {
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const currentPage = Math.min(page, totalPages);
-  const visible = useMemo(
-    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
-    [currentPage, filtered],
-  );
-
   const summary = useMemo(() => ({
     total: filtered.length,
     active: filtered.filter((model) => model.status === 'active').length,
@@ -443,9 +457,9 @@ export default function AdminPricesPage() {
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-[680px] w-full text-left text-xs">
-              <thead className="border-b border-[#EDF0EE] bg-white text-[10px] font-semibold text-zinc-400"><tr><th className="px-4 py-2.5">用户</th><th className="px-4 py-2.5">模型</th><th className="px-4 py-2.5">专属单价</th><th className="px-4 py-2.5">更新时间</th><th className="px-4 py-2.5 text-right">操作</th></tr></thead>
+              <thead className="border-b border-[#EDF0EE] bg-white text-[10px] font-semibold text-zinc-400"><tr>{overrideHeaders.map((header) => <SortableHeader key={header.key} header={header} sortState={overrideSort} onSort={handleOverrideSort} />)}</tr></thead>
               <tbody className="divide-y divide-[#EDF0EE]">
-                {priceOverrides.map((item) => <tr key={item.id} className="hover:bg-[#FAFBFA]"><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.userEmail || item.userId}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.userId}</small></td><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.modelDisplayName || item.modelName}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.modelName}</small></td><td className="px-4 py-3 font-mono font-semibold text-[#047857]">{money(item.unitPrice)}<small className="ml-1 font-sans font-normal text-zinc-400">/ 张</small></td><td className="px-4 py-3 text-zinc-500">{formatDate(item.updatedAt || item.createdAt)}</td><td className="px-4 py-3 text-right"><button type="button" onClick={() => setOverrideDeleteCandidate(item)} disabled={overrideDeletingId === item.id} title="移除专属扣费" className="rounded p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button></td></tr>)}
+                {sortedOverrides.map((item) => <tr key={item.id} className="hover:bg-[#FAFBFA]"><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.userEmail || item.userId}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.userId}</small></td><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.modelDisplayName || item.modelName}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.modelName}</small></td><td className="px-4 py-3 font-mono font-semibold text-[#047857]">{money(item.unitPrice)}<small className="ml-1 font-sans font-normal text-zinc-400">/ 张</small></td><td className="px-4 py-3 text-zinc-500">{formatDate(item.updatedAt || item.createdAt)}</td><td className="px-4 py-3 text-right"><button type="button" onClick={() => setOverrideDeleteCandidate(item)} disabled={overrideDeletingId === item.id} title="移除专属扣费" className="rounded p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button></td></tr>)}
               </tbody>
             </table>
           </div>
@@ -459,16 +473,18 @@ export default function AdminPricesPage() {
       ) : (
         <DataTable
           headers={[
-            { key: 'model', label: '模型映射' },
-            { key: 'provider', label: '上游' },
-            { key: '1k', label: '1K 成本 / 售价' },
-            { key: '2k', label: '2K 成本 / 售价' },
-            { key: '4k', label: '4K 成本 / 售价' },
-            { key: 'tiers', label: '清晰度' },
-            { key: 'status', label: '状态' },
-            { key: 'actions', label: '操作', className: 'text-right' },
+            { key: 'model', label: '模型映射', sortValue: (item) => item.displayName || item.modelName },
+            { key: 'provider', label: '上游', sortValue: (item) => item.providerName || item.providerId },
+            { key: '1k', label: '1K 成本 / 售价', sortValue: (item) => Number(item.price1k || 0) },
+            { key: '2k', label: '2K 成本 / 售价', sortValue: (item) => Number(item.price2k || 0) },
+            { key: '4k', label: '4K 成本 / 售价', sortValue: (item) => Number(item.price4k || 0) },
+            { key: 'tiers', label: '清晰度', sortValue: (item) => (item.enabledSizeTiers || []).join(',') },
+            { key: 'status', label: '状态', sortValue: (item) => item.status === 'active' ? 1 : 0 },
+            { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={visible}
+          data={filtered}
+          pageSize={PAGE_SIZE}
+          clientSidePagination
           searchPlaceholder="搜索模型、展示名或上游"
           searchValue={search}
           onSearchChange={(value) => { setSearch(value); setPage(1); }}

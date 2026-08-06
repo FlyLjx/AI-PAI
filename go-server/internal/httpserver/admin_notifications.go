@@ -20,6 +20,7 @@ const (
 )
 
 var errNoAdminMailRecipients = errors.New("没有可接收通知的启用中管理员邮箱")
+var errNoAdminNotificationChannels = errors.New("没有配置可用的管理员通知渠道")
 
 func (r *Router) notifyRechargeSuccess(order *operations.RechargeOrder) {
 	if r == nil || r.notifications == nil || order == nil {
@@ -55,8 +56,9 @@ func (m *serviceNotificationManager) sendRechargeSuccessNotification(ctx context
 		return errServiceNotificationSuppressed
 	}
 	smtpConfig := smtpSettingsFromMap(values)
-	if err := smtpConfig.validate(); err != nil {
-		return err
+	barkConfig := barkSettingsFromMap(values)
+	if !smtpConfig.Enabled && !barkConfig.eventEnabled("recharge_success") {
+		return errNoAdminNotificationChannels
 	}
 
 	userEmail := ""
@@ -103,6 +105,7 @@ func (m *serviceNotificationManager) sendRechargeSuccessNotification(ctx context
 	return m.sendAdminNotification(
 		ctx,
 		smtpConfig,
+		barkConfig,
 		anyString(values["adminNotificationEmails"]),
 		"recharge_success",
 		brand+" 充值成功通知",
@@ -192,6 +195,7 @@ func (m *serviceNotificationManager) sendUpstreamHealthNotification(ctx context.
 	}
 
 	smtpConfig := smtpSettingsFromMap(values)
+	barkConfig := barkSettingsFromMap(values)
 	category := "upstream_alert"
 	subject := emailBrandName(anyString(values["siteName"])) + " 上游接口异常"
 	actionText := "查看上游状态"
@@ -203,6 +207,7 @@ func (m *serviceNotificationManager) sendUpstreamHealthNotification(ctx context.
 	sendErr := m.sendAdminNotification(
 		ctx,
 		smtpConfig,
+		barkConfig,
 		anyString(values["adminNotificationEmails"]),
 		category,
 		subject,
@@ -317,6 +322,7 @@ func (m *serviceNotificationManager) sendOpenAIStatusNotification(ctx context.Co
 	}
 
 	smtpConfig := smtpSettingsFromMap(values)
+	barkConfig := barkSettingsFromMap(values)
 	category := "openai_image_alert"
 	subject := emailBrandName(anyString(values["siteName"])) + " OpenAI Image 状态异常"
 	actionText := "查看状态"
@@ -328,6 +334,7 @@ func (m *serviceNotificationManager) sendOpenAIStatusNotification(ctx context.Co
 	sendErr := m.sendAdminNotification(
 		ctx,
 		smtpConfig,
+		barkConfig,
 		anyString(values["adminNotificationEmails"]),
 		category,
 		subject,
@@ -391,31 +398,68 @@ func firstNonEmpty(value string, fallback string) string {
 func (m *serviceNotificationManager) sendAdminNotification(
 	ctx context.Context,
 	smtpConfig smtpSettings,
+	barkConfig barkSettings,
 	configuredRecipients string,
 	category string,
 	subject string,
 	body string,
 	actions ...mailAction,
 ) error {
-	if err := smtpConfig.validate(); err != nil {
-		return err
-	}
-	recipients, err := m.adminMailRecipients(ctx, configuredRecipients)
-	if err != nil {
-		return err
-	}
-	if len(recipients) == 0 {
-		return errNoAdminMailRecipients
-	}
-	failed := 0
-	for _, email := range recipients {
-		if err := m.deliverMail(ctx, category, smtpConfig, email, subject, body, actions...); err != nil {
-			failed++
-			m.logWarn("admin email delivery failed", "category", category, "recipient", email, "error", err)
+	var deliveryErrors []error
+	delivered := 0
+	if barkConfig.eventEnabled(category) {
+		if err := barkConfig.validateConfigured(); err != nil {
+			deliveryErrors = append(deliveryErrors, err)
+			m.logWarn("admin Bark delivery failed", "category", category, "error", err)
+		} else {
+			actionURL := ""
+			if len(actions) > 0 {
+				actionURL = actions[0].URL
+			}
+			sender := m.sendBark
+			if sender == nil {
+				sender = sendBarkNotification
+			}
+			if err := sender(ctx, barkConfig, subject, body, actionURL); err != nil {
+				deliveryErrors = append(deliveryErrors, err)
+				m.logWarn("admin Bark delivery failed", "category", category, "error", err)
+			} else {
+				delivered++
+				m.logInfo("admin Bark notification sent", "category", category)
+			}
 		}
 	}
-	if failed > 0 {
-		return fmt.Errorf("管理员邮件发送失败 %d/%d", failed, len(recipients))
+
+	if smtpConfig.Enabled {
+		if err := smtpConfig.validate(); err != nil {
+			deliveryErrors = append(deliveryErrors, err)
+		} else {
+			recipients, err := m.adminMailRecipients(ctx, configuredRecipients)
+			if err != nil {
+				deliveryErrors = append(deliveryErrors, err)
+			} else if len(recipients) == 0 {
+				deliveryErrors = append(deliveryErrors, errNoAdminMailRecipients)
+			} else {
+				failed := 0
+				for _, email := range recipients {
+					if err := m.deliverMail(ctx, category, smtpConfig, email, subject, body, actions...); err != nil {
+						failed++
+						m.logWarn("admin email delivery failed", "category", category, "recipient", email, "error", err)
+					} else {
+						delivered++
+					}
+				}
+				if failed > 0 {
+					deliveryErrors = append(deliveryErrors, fmt.Errorf("管理员邮件发送失败 %d/%d", failed, len(recipients)))
+				}
+			}
+		}
+	}
+	if delivered == 0 && len(deliveryErrors) == 0 {
+		return errNoAdminNotificationChannels
+	}
+	if len(deliveryErrors) > 0 {
+		return errors.Join(deliveryErrors...)
 	}
 	return nil
 }
