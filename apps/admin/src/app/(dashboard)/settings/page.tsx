@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Bell, CreditCard, Gauge, Gift, Headset, Loader2, Mail, RefreshCw, Save, Send, Server, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
+import { Bell, CreditCard, Download, Gauge, Gift, Headset, Loader2, Mail, RefreshCw, Save, Send, Server, ShieldAlert, ShieldCheck, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
@@ -254,6 +254,7 @@ export default function AdminSettingsPage() {
   const [barkDeviceKeyConfigured, setBarkDeviceKeyConfigured] = useState(false);
   const [alipayPrivateKeyConfigured, setAlipayPrivateKeyConfigured] = useState(false);
   const [barkTesting, setBarkTesting] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [plans, setPlans] = useState<Plan[]>([]);
 
   const load = useCallback(async () => {
@@ -359,9 +360,33 @@ export default function AdminSettingsPage() {
     }
   };
 
+  const exportData = async () => {
+    setExporting(true);
+    try {
+      const response = await portalApi.dataExport();
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const contentDisposition = response.headers.get('Content-Disposition') || '';
+      const filename = contentDisposition.match(/filename="([^"]+)"/)?.[1] || `ai-pai-business-data-${new Date().toISOString().slice(0, 10)}.json`;
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = filename;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(objectUrl);
+      toast.success('关键业务数据已导出');
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '数据导出失败');
+    } finally {
+      setExporting(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <PageHeader title="系统设置" description="配置 API 中转站的注册、请求处理、支付和通知参数。">
+        <button type="button" onClick={() => void exportData()} disabled={exporting} title="导出账号、余额、套餐、订阅、模型、价格和系统配置；包含敏感密钥，请妥善保管" className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#BDE8CC] bg-white px-3 text-xs font-semibold text-[#047857] hover:border-[#12B76A] disabled:cursor-not-allowed disabled:opacity-50">{exporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}一键导出数据</button>
         <button type="button" onClick={() => void load()} disabled={loading} title="重新加载" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
       </PageHeader>
 

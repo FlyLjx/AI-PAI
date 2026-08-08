@@ -53,3 +53,34 @@ func TestNormalizePageClampsBounds(t *testing.T) {
 		t.Fatalf("normalized page = (%d, %d, %d), want (3, 20, 40)", page, pageSize, offset)
 	}
 }
+
+func TestIdentitySearchKeywordClassification(t *testing.T) {
+	for _, keyword := range []string{
+		"customer@example.com",
+		"sk-aipai-abc123",
+		"550e8400-e29b-41d4-a716-446655440000",
+	} {
+		if !isIdentitySearchKeyword(keyword) {
+			t.Fatalf("keyword %q should use identity search", keyword)
+		}
+	}
+	for _, keyword := range []string{"dall-e", "prompt text", "needle"} {
+		if isIdentitySearchKeyword(keyword) {
+			t.Fatalf("keyword %q should use general search", keyword)
+		}
+	}
+}
+
+func TestBuildAdminKeyWhereUsesResolvedIdentityIDs(t *testing.T) {
+	where, args := buildAdminKeyWhere(ListKeysInput{
+		IdentityOnly: true,
+		UserIDs:      []string{"user-1", "user-1"},
+		APIKeyIDs:    []string{"key-1"},
+	})
+	if strings.Contains(where, "LIKE") || !strings.Contains(where, "api_access_keys.user_id IN (?)") || !strings.Contains(where, "api_access_keys.id IN (?)") {
+		t.Fatalf("identity search should use ID filters: %s", where)
+	}
+	if len(args) != 2 || args[0] != "user-1" || args[1] != "key-1" {
+		t.Fatalf("identity search args = %#v, want [user-1 key-1]", args)
+	}
+}

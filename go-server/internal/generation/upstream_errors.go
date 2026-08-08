@@ -3,6 +3,8 @@ package generation
 import (
 	"net/http"
 	"strings"
+
+	"aipi-go/internal/apierrors"
 )
 
 func isHTMLResponse(resp *http.Response, body []byte) bool {
@@ -12,15 +14,11 @@ func isHTMLResponse(resp *http.Response, body []byte) bool {
 }
 
 func cleanUpstreamError(payload any, text string) string {
-	if payload != nil {
-		if value := extractErrorMessage(payload); value != "" {
-			return cleanPolicySuffix(value)
-		}
-	}
-	if strings.TrimSpace(text) == "" {
-		return ""
-	}
-	return cleanPolicySuffix(trimLong(text, 500))
+	return apierrors.Parse(0, payload, []byte(text)).Message
+}
+
+func parseUpstreamError(status int, payload any, body []byte) apierrors.Details {
+	return apierrors.Parse(status, payload, body)
 }
 
 func extractErrorMessage(value any) string {

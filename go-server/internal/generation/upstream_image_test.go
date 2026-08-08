@@ -368,6 +368,66 @@ func TestCallImageJSONRetriesHTMLGatewayTimeout(t *testing.T) {
 	}
 }
 
+func TestCallImageJSONRetriesRetryable429(t *testing.T) {
+	var requestCount int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		count := atomic.AddInt64(&requestCount, 1)
+		if count == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]any{
+					"code":      "upstream_rate_limited",
+					"message":   "上游请求频率受限",
+					"retryable": true,
+				},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"url": "https://cdn.example.test/retry-429.png"}},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{logger: slog.Default()}
+	result, err := service.callImageJSON(context.Background(), testImageRequest(server.URL), 1)
+	if err != nil {
+		t.Fatalf("callImageJSON returned error after retryable 429: %v", err)
+	}
+	if requestCount != 2 || len(ExtractImages(result)) != 1 {
+		t.Fatalf("expected one retry and one image, requests=%d result=%#v", requestCount, result)
+	}
+}
+
+func TestCallImageJSONDoesNotRetryNonRetryable429(t *testing.T) {
+	var requestCount int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		atomic.AddInt64(&requestCount, 1)
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]any{
+				"code":      "client_quota_exhausted",
+				"message":   "当前 API Key 的调用额度已用完",
+				"retryable": false,
+			},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{logger: slog.Default()}
+	_, err := service.callImageJSON(context.Background(), testImageRequest(server.URL), 1)
+	if err == nil {
+		t.Fatal("expected non-retryable 429 error")
+	}
+	if requestCount != 1 {
+		t.Fatalf("expected no retry for client_quota_exhausted, got %d requests", requestCount)
+	}
+	details, ok := UpstreamErrorDetails(err)
+	if !ok || details.Code != "client_quota_exhausted" || details.Retryable {
+		t.Fatalf("unexpected structured error: %+v, ok=%v", details, ok)
+	}
+}
+
 func TestCallImageJSONRejectsHTMLResponse(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "text/html")

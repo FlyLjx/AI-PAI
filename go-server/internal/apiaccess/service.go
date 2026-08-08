@@ -103,7 +103,12 @@ func (s Service) ListAllKeys(ctx context.Context) ([]PublicAccessKey, error) {
 }
 
 func (s Service) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]PublicAccessKey, int, error) {
-	_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
+	// Searching only needs the persisted key/log data. Avoid synchronizing a
+	// batch of terminal tasks on every keystroke because that can hold the
+	// request open while the admin search is already waiting on the database.
+	if !input.IdentityOnly {
+		_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
+	}
 	keys, total, err := s.keys.ListAdminKeys(ctx, input)
 	if err != nil {
 		return nil, 0, err
@@ -247,7 +252,11 @@ func (s Service) ListLogs(ctx context.Context, input ListLogsInput) ([]PublicUsa
 }
 
 func (s Service) ListAdminLogs(ctx context.Context, input ListLogsInput) ([]AdminPublicUsageLog, int, error) {
-	_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
+	// Search requests should not be coupled to terminal-task reconciliation;
+	// the task lifecycle normally persists the final log state already.
+	if !input.IdentityOnly {
+		_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
+	}
 	items, total, err := s.keys.ListLogs(ctx, input)
 	if err != nil {
 		return nil, 0, err

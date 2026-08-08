@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"aipi-go/internal/apierrors"
 )
 
 const (
@@ -83,30 +85,33 @@ type AccessKey struct {
 }
 
 type UsageLog struct {
-	ID               string
-	UserID           string
-	UserEmail        *string
-	APIKeyID         string
-	KeyName          *string
-	KeyPrefix        *string
-	TaskID           *string
-	Endpoint         string
-	Model            string
-	Prompt           string
-	Size             string
-	Quality          string
-	Quantity         int
-	ImageCount       int
-	ResponseFormat   string
-	RequestParams    map[string]any
-	Status           string
-	ErrorMessage     *string
-	ChargedCredits   float64
-	ModelCostCredits float64
-	DurationSeconds  float64
-	TaskUsage        map[string]any
-	CreatedAt        time.Time
-	FinishedAt       *time.Time
+	ID                 string
+	UserID             string
+	UserEmail          *string
+	APIKeyID           string
+	KeyName            *string
+	KeyPrefix          *string
+	TaskID             *string
+	Endpoint           string
+	Model              string
+	Prompt             string
+	Size               string
+	Quality            string
+	Quantity           int
+	ImageCount         int
+	ResponseFormat     string
+	RequestParams      map[string]any
+	Status             string
+	ErrorMessage       *string
+	ResponseStatusCode int
+	ErrorCode          *string
+	ErrorDetails       *apierrors.Details
+	ChargedCredits     float64
+	ModelCostCredits   float64
+	DurationSeconds    float64
+	TaskUsage          map[string]any
+	CreatedAt          time.Time
+	FinishedAt         *time.Time
 }
 
 type PublicAccessKey struct {
@@ -135,29 +140,31 @@ type PublicAccessKey struct {
 }
 
 type PublicUsageLog struct {
-	ID              string         `json:"id"`
-	UserID          string         `json:"userId"`
-	UserEmail       *string        `json:"userEmail,omitempty"`
-	APIKeyID        string         `json:"apiKeyId"`
-	KeyName         *string        `json:"keyName,omitempty"`
-	KeyPrefix       *string        `json:"keyPrefix,omitempty"`
-	TaskID          *string        `json:"taskId,omitempty"`
-	Endpoint        string         `json:"endpoint"`
-	Model           string         `json:"model"`
-	Prompt          string         `json:"prompt"`
-	Size            string         `json:"size"`
-	Quality         string         `json:"quality"`
-	Quantity        int            `json:"quantity"`
-	ImageCount      int            `json:"imageCount"`
-	ResponseFormat  string         `json:"responseFormat"`
-	RequestParams   map[string]any `json:"requestParameters,omitempty"`
-	ResponseParams  map[string]any `json:"responseParameters,omitempty"`
-	Status          string         `json:"status"`
-	ErrorMessage    *string        `json:"errorMessage,omitempty"`
-	ChargedCredits  float64        `json:"chargedCredits"`
-	DurationSeconds float64        `json:"durationSeconds"`
-	CreatedAt       string         `json:"createdAt"`
-	FinishedAt      *string        `json:"finishedAt"`
+	ID                 string         `json:"id"`
+	UserID             string         `json:"userId"`
+	UserEmail          *string        `json:"userEmail,omitempty"`
+	APIKeyID           string         `json:"apiKeyId"`
+	KeyName            *string        `json:"keyName,omitempty"`
+	KeyPrefix          *string        `json:"keyPrefix,omitempty"`
+	TaskID             *string        `json:"taskId,omitempty"`
+	Endpoint           string         `json:"endpoint"`
+	Model              string         `json:"model"`
+	Prompt             string         `json:"prompt"`
+	Size               string         `json:"size"`
+	Quality            string         `json:"quality"`
+	Quantity           int            `json:"quantity"`
+	ImageCount         int            `json:"imageCount"`
+	ResponseFormat     string         `json:"responseFormat"`
+	RequestParams      map[string]any `json:"requestParameters,omitempty"`
+	ResponseParams     map[string]any `json:"responseParameters,omitempty"`
+	Status             string         `json:"status"`
+	ErrorMessage       *string        `json:"errorMessage,omitempty"`
+	ResponseStatusCode int            `json:"responseStatusCode,omitempty"`
+	ErrorCode          *string        `json:"errorCode,omitempty"`
+	ChargedCredits     float64        `json:"chargedCredits"`
+	DurationSeconds    float64        `json:"durationSeconds"`
+	CreatedAt          string         `json:"createdAt"`
+	FinishedAt         *string        `json:"finishedAt"`
 }
 
 type AdminPublicUsageLog struct {
@@ -166,27 +173,34 @@ type AdminPublicUsageLog struct {
 }
 
 type ListLogsInput struct {
-	UserID    string
-	APIKeyID  string
-	Status    string
-	Keyword   string
-	Page      int
-	PageSize  int
-	SortBy    string
-	SortOrder string
+	UserID       string
+	APIKeyID     string
+	Status       string
+	Keyword      string
+	Page         int
+	PageSize     int
+	SortBy       string
+	SortOrder    string
+	IdentityOnly bool
+	UserIDs      []string
+	APIKeyIDs    []string
 }
 
 type ListKeysInput struct {
-	Status    string
-	Keyword   string
-	Page      int
-	PageSize  int
-	SortBy    string
-	SortOrder string
+	Status       string
+	Keyword      string
+	Page         int
+	PageSize     int
+	SortBy       string
+	SortOrder    string
+	IdentityOnly bool
+	UserIDs      []string
+	APIKeyIDs    []string
 }
 
 type UsageStats struct {
 	Total            int     `json:"total"`
+	Counted          int     `json:"counted"`
 	Success          int     `json:"success"`
 	Failed           int     `json:"failed"`
 	ImageCount       int     `json:"imageCount"`
@@ -345,30 +359,38 @@ func DynamicConcurrencyLimitWithConfig(baseConcurrency int, requestCount int, co
 }
 
 func ToPublicLog(log UsageLog) PublicUsageLog {
+	visibleErrorMessage := log.ErrorMessage
+	visibleErrorCode := log.ErrorCode
+	if !apierrors.IsCountedFailureStatus(log.ResponseStatusCode) {
+		visibleErrorMessage = nil
+		visibleErrorCode = nil
+	}
 	return PublicUsageLog{
-		ID:              log.ID,
-		UserID:          log.UserID,
-		UserEmail:       log.UserEmail,
-		APIKeyID:        log.APIKeyID,
-		KeyName:         log.KeyName,
-		KeyPrefix:       log.KeyPrefix,
-		TaskID:          log.TaskID,
-		Endpoint:        log.Endpoint,
-		Model:           log.Model,
-		Prompt:          log.Prompt,
-		Size:            log.Size,
-		Quality:         log.Quality,
-		Quantity:        log.Quantity,
-		ImageCount:      log.ImageCount,
-		ResponseFormat:  log.ResponseFormat,
-		RequestParams:   log.RequestParams,
-		ResponseParams:  usageLogResponseParams(log),
-		Status:          log.Status,
-		ErrorMessage:    log.ErrorMessage,
-		ChargedCredits:  log.ChargedCredits,
-		DurationSeconds: log.DurationSeconds,
-		CreatedAt:       log.CreatedAt.Format(time.RFC3339),
-		FinishedAt:      formatTime(log.FinishedAt),
+		ID:                 log.ID,
+		UserID:             log.UserID,
+		UserEmail:          log.UserEmail,
+		APIKeyID:           log.APIKeyID,
+		KeyName:            log.KeyName,
+		KeyPrefix:          log.KeyPrefix,
+		TaskID:             log.TaskID,
+		Endpoint:           log.Endpoint,
+		Model:              log.Model,
+		Prompt:             log.Prompt,
+		Size:               log.Size,
+		Quality:            log.Quality,
+		Quantity:           log.Quantity,
+		ImageCount:         log.ImageCount,
+		ResponseFormat:     log.ResponseFormat,
+		RequestParams:      log.RequestParams,
+		ResponseParams:     usageLogResponseParams(log),
+		Status:             log.Status,
+		ErrorMessage:       visibleErrorMessage,
+		ResponseStatusCode: log.ResponseStatusCode,
+		ErrorCode:          visibleErrorCode,
+		ChargedCredits:     log.ChargedCredits,
+		DurationSeconds:    log.DurationSeconds,
+		CreatedAt:          log.CreatedAt.Format(time.RFC3339),
+		FinishedAt:         formatTime(log.FinishedAt),
 	}
 }
 
@@ -444,6 +466,13 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 		}
 		return response
 	case "failed", "canceled", "cancelled":
+		if !apierrors.IsCountedFailureStatus(log.ResponseStatusCode) {
+			response := map[string]any{"status": status}
+			if log.ResponseStatusCode != 0 {
+				response["response_status_code"] = log.ResponseStatusCode
+			}
+			return response
+		}
 		message := "图片生成失败"
 		if status == "canceled" || status == "cancelled" {
 			message = "任务已取消"
@@ -451,21 +480,39 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 		if log.ErrorMessage != nil && strings.TrimSpace(*log.ErrorMessage) != "" {
 			message = strings.TrimSpace(*log.ErrorMessage)
 		}
-		errorType := "api_error"
-		if strings.Contains(message, "用户余额不足") {
-			errorType = "insufficient_quota"
+		details := apierrors.Details{StatusCode: log.ResponseStatusCode, Message: message}
+		if log.ErrorDetails != nil {
+			details = *log.ErrorDetails
+			details.Message = defaultErrorMessage(details.Message, message)
 		}
+		if log.ErrorCode != nil && strings.TrimSpace(*log.ErrorCode) != "" {
+			details.Code = strings.TrimSpace(*log.ErrorCode)
+		}
+		apierrors.Normalize(&details)
 		return map[string]any{
 			"error": map[string]any{
-				"message": message,
-				"type":    errorType,
-				"param":   nil,
-				"code":    nil,
+				"message":    details.Message,
+				"title":      details.Title,
+				"type":       details.Type,
+				"category":   details.Category,
+				"retryable":  details.Retryable,
+				"action":     details.Action,
+				"hint":       details.Hint,
+				"request_id": details.RequestID,
+				"param":      nil,
+				"code":       details.Code,
 			},
 		}
 	default:
 		return nil
 	}
+}
+
+func defaultErrorMessage(value string, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return strings.TrimSpace(value)
+	}
+	return strings.TrimSpace(fallback)
 }
 
 func usageLogWantsBase64ImageResponse(format string) bool {

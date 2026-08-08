@@ -161,6 +161,15 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "api_access_logs", "model_cost_credits", "NUMERIC(12,4) NOT NULL DEFAULT 0", "charged_credits"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "api_access_logs", "response_status_code", "INTEGER NOT NULL DEFAULT 0", "error_message"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "api_access_logs", "error_code", "VARCHAR(120) NULL", "response_status_code"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "api_access_logs", "error_details", JSONTextType()+" NULL", "error_code"); err != nil {
+		return err
+	}
 	if err := backfillAPIAccessLogBilling(ctx, db); err != nil {
 		return err
 	}
@@ -209,6 +218,7 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_api_access_logs_task_id", `CREATE INDEX idx_api_access_logs_task_id ON api_access_logs (task_id)`},
 		{"idx_api_access_logs_created_status", `CREATE INDEX idx_api_access_logs_created_status ON api_access_logs (created_at, status)`},
 		{"idx_api_access_logs_key_status", `CREATE INDEX idx_api_access_logs_key_status ON api_access_logs (api_key_id, status)`},
+		{"idx_api_access_logs_response_status_created", `CREATE INDEX idx_api_access_logs_response_status_created ON api_access_logs (response_status_code, created_at)`},
 		{"idx_subscription_lottery_prizes_status_sort", `CREATE INDEX idx_subscription_lottery_prizes_status_sort ON subscription_lottery_prizes (status, sort_order)`},
 		{"idx_subscription_lottery_records_user_created", `CREATE INDEX idx_subscription_lottery_records_user_created ON subscription_lottery_records (user_id, created_at)`},
 		{"idx_subscription_lottery_records_prize_date", `CREATE INDEX idx_subscription_lottery_records_prize_date ON subscription_lottery_records (prize_id, draw_date)`},
@@ -886,9 +896,12 @@ func schemaBootstrapStatements() []string {
 				request_params JSONB NULL,
 				charged_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
 				model_cost_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
-				status VARCHAR(16) NOT NULL DEFAULT 'queued',
-				error_message TEXT NULL,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			status VARCHAR(16) NOT NULL DEFAULT 'queued',
+			error_message TEXT NULL,
+			response_status_code INTEGER NOT NULL DEFAULT 0,
+			error_code VARCHAR(120) NULL,
+			error_details JSONB NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				finished_at TIMESTAMP NULL
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_ai_models_status_capability ON ai_models (status, capability)`,
@@ -1036,6 +1049,9 @@ func schemaBootstrapStatements() []string {
 			model_cost_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
 			status VARCHAR(16) NOT NULL DEFAULT 'queued',
 			error_message TEXT NULL,
+			response_status_code INTEGER NOT NULL DEFAULT 0,
+			error_code VARCHAR(120) NULL,
+			error_details JSON NULL,
 			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 			finished_at DATETIME NULL,
 			INDEX idx_api_access_logs_user_created (user_id, created_at),

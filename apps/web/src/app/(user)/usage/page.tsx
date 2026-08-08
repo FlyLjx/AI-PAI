@@ -76,12 +76,18 @@ function responseParameters(log: UsageLog): Record<string, unknown> {
   if (log.responseParameters && Object.keys(log.responseParameters).length > 0) return log.responseParameters;
   const normalizedStatus = log.status.toLowerCase();
   if (['failed', 'canceled', 'cancelled'].includes(normalizedStatus)) {
+    if (Number(log.responseStatusCode || 0) !== 429 && Number(log.responseStatusCode || 0) !== 502) {
+      return {
+        status: normalizedStatus,
+        response_status_code: Number(log.responseStatusCode || 0) || undefined,
+      };
+    }
     return {
       error: {
         message: log.errorMessage || (normalizedStatus === 'failed' ? '图片生成失败' : '任务已取消'),
         type: log.errorMessage?.includes('用户余额不足') ? 'insufficient_quota' : 'api_error',
         param: null,
-        code: null,
+        code: log.errorCode || null,
       },
     };
   }
@@ -120,7 +126,7 @@ const PAGE_SIZE_OPTIONS: readonly AppSelectOption[] = [
 
 export default function UsagePage() {
   const [logs, setLogs] = useState<UsageLog[]>([]);
-  const [summary, setSummary] = useState<UsageSummary>({ total: 0, success: 0, failed: 0, imageCount: 0 });
+  const [summary, setSummary] = useState<UsageSummary>({ total: 0, counted: 0, success: 0, failed: 0, imageCount: 0 });
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(20);
@@ -149,6 +155,7 @@ export default function UsagePage() {
       setTotal(responseTotal);
       setSummary(response.summary || {
         total: responseTotal,
+        counted: items.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase()) || [429, 502].includes(Number(log.responseStatusCode || 0))).length,
         success: items.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase())).length,
         failed: items.filter((log) => log.status.toLowerCase() === 'failed').length,
         imageCount: items.reduce((sum, log) => sum + Number(log.imageCount || 0), 0),
@@ -179,8 +186,9 @@ export default function UsagePage() {
     };
   }, [detailLog]);
 
-  const successRate = useMemo(() => summary.total > 0 ? `${((summary.success / summary.total) * 100).toFixed(1)}%` : '0.0%', [summary.success, summary.total]);
-  const pending = Math.max(0, summary.total - summary.success - summary.failed);
+  const countedRequests = Number(summary.counted ?? summary.success + summary.failed);
+  const successRate = useMemo(() => countedRequests > 0 ? `${((summary.success / countedRequests) * 100).toFixed(1)}%` : '0.0%', [countedRequests, summary.success]);
+  const pending = Math.max(0, summary.total - countedRequests);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -238,7 +246,7 @@ export default function UsagePage() {
       <section className="metric-grid">
         <StatBlock title="请求总数" value={summary.total.toLocaleString()} subtext="当前筛选范围" icon={Activity} color="green" />
         <StatBlock title="成功请求" value={summary.success.toLocaleString()} subtext={`${summary.failed.toLocaleString()} 次失败`} icon={CheckCircle2} color="cyan" />
-        <StatBlock title="成功率" value={successRate} subtext={pending > 0 ? `${pending.toLocaleString()} 个尚未完成` : '成功请求 / 全部请求'} icon={Gauge} color="amber" />
+        <StatBlock title="成功率" value={successRate} subtext={pending > 0 ? `${pending.toLocaleString()} 个未纳入统计` : '成功请求 / 纳入统计'} icon={Gauge} color="amber" />
         <StatBlock title="输出图片" value={summary.imageCount.toLocaleString()} subtext={`第 ${page} / ${totalPages} 页`} icon={ImageIcon} color="neutral" />
       </section>
 

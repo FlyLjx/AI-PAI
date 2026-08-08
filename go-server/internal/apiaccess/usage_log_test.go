@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"aipi-go/internal/apierrors"
 	"aipi-go/internal/database"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -83,9 +84,10 @@ func TestToPublicLogSummarizesBase64ImageResponse(t *testing.T) {
 func TestToPublicLogIncludesFailureResponseParameters(t *testing.T) {
 	message := "上游接口返回错误"
 	publicLog := ToPublicLog(UsageLog{
-		Status:       "failed",
-		ErrorMessage: &message,
-		CreatedAt:    time.Now(),
+		Status:             "failed",
+		ErrorMessage:       &message,
+		ResponseStatusCode: 502,
+		CreatedAt:          time.Now(),
 	})
 
 	errorPayload, ok := publicLog.ResponseParams["error"].(map[string]any)
@@ -95,8 +97,47 @@ func TestToPublicLogIncludesFailureResponseParameters(t *testing.T) {
 	if errorPayload["message"] != message || errorPayload["type"] != "api_error" {
 		t.Fatalf("unexpected error payload: %#v", errorPayload)
 	}
-	if errorPayload["param"] != nil || errorPayload["code"] != nil {
-		t.Fatalf("expected nil param and code: %#v", errorPayload)
+	if errorPayload["param"] != nil || errorPayload["code"] != "upstream_service_error" {
+		t.Fatalf("expected normalized code: %#v", errorPayload)
+	}
+}
+
+func TestToPublicLogHidesNonCountedFailureMessage(t *testing.T) {
+	message := "参考图缺失或格式不可识别"
+	publicLog := ToPublicLog(UsageLog{
+		Status:             "failed",
+		ErrorMessage:       &message,
+		ResponseStatusCode: 400,
+		CreatedAt:          time.Now(),
+	})
+	if publicLog.ErrorMessage != nil || publicLog.ResponseParams["error"] != nil {
+		t.Fatalf("non-429/502 error should stay hidden: %+v", publicLog)
+	}
+	if publicLog.ResponseParams["response_status_code"] != 400 {
+		t.Fatalf("response status should remain visible: %#v", publicLog.ResponseParams)
+	}
+}
+
+func TestUsageLogErrorFieldsOnlyPersists429And502Details(t *testing.T) {
+	message := "参考图缺失"
+	status, storedMessage, storedCode, storedDetails := usageLogErrorFields(UsageLog{
+		Status:             "failed",
+		ErrorMessage:       &message,
+		ResponseStatusCode: 400,
+	})
+	if status != 400 || storedMessage != nil || storedCode != nil || storedDetails != nil {
+		t.Fatalf("400 error should keep only status: %d %v %v %v", status, storedMessage, storedCode, storedDetails)
+	}
+
+	details := apierrors.Details{StatusCode: 502, Code: "image_generation_failed", Message: "上游失败", Retryable: true, RetryableSet: true}
+	status, storedMessage, storedCode, storedDetails = usageLogErrorFields(UsageLog{
+		Status:             "failed",
+		ErrorMessage:       &message,
+		ResponseStatusCode: 502,
+		ErrorDetails:       &details,
+	})
+	if status != 502 || storedMessage != "上游失败" || storedCode != "image_generation_failed" || storedDetails == nil {
+		t.Fatalf("502 details were not persisted: %d %v %v %v", status, storedMessage, storedCode, storedDetails)
 	}
 }
 
@@ -183,7 +224,7 @@ func TestFinishLogSnapshotsChargeAndModelCost(t *testing.T) {
 	defer rawDB.Close()
 
 	mock.ExpectExec(`UPDATE api_access_logs SET status = \?, image_count = \?, error_message = \?, charged_credits = CASE`).
-		WithArgs("success", 1, nil, "success", "success", "log-1").
+		WithArgs("success", 1, nil, "success", "success", 200, nil, nil, "log-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	if err := NewRepository(database.Wrap(rawDB)).FinishLog(context.Background(), "log-1", "success", 1, ""); err != nil {
 		t.Fatal(err)
@@ -265,6 +306,23 @@ func TestBuildLogWhereUsesPostgresJSONTextSearch(t *testing.T) {
 	}
 	if len(args) != 15 {
 		t.Fatalf("args length = %d, want 15", len(args))
+	}
+}
+
+func TestBuildLogWhereUsesResolvedIdentityIDs(t *testing.T) {
+	where, args := buildLogWhere(ListLogsInput{
+		IdentityOnly: true,
+		UserIDs:      []string{"user-1", "user-1"},
+		APIKeyIDs:    []string{"key-1"},
+	})
+	if strings.Contains(where, "LIKE") || !strings.Contains(where, "api_access_logs.user_id IN (?)") || !strings.Contains(where, "api_access_logs.api_key_id IN (?)") {
+		t.Fatalf("identity search should use ID filters: %s", where)
+	}
+	if len(args) != 2 || args[0] != "user-1" || args[1] != "key-1" {
+		t.Fatalf("identity search args = %#v, want [user-1 key-1]", args)
+	}
+	if got := logCountFrom(ListLogsInput{Keyword: "customer@example.com", IdentityOnly: true}); got != "FROM api_access_logs" {
+		t.Fatalf("identity count query source = %q, want api_access_logs only", got)
 	}
 }
 

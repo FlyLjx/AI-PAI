@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"aipi-go/internal/apierrors"
 	"aipi-go/internal/providers"
 )
 
@@ -144,7 +145,13 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 	}
 	var responseJSON any
 	_ = json.Unmarshal(responseBytes, &responseJSON)
-	errorMessage := cleanUpstreamError(responseJSON, string(responseBytes))
+	errorDetails := parseUpstreamError(resp.StatusCode, responseJSON, responseBytes)
+	loggedErrorMessage := ""
+	loggedErrorCode := ""
+	if apierrors.IsCountedFailureStatus(resp.StatusCode) {
+		loggedErrorMessage = errorDetails.Message
+		loggedErrorCode = errorDetails.Code
+	}
 	if s.logger != nil {
 		s.logger.Info("generation upstream image response",
 			"taskId", input.TaskID,
@@ -156,7 +163,8 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 			"durationMs", time.Since(startedAt).Milliseconds(),
 			"requestedQuantity", input.Quantity,
 			"imageCount", len(ExtractImages(responseJSON)),
-			"errorMessage", trimLong(errorMessage, 300),
+			"errorMessage", trimLong(loggedErrorMessage, 300),
+			"errorCode", loggedErrorCode,
 			"auth", providers.APIKeyDiagnostics(input.Provider.APIKey),
 		)
 	}
@@ -164,14 +172,15 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 		return nil, htmlImageUpstreamError(resp.StatusCode)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		message := errorMessage
+		message := errorDetails.Message
 		if message == "" {
 			message = fmt.Sprintf("上游接口调用失败：%d", resp.StatusCode)
 		}
-		return nil, imageUpstreamHTTPError{status: resp.StatusCode, message: message}
+		errorDetails.Message = message
+		return nil, imageUpstreamHTTPError{status: resp.StatusCode, message: message, details: errorDetails}
 	}
 	if len(ExtractImages(responseJSON)) == 0 {
-		message := errorMessage
+		message := errorDetails.Message
 		if message != "" {
 			return nil, errors.New("上游接口未返回图片结果：" + message)
 		}
@@ -261,41 +270,63 @@ func fetchImageAsBase64(ctx context.Context, imageURL string) (ExtractedImage, e
 type imageUpstreamHTTPError struct {
 	status  int
 	message string
+	details apierrors.Details
 }
 
 func (e imageUpstreamHTTPError) Error() string {
 	return e.message
 }
 
+func UpstreamErrorDetails(err error) (apierrors.Details, bool) {
+	var upstreamErr imageUpstreamHTTPError
+	if !errors.As(err, &upstreamErr) {
+		return apierrors.Details{}, false
+	}
+	details := upstreamErr.details
+	if details.StatusCode == 0 {
+		details.StatusCode = upstreamErr.status
+	}
+	if details.Message == "" {
+		details.Message = upstreamErr.message
+	}
+	apierrors.Normalize(&details)
+	return details, true
+}
+
 func htmlImageUpstreamError(status int) error {
+	details := apierrors.Details{StatusCode: status}
 	switch status {
 	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
-		return imageUpstreamHTTPError{
-			status:  status,
-			message: fmt.Sprintf("上游服务网关超时或不可用（HTTP %d），请稍后重试或切换接口", status),
-		}
+		details.Message = fmt.Sprintf("上游服务网关超时或不可用（HTTP %d），请稍后重试或切换接口", status)
 	default:
 		if status < 200 || status >= 300 {
-			return imageUpstreamHTTPError{
-				status:  status,
-				message: fmt.Sprintf("上游接口返回了 HTML 错误页（HTTP %d），请检查接口服务状态或 Base URL", status),
-			}
+			details.Message = fmt.Sprintf("上游接口返回了 HTML 错误页（HTTP %d），请检查接口服务状态或 Base URL", status)
+			break
 		}
 		return errors.New("上游返回了网页 HTML，不是图片接口 JSON，请检查接口 Base URL")
 	}
+	apierrors.Normalize(&details)
+	return imageUpstreamHTTPError{status: status, message: details.Message, details: details}
 }
 
 func isRetryableImageUpstreamError(err error) bool {
 	var upstreamErr imageUpstreamHTTPError
 	if errors.As(err, &upstreamErr) {
-		return isRetryableImageStatus(upstreamErr.status) || isTransientImageMessage(upstreamErr.message)
+		if upstreamErr.details.StatusCode == http.StatusTooManyRequests {
+			return upstreamErr.details.Retryable
+		}
+		status := upstreamErr.status
+		if upstreamErr.details.StatusCode != 0 {
+			status = upstreamErr.details.StatusCode
+		}
+		return isRetryableImageStatus(status) || isTransientImageMessage(upstreamErr.message)
 	}
 	return isTransientImageMessage(err.Error())
 }
 
 func isRetryableImageStatus(status int) bool {
 	switch status {
-	case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout, http.StatusTooManyRequests:
 		return true
 	default:
 		return false

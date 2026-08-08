@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"aipi-go/internal/apiaccess"
+	"aipi-go/internal/apierrors"
 	"aipi-go/internal/models"
 	"aipi-go/internal/providers"
 )
@@ -194,7 +195,7 @@ func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, aut
 	body["stream"] = false
 	result, contentType, err := postOpenAIJSON(req.Context(), *provider, upstreamPath, body)
 	if err != nil {
-		writeOpenAIError(w, upstreamStatus(err), err.Error(), "api_error")
+		writeOpenAIErrorDetails(w, upstreamErrorDetails(err))
 		return
 	}
 	if strings.Contains(strings.ToLower(contentType), "application/json") {
@@ -219,13 +220,13 @@ func (r *Router) forwardOpenAITextStream(w http.ResponseWriter, req *http.Reques
 	upstreamReq.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(upstreamReq)
 	if err != nil {
-		writeOpenAIError(w, http.StatusBadGateway, "上游接口连接失败："+err.Error(), "api_error")
+		writeOpenAIErrorDetails(w, apierrors.Parse(http.StatusBadGateway, nil, []byte("上游接口连接失败："+err.Error())))
 		return
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-		writeOpenAIError(w, resp.StatusCode, upstreamErrorMessage(bodyBytes, resp.StatusCode), "api_error")
+		writeOpenAIErrorDetails(w, apierrors.Parse(resp.StatusCode, decodeJSONPayload(bodyBytes), bodyBytes))
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -257,7 +258,8 @@ func postOpenAIJSON(ctx context.Context, provider providers.Provider, upstreamPa
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, "", upstreamHTTPError{status: resp.StatusCode, message: upstreamErrorMessage(bodyBytes, resp.StatusCode)}
+		details := apierrors.Parse(resp.StatusCode, decodeJSONPayload(bodyBytes), bodyBytes)
+		return nil, "", upstreamHTTPError{status: resp.StatusCode, message: details.Message, details: details}
 	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
@@ -277,6 +279,7 @@ func openAIProxyEndpoint(provider providers.Provider, upstreamPath string) strin
 type upstreamHTTPError struct {
 	status  int
 	message string
+	details apierrors.Details
 }
 
 func (e upstreamHTTPError) Error() string {
@@ -291,6 +294,22 @@ func upstreamStatus(err error) int {
 	return http.StatusBadGateway
 }
 
+func upstreamErrorDetails(err error) apierrors.Details {
+	var upstreamErr upstreamHTTPError
+	if errors.As(err, &upstreamErr) {
+		details := upstreamErr.details
+		if details.StatusCode == 0 {
+			details.StatusCode = upstreamErr.status
+		}
+		if strings.TrimSpace(details.Message) == "" {
+			details.Message = upstreamErr.message
+		}
+		apierrors.Normalize(&details)
+		return details
+	}
+	return apierrors.Parse(http.StatusBadGateway, nil, []byte(err.Error()))
+}
+
 func upstreamErrorMessage(body []byte, status int) string {
 	var payload any
 	if err := json.Unmarshal(body, &payload); err == nil {
@@ -303,6 +322,14 @@ func upstreamErrorMessage(body []byte, status int) string {
 		return text
 	}
 	return fmt.Sprintf("上游接口调用失败：HTTP %d", status)
+}
+
+func decodeJSONPayload(body []byte) any {
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil
+	}
+	return payload
 }
 
 func findErrorMessage(value any) string {

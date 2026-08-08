@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
 	"aipi-go/internal/apiaccess"
+	"aipi-go/internal/apierrors"
 	"aipi-go/internal/imagecache"
 	"aipi-go/internal/tasks"
 )
@@ -61,7 +63,9 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		} else {
 			err = normalizeTaskProcessingError(err)
 		}
-		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds())
+		details := taskErrorDetails(err)
+		s.finishAPIAccessLogFailure(taskID, err.Error(), details)
+		failed, _ := s.tasks.FinishFailedWithDetails(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds(), details)
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
@@ -76,7 +80,9 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 	}
 	if provider.Status != "active" || model.Status != "active" {
 		message := "模型或接口已禁用"
-		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, message, time.Since(startedAt).Seconds())
+		details := taskErrorDetails(errors.New(message))
+		s.finishAPIAccessLogFailure(taskID, message, details)
+		failed, _ := s.tasks.FinishFailedWithDetails(context.Background(), taskID, message, time.Since(startedAt).Seconds(), details)
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
@@ -183,7 +189,9 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 			}
 			return nil
 		}
-		failed, _ := s.tasks.FinishFailed(context.Background(), taskID, lastErr.Error(), time.Since(startedAt).Seconds())
+		details := taskErrorDetails(lastErr)
+		s.finishAPIAccessLogFailure(taskID, lastErr.Error(), details)
+		failed, _ := s.tasks.FinishFailedWithDetails(context.Background(), taskID, lastErr.Error(), time.Since(startedAt).Seconds(), details)
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
@@ -256,7 +264,7 @@ func (s *Service) FailTimedOut(ctx context.Context, cutoff time.Time, now time.T
 	logRepository := apiaccess.NewRepository(s.db)
 	var syncErr error
 	for _, id := range ids {
-		if err := logRepository.FinishLogsForTask(ctx, id, "failed", 0, message); err != nil {
+		if err := logRepository.FinishLogsForTaskWithDetails(ctx, id, "failed", 0, message, taskErrorDetails(ErrTaskTimedOut)); err != nil {
 			syncErr = errors.Join(syncErr, err)
 		}
 		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
@@ -279,7 +287,7 @@ func (s *Service) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, 
 	logRepository := apiaccess.NewRepository(s.db)
 	var syncErr error
 	for _, id := range ids {
-		if err := logRepository.FinishLogsForTask(ctx, id, "failed", 0, message); err != nil {
+		if err := logRepository.FinishLogsForTaskWithDetails(ctx, id, "failed", 0, message, taskErrorDetails(ErrTaskTimedOut)); err != nil {
 			syncErr = errors.Join(syncErr, err)
 		}
 		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
@@ -364,6 +372,25 @@ func (s *Service) syncAPIAccessLogForTask(task *tasks.Task) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = apiaccess.NewRepository(s.db).FinishLogsForTask(ctx, task.ID, status, imageCount, message)
+}
+
+func (s *Service) finishAPIAccessLogFailure(taskID string, message string, details apierrors.Details) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = apiaccess.NewRepository(s.db).FinishLogsForTaskWithDetails(ctx, taskID, "failed", 0, message, details)
+}
+
+func taskErrorDetails(err error) apierrors.Details {
+	if details, ok := UpstreamErrorDetails(err); ok {
+		return details
+	}
+	status := http.StatusInternalServerError
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrTaskTimedOut) {
+		status = http.StatusGatewayTimeout
+	} else if errors.Is(err, context.Canceled) {
+		status = 499
+	}
+	return apierrors.Parse(status, nil, []byte(err.Error()))
 }
 
 func taskOutputFormat(format string) string {

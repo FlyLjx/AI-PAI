@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"aipi-go/internal/apiaccess"
+	"aipi-go/internal/apierrors"
 	"aipi-go/internal/database"
 	"aipi-go/internal/generation"
 	"aipi-go/internal/models"
@@ -68,6 +69,7 @@ type compatTaskResult struct {
 	message    string
 	statusCode int
 	errorType  string
+	details    apierrors.Details
 	err        error
 }
 
@@ -268,23 +270,28 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 			status = appErr.status
 			if status == http.StatusPaymentRequired {
 				errorType = "insufficient_quota"
+				details := apierrors.Details{StatusCode: status, Message: message, Type: errorType}
+				apierrors.Normalize(&details)
 				logCtx, logCancel := context.WithTimeout(context.Background(), 5*time.Second)
 				errorMessage := message
 				_, _ = apiaccess.NewRepository(r.db).CreateLog(logCtx, apiaccess.UsageLog{
-					ID:             accessLogID,
-					UserID:         auth.User.ID,
-					APIKeyID:       auth.APIKey.ID,
-					Endpoint:       req.URL.Path,
-					Model:          input.Model,
-					Prompt:         input.Prompt,
-					Size:           size,
-					Quality:        defaultString(input.Quality, sizeTier),
-					Quantity:       input.N,
-					ImageCount:     0,
-					ResponseFormat: defaultString(input.ResponseFormat, "url"),
-					RequestParams:  requestParams,
-					Status:         "failed",
-					ErrorMessage:   &errorMessage,
+					ID:                 accessLogID,
+					UserID:             auth.User.ID,
+					APIKeyID:           auth.APIKey.ID,
+					Endpoint:           req.URL.Path,
+					Model:              input.Model,
+					Prompt:             input.Prompt,
+					Size:               size,
+					Quality:            defaultString(input.Quality, sizeTier),
+					Quantity:           input.N,
+					ImageCount:         0,
+					ResponseFormat:     defaultString(input.ResponseFormat, "url"),
+					RequestParams:      requestParams,
+					Status:             "failed",
+					ErrorMessage:       &errorMessage,
+					ResponseStatusCode: status,
+					ErrorCode:          &details.Code,
+					ErrorDetails:       &details,
 				})
 				logCancel()
 			} else if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
@@ -313,7 +320,7 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 	case <-req.Context().Done():
 		return
 	case <-time.After(clientWaitTimeout):
-		writeOpenAIError(w, http.StatusGatewayTimeout, "图片生成超时", "api_error")
+		writeOpenAIErrorDetails(w, apierrors.Parse(http.StatusGatewayTimeout, nil, []byte("图片生成超时")))
 		return
 	}
 
@@ -326,7 +333,14 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		if message == "" {
 			message = result.err.Error()
 		}
-		writeOpenAIError(w, status, message, defaultString(result.errorType, "api_error"))
+		details := result.details
+		if details.StatusCode == 0 {
+			details = apierrors.Details{StatusCode: status, Message: message, Type: defaultString(result.errorType, "api_error")}
+		}
+		details.StatusCode = status
+		details.Message = message
+		apierrors.Normalize(&details)
+		writeOpenAIErrorDetails(w, details)
 		return
 	}
 
@@ -627,11 +641,12 @@ func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, prefer
 	defer cancel()
 	finalTask, err := r.waitForCompatTask(ctx, taskID)
 	if err != nil {
-		message := compatTaskWaitErrorMessage(err)
-		r.finishCompatAccessLog(accessLogID, "failed", 0, message)
+		details := apierrors.Parse(http.StatusGatewayTimeout, nil, []byte(compatTaskWaitErrorMessage(err)))
+		r.finishCompatAccessLog(accessLogID, "failed", 0, details.Message, details)
 		return compatTaskResult{
-			message:    message,
-			statusCode: http.StatusGatewayTimeout,
+			message:    details.Message,
+			statusCode: details.StatusCode,
+			details:    details,
 			err:        err,
 		}
 	}
@@ -640,38 +655,87 @@ func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, prefer
 		if finalTask.ErrorMessage != nil && *finalTask.ErrorMessage != "" {
 			message = *finalTask.ErrorMessage
 		}
-		statusCode, errorType := compatTaskFailureResponse(message)
-		r.finishCompatAccessLog(accessLogID, "failed", 0, message)
+		details := r.compatTaskErrorDetails(accessLogID, message, finalTask.ResultJSON)
+		statusCode, errorType := details.StatusCode, details.Type
+		if statusCode == 0 {
+			statusCode, errorType = compatTaskFailureResponse(message)
+			details = apierrors.Details{StatusCode: statusCode, Message: message, Type: errorType}
+			apierrors.Normalize(&details)
+		}
+		if strings.TrimSpace(details.Message) != "" {
+			message = details.Message
+		}
+		r.finishCompatAccessLog(accessLogID, "failed", 0, details.Message, details)
 		return compatTaskResult{
 			message:    message,
 			statusCode: statusCode,
 			errorType:  errorType,
+			details:    details,
 			err:        errors.New(message),
 		}
 	}
 	urls, err := compatResultValuesForAPI(ctx, finalTask, preferProxyResults, preferBase64Results)
 	if err != nil {
 		message := err.Error()
-		r.finishCompatAccessLog(accessLogID, "failed", 0, message)
+		details := apierrors.Parse(http.StatusInternalServerError, nil, []byte(message))
+		r.finishCompatAccessLog(accessLogID, "failed", 0, details.Message, details)
 		return compatTaskResult{
 			message:    message,
 			statusCode: http.StatusInternalServerError,
 			errorType:  "api_error",
+			details:    details,
 			err:        errors.New(message),
 		}
 	}
 	if preferBase64Results && len(urls) == 0 {
 		message := "图片生成结果缺少可转为 base64 的数据"
-		r.finishCompatAccessLog(accessLogID, "failed", 0, message)
+		details := apierrors.Parse(http.StatusInternalServerError, nil, []byte(message))
+		r.finishCompatAccessLog(accessLogID, "failed", 0, details.Message, details)
 		return compatTaskResult{
 			message:    message,
 			statusCode: http.StatusInternalServerError,
 			errorType:  "api_error",
+			details:    details,
 			err:        errors.New(message),
 		}
 	}
-	r.finishCompatAccessLog(accessLogID, "success", len(urls), "")
+	r.finishCompatAccessLog(accessLogID, "success", len(urls), "", apierrors.Details{StatusCode: http.StatusOK})
 	return compatTaskResult{urls: urls, usage: generation.ExtractImageUsage(finalTask.ResultJSON)}
+}
+
+func (r *Router) compatTaskErrorDetails(accessLogID string, fallback string, result any) apierrors.Details {
+	var resultDetails apierrors.Details
+	if rawDetails, ok := tasks.ErrorDetailsFromResult(result); ok {
+		if encoded, err := json.Marshal(rawDetails); err == nil {
+			_ = json.Unmarshal(encoded, &resultDetails)
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	log, err := apiaccess.NewRepository(r.db).FindLogByID(ctx, accessLogID)
+	if err == nil && log != nil && log.ResponseStatusCode != 0 {
+		details := resultDetails
+		if log.ErrorDetails != nil {
+			details = *log.ErrorDetails
+		}
+		details.StatusCode = log.ResponseStatusCode
+		if strings.TrimSpace(details.Message) == "" {
+			details.Message = fallback
+		}
+		if log.ErrorCode != nil && strings.TrimSpace(*log.ErrorCode) != "" {
+			details.Code = strings.TrimSpace(*log.ErrorCode)
+		}
+		apierrors.Normalize(&details)
+		return details
+	}
+	if resultDetails.Code != "" || resultDetails.Message != "" {
+		if strings.TrimSpace(resultDetails.Message) == "" {
+			resultDetails.Message = fallback
+		}
+		apierrors.Normalize(&resultDetails)
+		return resultDetails
+	}
+	return apierrors.Details{}
 }
 
 func compatResultValuesForAPI(ctx context.Context, task *tasks.Task, preferProxyResults bool, preferBase64Results bool) ([]string, error) {
@@ -730,10 +794,10 @@ func compatTaskFailureResponse(message string) (int, string) {
 	return http.StatusInternalServerError, "api_error"
 }
 
-func (r *Router) finishCompatAccessLog(accessLogID string, status string, imageCount int, message string) {
+func (r *Router) finishCompatAccessLog(accessLogID string, status string, imageCount int, message string, details apierrors.Details) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = apiaccess.NewRepository(r.db).FinishLog(ctx, accessLogID, status, imageCount, message)
+	_ = apiaccess.NewRepository(r.db).FinishLogWithDetails(ctx, accessLogID, status, imageCount, message, details)
 }
 
 func compatTaskWaitErrorMessage(err error) string {
@@ -786,12 +850,29 @@ func writeCompatAuthError(w http.ResponseWriter, err error) {
 }
 
 func writeOpenAIError(w http.ResponseWriter, status int, message string, errorType string) {
-	writeJSON(w, status, map[string]any{
+	details := apierrors.Details{
+		StatusCode: status,
+		Message:    message,
+		Type:       errorType,
+	}
+	apierrors.Normalize(&details)
+	writeOpenAIErrorDetails(w, details)
+}
+
+func writeOpenAIErrorDetails(w http.ResponseWriter, details apierrors.Details) {
+	apierrors.Normalize(&details)
+	writeJSON(w, details.StatusCode, map[string]any{
 		"error": map[string]any{
-			"message": message,
-			"type":    errorType,
-			"param":   nil,
-			"code":    nil,
+			"message":    details.Message,
+			"title":      details.Title,
+			"type":       details.Type,
+			"code":       details.Code,
+			"category":   details.Category,
+			"retryable":  details.Retryable,
+			"action":     details.Action,
+			"hint":       details.Hint,
+			"request_id": details.RequestID,
+			"param":      nil,
 		},
 	})
 }

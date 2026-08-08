@@ -117,6 +117,8 @@ export type UsageLog = {
   responseFormat?: string;
   status: string;
   errorMessage?: string;
+  responseStatusCode?: number;
+  errorCode?: string;
   chargedCredits: number;
   modelCostCredits: number;
   durationSeconds: number;
@@ -126,6 +128,7 @@ export type UsageLog = {
 
 export type UsageSummary = {
   total: number;
+  counted: number;
   success: number;
   failed: number;
   imageCount: number;
@@ -408,6 +411,7 @@ export type RequestMonitorSnapshot = {
   range: RequestMonitorRange;
   summary: {
     total: number;
+    counted: number;
     successful: number;
     clientErrors: number;
     serverErrors: number;
@@ -657,10 +661,10 @@ export const portalApi = {
   updatePlan: (id: string, input: Partial<Plan>) => api<Plan>(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deletePlan: (id: string) => api(`/api/subscriptions/plans/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   recharges: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; orderType?: string; startDate?: string; endDate?: string; sortBy?: string; sortOrder?: SortOrder } = {}) => api<RechargeOrder[], RechargeSummary>(`/api/recharge/orders${query(input)}`),
-  adminKeys: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; sortBy?: string; sortOrder?: SortOrder } = {}) => api<{ items: APIKey[]; stats: Record<string, number>; dynamicConcurrency: DynamicConcurrencyConfig }>('/api/admin/api-access/keys' + query(input)),
+  adminKeys: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; sortBy?: string; sortOrder?: SortOrder } = {}, signal?: AbortSignal) => api<{ items: APIKey[]; stats: Record<string, number>; dynamicConcurrency: DynamicConcurrencyConfig }>('/api/admin/api-access/keys' + query(input), { signal }),
   updateAdminKey: (id: string, input: { status?: string; concurrencyLimit?: number }) => api<APIKey>(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAdminKey: (id: string) => api(`/api/admin/api-access/keys/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  adminUsage: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; sortBy?: string; sortOrder?: SortOrder } = {}) => api<UsageLog[], UsageSummary>(`/api/admin/api-access/logs${query(input)}`),
+  adminUsage: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; sortBy?: string; sortOrder?: SortOrder } = {}, signal?: AbortSignal) => api<UsageLog[], UsageSummary>(`/api/admin/api-access/logs${query(input)}`, { signal }),
   adminOperations: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsSnapshot>(`/api/admin/api-access/operations${query({ range, metric, limit })}`),
   adminOperationsLive: () => api<AdminOperationsLiveSnapshot>('/api/admin/api-access/operations/live'),
   adminOperationsRanking: (range: AdminOperationsRange, metric: AdminOperationsMetric, limit = 10) => api<AdminOperationsRankingSnapshot>(`/api/admin/api-access/operations/ranking${query({ range, metric, limit })}`),
@@ -681,6 +685,14 @@ export const portalApi = {
   testBark: (input: { title?: string; body?: string } = {}) => api<{ sent: boolean }>('/api/settings/test-bark', { method: 'POST', body: JSON.stringify(input) }),
   systemUpdate: (refresh = false) => api<SystemUpdateInfo>(`/api/admin/system-update${query({ refresh: refresh ? 1 : undefined })}`),
   startSystemUpdate: (force = false) => api<SystemUpdateInfo>('/api/admin/system-update', { method: 'POST', body: JSON.stringify({ force }) }),
+  dataExport: async () => {
+    const response = await fetch(`${API_BASE}/api/admin/data-export`, { cache: 'no-store', credentials: 'include' });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { message?: string; error?: { message?: string } } | null;
+      throw new APIError(payload?.message || payload?.error?.message || `请求失败 (${response.status})`, response.status);
+    }
+    return response;
+  },
   logs: () => api<SystemLogFile[]>('/api/system-logs'),
   systemLogDetail: (name: string, maxBytes = 300000) => api<SystemLogDetail>(`/api/system-logs/detail${query({ name, maxBytes })}`),
   deleteSystemLog: (name: string) => api(`/api/system-logs/${encodeURIComponent(name)}`, { method: 'DELETE' }),

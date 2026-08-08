@@ -36,6 +36,7 @@ type Filters struct {
 
 type Summary struct {
 	Total             int64   `json:"total"`
+	Counted           int64   `json:"counted"`
 	Successful        int64   `json:"successful"`
 	ClientErrors      int64   `json:"clientErrors"`
 	ServerErrors      int64   `json:"serverErrors"`

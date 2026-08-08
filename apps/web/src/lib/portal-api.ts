@@ -212,6 +212,8 @@ export type UsageLog = {
   responseParameters?: Record<string, unknown>;
   status: string;
   errorMessage?: string;
+  responseStatusCode?: number;
+  errorCode?: string;
   chargedCredits: number;
   durationSeconds: number;
   createdAt: string;
@@ -220,6 +222,7 @@ export type UsageLog = {
 
 export type UsageSummary = {
   total: number;
+  counted: number;
   success: number;
   failed: number;
   imageCount: number;

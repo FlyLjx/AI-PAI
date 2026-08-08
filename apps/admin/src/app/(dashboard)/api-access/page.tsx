@@ -18,6 +18,7 @@ type DetailedUsageLog = UsageLog & {
 
 const logPageSize = 30;
 const keyPageSize = 20;
+const searchDebounceMs = 450;
 const KEY_STATUS_OPTIONS = [
   { value: 'all', label: '全部状态' },
   { value: 'active', label: '已启用' },
@@ -108,12 +109,18 @@ function responseParameters(log: DetailedUsageLog): Record<string, unknown> {
   if (log.responseParameters && Object.keys(log.responseParameters).length > 0) return log.responseParameters;
   const normalizedStatus = log.status.toLowerCase();
   if (['failed', 'canceled', 'cancelled'].includes(normalizedStatus)) {
+    if (Number(log.responseStatusCode || 0) !== 429 && Number(log.responseStatusCode || 0) !== 502) {
+      return {
+        status: normalizedStatus,
+        response_status_code: Number(log.responseStatusCode || 0) || undefined,
+      };
+    }
     return {
       error: {
         message: log.errorMessage || (normalizedStatus === 'failed' ? '图片生成失败' : '任务已取消'),
         type: log.errorMessage?.includes('用户余额不足') ? 'insufficient_quota' : 'api_error',
         param: null,
-        code: null,
+        code: log.errorCode || null,
       },
     };
   }
@@ -136,6 +143,10 @@ function responseParameters(log: DetailedUsageLog): Record<string, unknown> {
   };
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof Error && error.name === 'AbortError';
+}
+
 export default function AdminAPIAccessPage() {
   const [tab, setTab] = useState<'keys' | 'logs'>('keys');
   const [keys, setKeys] = useState<APIKey[]>([]);
@@ -155,7 +166,7 @@ export default function AdminAPIAccessPage() {
   const [logPage, setLogPage] = useState(1);
   const [logTotal, setLogTotal] = useState(0);
   const [logSort, setLogSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
-  const [logSummary, setLogSummary] = useState<UsageSummary>({ total: 0, success: 0, failed: 0, imageCount: 0 });
+  const [logSummary, setLogSummary] = useState<UsageSummary>({ total: 0, counted: 0, success: 0, failed: 0, imageCount: 0 });
   const [concurrencyDraft, setConcurrencyDraft] = useState<Record<string, number>>({});
   const [actionId, setActionId] = useState('');
   const [deleteCandidate, setDeleteCandidate] = useState<APIKey | null>(null);
@@ -165,9 +176,14 @@ export default function AdminAPIAccessPage() {
   const [detailTab, setDetailTab] = useState<'request' | 'response'>('request');
   const keyRequestSequence = useRef(0);
   const logRequestSequence = useRef(0);
+  const keyRequestController = useRef<AbortController | null>(null);
+  const logRequestController = useRef<AbortController | null>(null);
 
   const loadKeys = useCallback(async (page = 1) => {
     const requestSequence = ++keyRequestSequence.current;
+    keyRequestController.current?.abort();
+    const controller = new AbortController();
+    keyRequestController.current = controller;
     setKeysLoading(true);
     setError('');
     try {
@@ -178,7 +194,7 @@ export default function AdminAPIAccessPage() {
         status: keyStatus === 'all' ? undefined : keyStatus,
         sortBy: keySort.key,
         sortOrder: keySort.direction,
-      });
+      }, controller.signal);
       if (requestSequence !== keyRequestSequence.current) return;
       setKeys(response.data.items || []);
       setStats(response.data.stats || {});
@@ -187,6 +203,7 @@ export default function AdminAPIAccessPage() {
       setKeyTotal(response.pagination?.total ?? response.data.items?.length ?? 0);
       setKeyPage(page);
     } catch (requestError) {
+      if (isAbortError(requestError)) return;
       if (requestSequence !== keyRequestSequence.current) return;
       setError(requestError instanceof Error ? requestError.message : 'API Key 加载失败');
     } finally {
@@ -196,6 +213,9 @@ export default function AdminAPIAccessPage() {
 
   const loadLogs = useCallback(async (page = 1) => {
     const requestSequence = ++logRequestSequence.current;
+    logRequestController.current?.abort();
+    const controller = new AbortController();
+    logRequestController.current = controller;
     setLogsLoading(true);
     setError('');
     try {
@@ -206,19 +226,21 @@ export default function AdminAPIAccessPage() {
         status: logStatusFilter === 'all' ? undefined : logStatusFilter,
         sortBy: logSort.key,
         sortOrder: logSort.direction,
-      });
+      }, controller.signal);
       if (requestSequence !== logRequestSequence.current) return;
       setLogs(response.data as DetailedUsageLog[]);
       const responseTotal = response.pagination?.total ?? response.data.length;
       setLogTotal(responseTotal);
       setLogSummary(response.summary || {
         total: responseTotal,
+        counted: response.data.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase()) || [429, 502].includes(Number(log.responseStatusCode || 0))).length,
         success: response.data.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase())).length,
         failed: response.data.filter((log) => log.status.toLowerCase() === 'failed').length,
         imageCount: response.data.reduce((total, log) => total + Number(log.imageCount || 0), 0),
       });
       setLogPage(page);
     } catch (requestError) {
+      if (isAbortError(requestError)) return;
       if (requestSequence !== logRequestSequence.current) return;
       setError(requestError instanceof Error ? requestError.message : 'API 调用日志加载失败');
     } finally {
@@ -231,14 +253,19 @@ export default function AdminAPIAccessPage() {
   }, [keyPage, loadKeys, loadLogs, logPage]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadKeys(1), 300);
+    const timer = window.setTimeout(() => void loadKeys(1), searchDebounceMs);
     return () => window.clearTimeout(timer);
   }, [loadKeys]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadLogs(1), 300);
+    const timer = window.setTimeout(() => void loadLogs(1), searchDebounceMs);
     return () => window.clearTimeout(timer);
   }, [loadLogs]);
+
+  useEffect(() => () => {
+    keyRequestController.current?.abort();
+    logRequestController.current?.abort();
+  }, []);
 
   useEffect(() => {
     if (!detailLog) return;
@@ -256,7 +283,8 @@ export default function AdminAPIAccessPage() {
 
   const keyTotalPages = Math.max(1, Math.ceil(keyTotal / keyPageSize));
   const effectiveKeyPage = Math.min(keyPage, keyTotalPages);
-  const logSuccessRate = logSummary.total > 0 ? `${((logSummary.success / logSummary.total) * 100).toFixed(1)}%` : '0.0%';
+  const countedRequests = Number(logSummary.counted ?? logSummary.success + logSummary.failed);
+  const logSuccessRate = countedRequests > 0 ? `${((logSummary.success / countedRequests) * 100).toFixed(1)}%` : '0.0%';
 
   const toggleKey = async (key: APIKey) => {
     setActionId(key.id);
@@ -350,7 +378,7 @@ export default function AdminAPIAccessPage() {
           ['筛选请求', logSummary.total, '全部匹配记录'],
           ['成功请求', logSummary.success, '全部匹配记录'],
           ['失败请求', logSummary.failed, '全部匹配记录'],
-          ['成功率', logSuccessRate, '成功 / 请求总数'],
+          ['成功率', logSuccessRate, '成功 / 纳入统计'],
           ['输出图片', logSummary.imageCount, '全部匹配记录'],
         ] : [
           ['Key 总数', stats.totalKeys ?? keyTotal, '用户创建'],

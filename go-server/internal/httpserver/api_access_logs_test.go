@@ -45,7 +45,7 @@ func TestAdminAPIAccessLogsReturnsFilteredFullSummary(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
 	mock.ExpectQuery(`(?s)SELECT\s+COUNT\(\*\) AS total,.*FROM api_access_logs.*api_access_logs\.user_id = \?.*api_access_logs\.api_key_id = \?.*status IN \('success', 'succeeded'\).*users\.email`).
 		WithArgs(filterArgs...).
-		WillReturnRows(sqlmock.NewRows([]string{"total", "success", "failed", "image_count", "charged_credits", "model_cost_credits"}).AddRow(37, 31, 6, 52, 18.75, 9.25))
+		WillReturnRows(sqlmock.NewRows([]string{"total", "success", "failed", "counted", "image_count", "charged_credits", "model_cost_credits"}).AddRow(37, 31, 6, 37, 52, 18.75, 9.25))
 
 	router := &Router{db: database.Wrap(rawDB), tokens: auth.NewTokenManager(config.DatabaseConfig{})}
 	token, err := router.tokens.CreateAdminToken("admin-1")
@@ -69,6 +69,7 @@ func TestAdminAPIAccessLogsReturnsFilteredFullSummary(t *testing.T) {
 		} `json:"pagination"`
 		Summary struct {
 			Total            int     `json:"total"`
+			Counted          int     `json:"counted"`
 			Success          int     `json:"success"`
 			Failed           int     `json:"failed"`
 			ImageCount       int     `json:"imageCount"`
@@ -85,7 +86,7 @@ func TestAdminAPIAccessLogsReturnsFilteredFullSummary(t *testing.T) {
 	if response.Pagination.Total != 37 || response.Pagination.Page != 1 || response.Pagination.PageSize != 100 {
 		t.Fatalf("unexpected pagination: %+v", response.Pagination)
 	}
-	if response.Summary.Total != 37 || response.Summary.Success != 31 || response.Summary.Failed != 6 || response.Summary.ImageCount != 52 || response.Summary.ChargedCredits != 18.75 || response.Summary.ModelCostCredits != 9.25 {
+	if response.Summary.Total != 37 || response.Summary.Counted != 37 || response.Summary.Success != 31 || response.Summary.Failed != 6 || response.Summary.ImageCount != 52 || response.Summary.ChargedCredits != 18.75 || response.Summary.ModelCostCredits != 9.25 {
 		t.Fatalf("summary should describe all filtered rows, got %+v", response.Summary)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

@@ -335,6 +335,45 @@ func (r *Repository) FinishFailed(ctx context.Context, id string, message string
 	return r.FindByID(ctx, id)
 }
 
+func (r *Repository) FinishFailedWithDetails(ctx context.Context, id string, message string, durationSeconds float64, details any) (*Task, error) {
+	resultJSON, err := errorDetailsResultJSON(details)
+	if err != nil {
+		return nil, err
+	}
+	_, err = r.db.ExecContext(ctx, `
+		UPDATE generation_tasks
+		SET status = 'failed',
+			error_message = ?,
+			result_json = ?,
+			duration_seconds = ?
+		WHERE id = ? AND status = 'processing'
+	`, message, resultJSON, durationSeconds, id)
+	if err != nil {
+		return nil, err
+	}
+	return r.FindByID(ctx, id)
+}
+
+const errorDetailsResultKey = "__aipi_error_details"
+
+func errorDetailsResultJSON(details any) (string, error) {
+	result := map[string]any{errorDetailsResultKey: details}
+	bytes, err := json.Marshal(result)
+	if err != nil {
+		return "", err
+	}
+	return string(bytes), nil
+}
+
+func ErrorDetailsFromResult(result any) (any, bool) {
+	payload, ok := result.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	details, ok := payload[errorDetailsResultKey]
+	return details, ok && details != nil
+}
+
 func (r *Repository) FailTimedOut(ctx context.Context, cutoff time.Time, now time.Time, message string, limit int) ([]string, error) {
 	return r.failTimedOut(ctx, cutoff, now, message, limit, false)
 }

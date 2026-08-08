@@ -39,19 +39,20 @@ func (repository *Repository) Snapshot(ctx context.Context, filters Filters) (Sn
 	if err := repository.db.QueryRowContext(ctx, `
 		SELECT COUNT(*),
 			COALESCE(SUM(CASE WHEN status_code < 400 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status_code >= 500 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status_code = 429 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status_code = 502 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status_code < 400 OR status_code IN (429, 502) THEN 1 ELSE 0 END), 0),
 			COALESCE(AVG(duration_ms), 0),
 			COUNT(DISTINCT CASE WHEN source_ip <> '' THEN source_ip ELSE NULL END)
 		FROM http_request_logs `+where, args...).Scan(
 		&result.Summary.Total, &result.Summary.Successful, &result.Summary.ClientErrors,
-		&result.Summary.ServerErrors, &result.Summary.AverageDurationMS, &result.Summary.UniqueSources,
+		&result.Summary.ServerErrors, &result.Summary.Counted, &result.Summary.AverageDurationMS, &result.Summary.UniqueSources,
 	); err != nil {
 		return result, 0, err
 	}
 	errors := result.Summary.ClientErrors + result.Summary.ServerErrors
-	if result.Summary.Total > 0 {
-		result.Summary.ErrorRate = float64(errors) / float64(result.Summary.Total) * 100
+	if result.Summary.Counted > 0 {
+		result.Summary.ErrorRate = float64(errors) / float64(result.Summary.Counted) * 100
 	}
 
 	var err error
@@ -102,7 +103,7 @@ func (repository *Repository) Snapshot(ctx context.Context, filters Filters) (Sn
 func (repository *Repository) frequency(ctx context.Context, expression string, where string, args []any) ([]FrequencyItem, error) {
 	query := fmt.Sprintf(`
 		SELECT %s AS name, COUNT(*) AS request_count,
-			COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count,
+			COALESCE(SUM(CASE WHEN status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS error_count,
 			COALESCE(AVG(duration_ms), 0) AS average_duration
 		FROM http_request_logs %s
 		GROUP BY %s
@@ -132,7 +133,7 @@ func (repository *Repository) trend(ctx context.Context, filters Filters, where 
 	query := fmt.Sprintf(`
 		SELECT %s AS bucket, COUNT(*),
 			COALESCE(SUM(CASE WHEN status_code < 400 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0)
+			COALESCE(SUM(CASE WHEN status_code IN (429, 502) THEN 1 ELSE 0 END), 0)
 		FROM http_request_logs %s
 		GROUP BY %s
 		ORDER BY bucket ASC
@@ -251,9 +252,9 @@ func filterWhere(filters Filters) (string, []any) {
 	case "success":
 		conditions = append(conditions, "status_code < 400")
 	case "client_error":
-		conditions = append(conditions, "status_code >= 400 AND status_code < 500")
+		conditions = append(conditions, "status_code = 429")
 	case "server_error":
-		conditions = append(conditions, "status_code >= 500")
+		conditions = append(conditions, "status_code = 502")
 	}
 	return "WHERE " + strings.Join(conditions, " AND "), args
 }

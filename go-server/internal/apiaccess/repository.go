@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"net/http"
 	"strings"
 	"time"
 
+	"aipi-go/internal/apierrors"
 	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
 )
@@ -17,6 +19,100 @@ type Repository struct {
 
 func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
+}
+
+// IdentitySearchTargets contains the indexed IDs that match an admin search
+// for a user email, user ID, API key ID, or API key prefix. Resolving these
+// small tables first avoids scanning the much larger api_access_logs table
+// with a cross-table wildcard predicate.
+type IdentitySearchTargets struct {
+	Enabled   bool
+	UserIDs   []string
+	APIKeyIDs []string
+}
+
+func (r *Repository) ResolveIdentitySearchTargets(ctx context.Context, keyword string) (IdentitySearchTargets, error) {
+	keyword = strings.ToLower(strings.TrimSpace(keyword))
+	if !isIdentitySearchKeyword(keyword) {
+		return IdentitySearchTargets{}, nil
+	}
+
+	like := "%" + keyword + "%"
+	targets := IdentitySearchTargets{Enabled: true, UserIDs: []string{}, APIKeyIDs: []string{}}
+	userRows, err := r.db.QueryContext(ctx, `
+		SELECT id
+		FROM users
+		WHERE LOWER(id) LIKE ? OR LOWER(email) LIKE ?
+		LIMIT 200
+	`, like, like)
+	if err != nil {
+		return IdentitySearchTargets{}, err
+	}
+	for userRows.Next() {
+		var id string
+		if err := userRows.Scan(&id); err != nil {
+			userRows.Close()
+			return IdentitySearchTargets{}, err
+		}
+		targets.UserIDs = append(targets.UserIDs, id)
+	}
+	if err := userRows.Close(); err != nil {
+		return IdentitySearchTargets{}, err
+	}
+	if err := userRows.Err(); err != nil {
+		return IdentitySearchTargets{}, err
+	}
+
+	keyRows, err := r.db.QueryContext(ctx, `
+		SELECT api_access_keys.id
+		FROM api_access_keys
+		LEFT JOIN users ON users.id = api_access_keys.user_id
+		WHERE LOWER(api_access_keys.id) LIKE ?
+			OR LOWER(api_access_keys.user_id) LIKE ?
+			OR LOWER(api_access_keys.name) LIKE ?
+			OR LOWER(api_access_keys.key_prefix) LIKE ?
+			OR LOWER(COALESCE(users.email, '')) LIKE ?
+		LIMIT 200
+	`, like, like, like, like, like)
+	if err != nil {
+		return IdentitySearchTargets{}, err
+	}
+	for keyRows.Next() {
+		var id string
+		if err := keyRows.Scan(&id); err != nil {
+			keyRows.Close()
+			return IdentitySearchTargets{}, err
+		}
+		targets.APIKeyIDs = append(targets.APIKeyIDs, id)
+	}
+	if err := keyRows.Close(); err != nil {
+		return IdentitySearchTargets{}, err
+	}
+	if err := keyRows.Err(); err != nil {
+		return IdentitySearchTargets{}, err
+	}
+	return targets, nil
+}
+
+func isIdentitySearchKeyword(keyword string) bool {
+	if strings.Contains(keyword, "@") || strings.HasPrefix(keyword, "sk-") {
+		return true
+	}
+	if len(keyword) != 36 {
+		return false
+	}
+	for index, value := range keyword {
+		if index == 8 || index == 13 || index == 18 || index == 23 {
+			if value != '-' {
+				return false
+			}
+			continue
+		}
+		if !((value >= '0' && value <= '9') || (value >= 'a' && value <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 type accessStore interface {
@@ -130,10 +226,13 @@ func (r *Repository) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]
 	where, args := buildAdminKeyWhere(input)
 	orderBy, usageSort := adminKeyOrder(input.SortBy, input.SortOrder)
 	var total int
+	countFrom := "FROM api_access_keys"
+	if !input.IdentityOnly && strings.TrimSpace(input.Keyword) != "" {
+		countFrom += " LEFT JOIN users ON users.id = api_access_keys.user_id"
+	}
 	if err := r.db.QueryRowContext(ctx, `
 		SELECT COUNT(*)
-		FROM api_access_keys
-		LEFT JOIN users ON users.id = api_access_keys.user_id
+		`+countFrom+`
 		`+where, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -159,9 +258,9 @@ func (r *Repository) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]
 				api_key_id,
 				COUNT(*) AS request_count,
 				COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
-				COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
+				COALESCE(SUM(CASE WHEN response_status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS failed_count,
 				COALESCE(SUM(CASE WHEN status = 'success' THEN image_count ELSE 0 END), 0) AS image_count,
-				MAX(CASE WHEN status = 'failed' THEN error_message ELSE NULL END) AS last_error
+				MAX(CASE WHEN response_status_code IN (429, 502) THEN error_message ELSE NULL END) AS last_error
 			FROM api_access_logs
 			GROUP BY api_key_id
 		) AS key_usage ON key_usage.api_key_id = api_access_keys.id`
@@ -265,7 +364,16 @@ func buildAdminKeyWhere(input ListKeysInput) (string, []any) {
 		conditions = append(conditions, "api_access_keys.status = ?")
 		args = append(args, status)
 	}
-	if keyword := strings.ToLower(strings.TrimSpace(input.Keyword)); keyword != "" {
+	if input.IdentityOnly {
+		identityConditions := []string{}
+		appendIDFilter(&identityConditions, &args, "api_access_keys.user_id", input.UserIDs)
+		appendIDFilter(&identityConditions, &args, "api_access_keys.id", input.APIKeyIDs)
+		if len(identityConditions) == 0 {
+			conditions = append(conditions, "1 = 0")
+		} else {
+			conditions = append(conditions, "("+strings.Join(identityConditions, " OR ")+")")
+		}
+	} else if keyword := strings.ToLower(strings.TrimSpace(input.Keyword)); keyword != "" {
 		like := "%" + keyword + "%"
 		conditions = append(conditions, `(
 			LOWER(api_access_keys.id) LIKE ?
@@ -279,6 +387,31 @@ func buildAdminKeyWhere(input ListKeysInput) (string, []any) {
 		}
 	}
 	return "WHERE " + strings.Join(conditions, " AND "), args
+}
+
+func appendIDFilter(conditions *[]string, args *[]any, column string, ids []string) {
+	uniqueIDs := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
+	}
+	if len(uniqueIDs) == 0 {
+		return
+	}
+	placeholders := make([]string, len(uniqueIDs))
+	for index, id := range uniqueIDs {
+		placeholders[index] = "?"
+		*args = append(*args, id)
+	}
+	*conditions = append(*conditions, column+" IN ("+strings.Join(placeholders, ",")+")")
 }
 
 func (r *Repository) attachKeyUsageStats(ctx context.Context, keys []AccessKey) error {
@@ -300,9 +433,9 @@ func (r *Repository) attachKeyUsageStats(ctx context.Context, keys []AccessKey) 
 			api_key_id,
 			COUNT(*) AS request_count,
 			COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
-			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
+			COALESCE(SUM(CASE WHEN response_status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS failed_count,
 			COALESCE(SUM(CASE WHEN status = 'success' THEN image_count ELSE 0 END), 0) AS image_count,
-			MAX(CASE WHEN status = 'failed' THEN error_message ELSE NULL END) AS last_error
+			MAX(CASE WHEN response_status_code IN (429, 502) THEN error_message ELSE NULL END) AS last_error
 		FROM api_access_logs
 		WHERE api_key_id IN (`+strings.Join(placeholders, ",")+`)
 		GROUP BY api_key_id
@@ -365,9 +498,9 @@ func keyListSelect() string {
 			api_access_keys.updated_at,
 			COUNT(api_access_logs.id) AS request_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
-			COALESCE(SUM(CASE WHEN api_access_logs.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
+			COALESCE(SUM(CASE WHEN api_access_logs.response_status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS failed_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status = 'success' THEN api_access_logs.image_count ELSE 0 END), 0) AS image_count,
-			MAX(CASE WHEN api_access_logs.status = 'failed' THEN api_access_logs.error_message ELSE NULL END) AS last_error
+			MAX(CASE WHEN api_access_logs.response_status_code IN (429, 502) THEN api_access_logs.error_message ELSE NULL END) AS last_error
 		FROM api_access_keys
 		LEFT JOIN users ON users.id = api_access_keys.user_id
 		LEFT JOIN api_access_logs ON api_access_logs.api_key_id = api_access_keys.id
@@ -498,12 +631,13 @@ func (r *Repository) createLog(ctx context.Context, store accessStore, log Usage
 	if err != nil {
 		return nil, err
 	}
+	responseStatusCode, errorMessage, errorCode, errorDetails := usageLogErrorFields(log)
 	_, err = store.ExecContext(ctx, `
 		INSERT INTO api_access_logs
-			(id, user_id, api_key_id, task_id, endpoint, model, prompt, size, quality, quantity, image_count, response_format, request_params, status, error_message, finished_at)
+			(id, user_id, api_key_id, task_id, endpoint, model, prompt, size, quality, quantity, image_count, response_format, request_params, status, error_message, response_status_code, error_code, error_details, finished_at)
 		VALUES
-			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, log.ID, log.UserID, log.APIKeyID, log.TaskID, log.Endpoint, log.Model, log.Prompt, log.Size, log.Quality, log.Quantity, log.ImageCount, log.ResponseFormat, requestParams, log.Status, log.ErrorMessage, log.FinishedAt)
+			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, log.ID, log.UserID, log.APIKeyID, log.TaskID, log.Endpoint, log.Model, log.Prompt, log.Size, log.Quality, log.Quantity, log.ImageCount, log.ResponseFormat, requestParams, log.Status, errorMessage, responseStatusCode, errorCode, errorDetails, log.FinishedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -536,10 +670,17 @@ func (r *Repository) MarkLogsProcessingForTask(ctx context.Context, taskID strin
 }
 
 func (r *Repository) FinishLog(ctx context.Context, id string, status string, imageCount int, message string) error {
-	var errorMessage any
-	if strings.TrimSpace(message) != "" {
-		errorMessage = strings.TrimSpace(message)
-	}
+	return r.FinishLogWithDetails(ctx, id, status, imageCount, message, apierrors.Details{})
+}
+
+func (r *Repository) FinishLogWithDetails(ctx context.Context, id string, status string, imageCount int, message string, details apierrors.Details) error {
+	responseStatusCode, errorMessage, errorCode, errorDetails := usageLogErrorFields(UsageLog{
+		Status:             status,
+		ErrorMessage:       stringPointer(message),
+		ResponseStatusCode: details.StatusCode,
+		ErrorCode:          stringPointer(details.Code),
+		ErrorDetails:       detailsPointer(details),
+	})
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE api_access_logs
 		SET status = ?, image_count = ?, error_message = ?,
@@ -551,21 +692,29 @@ func (r *Repository) FinishLog(ctx context.Context, id string, status string, im
 				SELECT generation_tasks.model_cost_credits FROM generation_tasks
 				WHERE generation_tasks.id = api_access_logs.task_id LIMIT 1
 			), 0) ELSE 0 END,
+			response_status_code = ?, error_code = ?, error_details = ?,
 			finished_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, status, imageCount, errorMessage, status, status, id)
+	`, status, imageCount, errorMessage, status, status, responseStatusCode, errorCode, errorDetails, id)
 	return err
 }
 
 func (r *Repository) FinishLogsForTask(ctx context.Context, taskID string, status string, imageCount int, message string) error {
+	return r.FinishLogsForTaskWithDetails(ctx, taskID, status, imageCount, message, apierrors.Details{})
+}
+
+func (r *Repository) FinishLogsForTaskWithDetails(ctx context.Context, taskID string, status string, imageCount int, message string, details apierrors.Details) error {
 	taskID = strings.TrimSpace(taskID)
 	if taskID == "" {
 		return nil
 	}
-	var errorMessage any
-	if strings.TrimSpace(message) != "" {
-		errorMessage = strings.TrimSpace(message)
-	}
+	responseStatusCode, errorMessage, errorCode, errorDetails := usageLogErrorFields(UsageLog{
+		Status:             status,
+		ErrorMessage:       stringPointer(message),
+		ResponseStatusCode: details.StatusCode,
+		ErrorCode:          stringPointer(details.Code),
+		ErrorDetails:       detailsPointer(details),
+	})
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE api_access_logs
 		SET status = ?, image_count = ?, error_message = ?,
@@ -577,14 +726,67 @@ func (r *Repository) FinishLogsForTask(ctx context.Context, taskID string, statu
 				SELECT generation_tasks.model_cost_credits FROM generation_tasks
 				WHERE generation_tasks.id = api_access_logs.task_id LIMIT 1
 			), 0) ELSE 0 END,
+			response_status_code = ?, error_code = ?, error_details = ?,
 			finished_at = CURRENT_TIMESTAMP
 		WHERE task_id = ?
 			AND (
 				status IN ('queued', 'processing')
 				OR (status = 'failed' AND error_message = 'context canceled')
 			)
-	`, status, imageCount, errorMessage, status, status, taskID)
+	`, status, imageCount, errorMessage, status, status, responseStatusCode, errorCode, errorDetails, taskID)
 	return err
+}
+
+func usageLogErrorFields(log UsageLog) (int, any, any, any) {
+	status := strings.ToLower(strings.TrimSpace(log.Status))
+	responseStatusCode := log.ResponseStatusCode
+	switch {
+	case status == "success" || status == "succeeded":
+		responseStatusCode = http.StatusOK
+	case status == "canceled" || status == "cancelled":
+		if responseStatusCode == 0 {
+			responseStatusCode = 499
+		}
+	case status == "failed":
+		if responseStatusCode == 0 {
+			responseStatusCode = http.StatusInternalServerError
+		}
+	}
+	if !apierrors.IsCountedFailureStatus(responseStatusCode) || status != "failed" {
+		return responseStatusCode, nil, nil, nil
+	}
+	details := apierrors.Details{StatusCode: responseStatusCode}
+	if log.ErrorDetails != nil {
+		details = *log.ErrorDetails
+	}
+	details.StatusCode = responseStatusCode
+	if strings.TrimSpace(details.Message) == "" && log.ErrorMessage != nil {
+		details.Message = strings.TrimSpace(*log.ErrorMessage)
+	}
+	if log.ErrorCode != nil && strings.TrimSpace(*log.ErrorCode) != "" {
+		details.Code = strings.TrimSpace(*log.ErrorCode)
+	}
+	apierrors.Normalize(&details)
+	encoded, err := json.Marshal(details)
+	if err != nil {
+		encoded = nil
+	}
+	return responseStatusCode, details.Message, details.Code, encoded
+}
+
+func stringPointer(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func detailsPointer(value apierrors.Details) *apierrors.Details {
+	if value.StatusCode == 0 && strings.TrimSpace(value.Message) == "" && strings.TrimSpace(value.Code) == "" {
+		return nil
+	}
+	return &value
 }
 
 func (r *Repository) SyncTerminalTaskLogs(ctx context.Context, limit int) error {
@@ -740,7 +942,8 @@ func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageSt
 		SELECT
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
-			COALESCE(SUM(CASE WHEN api_access_logs.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed,
+			COALESCE(SUM(CASE WHEN api_access_logs.response_status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS failed,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') OR api_access_logs.response_status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS counted,
 			COALESCE(SUM(api_access_logs.image_count), 0) AS image_count,
 			COALESCE(SUM(api_access_logs.charged_credits), 0) AS charged_credits,
 			COALESCE(SUM(api_access_logs.model_cost_credits), 0) AS model_cost_credits
@@ -749,6 +952,7 @@ func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageSt
 		&stats.Total,
 		&stats.Success,
 		&stats.Failed,
+		&stats.Counted,
 		&stats.ImageCount,
 		&stats.ChargedCredits,
 		&stats.ModelCostCredits,
@@ -761,7 +965,7 @@ func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageSt
 // owned by those tables; filtering by IDs and status can be done directly on
 // api_access_logs.
 func logCountFrom(input ListLogsInput) string {
-	if strings.TrimSpace(input.Keyword) == "" {
+	if strings.TrimSpace(input.Keyword) == "" || input.IdentityOnly {
 		return "FROM api_access_logs"
 	}
 	return `FROM api_access_logs
@@ -775,7 +979,7 @@ func (r *Repository) DailyUsageTrend(ctx context.Context, userID string, startAt
 			DATE(created_at) AS usage_date,
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
-			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+			COALESCE(SUM(CASE WHEN response_status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS failed
 		FROM api_access_logs
 		WHERE user_id = ? AND created_at >= ? AND created_at < ?
 		GROUP BY DATE(created_at)
@@ -820,6 +1024,9 @@ func usageLogSelect() string {
 			api_access_logs.request_params,
 			api_access_logs.status,
 			api_access_logs.error_message,
+			COALESCE(api_access_logs.response_status_code, 0),
+			api_access_logs.error_code,
+			api_access_logs.error_details,
 			COALESCE(api_access_logs.charged_credits, 0),
 			COALESCE(api_access_logs.model_cost_credits, 0),
 			COALESCE(generation_tasks.duration_seconds, 0),
@@ -862,8 +1069,16 @@ func buildLogWhere(input ListLogsInput) (string, []any) {
 		conditions = append(conditions, "api_access_logs.status = ?")
 		args = append(args, status)
 	}
-	keyword := strings.ToLower(strings.TrimSpace(input.Keyword))
-	if keyword != "" {
+	if input.IdentityOnly {
+		identityConditions := []string{}
+		appendIDFilter(&identityConditions, &args, "api_access_logs.user_id", input.UserIDs)
+		appendIDFilter(&identityConditions, &args, "api_access_logs.api_key_id", input.APIKeyIDs)
+		if len(identityConditions) == 0 {
+			conditions = append(conditions, "1 = 0")
+		} else {
+			conditions = append(conditions, "("+strings.Join(identityConditions, " OR ")+")")
+		}
+	} else if keyword := strings.ToLower(strings.TrimSpace(input.Keyword)); keyword != "" {
 		like := "%" + keyword + "%"
 		requestParamsCondition := "LOWER(COALESCE(CAST(api_access_logs.request_params AS CHAR), '')) LIKE ?"
 		if database.CurrentDialect() == database.DialectPostgres {
@@ -956,16 +1171,18 @@ func (r *Repository) AdminOperationsRanking(ctx context.Context, startAt time.Ti
 			END AS billing_mode,
 			COUNT(*) AS request_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success_count,
-			COALESCE(SUM(CASE WHEN api_access_logs.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed_count,
+			COALESCE(SUM(CASE WHEN api_access_logs.response_status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS failed_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN api_access_logs.image_count ELSE 0 END), 0) AS image_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN api_access_logs.charged_credits ELSE 0 END), 0) AS credits_spent,
 			COALESCE(AVG(CASE
-				WHEN api_access_logs.status NOT IN ('success', 'succeeded', 'failed') THEN NULL
-				WHEN generation_tasks.duration_seconds > 0 AND generation_tasks.duration_seconds <= 300 THEN generation_tasks.duration_seconds
-				WHEN api_access_logs.finished_at IS NOT NULL
-					AND api_access_logs.finished_at >= api_access_logs.created_at
-					AND `+durationSecondsExpression+` <= 300 THEN `+durationSecondsExpression+`
-				ELSE NULL
+				WHEN api_access_logs.status IN ('success', 'succeeded') OR api_access_logs.response_status_code IN (429, 502) THEN
+					CASE
+						WHEN generation_tasks.duration_seconds > 0 AND generation_tasks.duration_seconds <= 300 THEN generation_tasks.duration_seconds
+						WHEN api_access_logs.finished_at IS NOT NULL
+							AND api_access_logs.finished_at >= api_access_logs.created_at
+							AND `+durationSecondsExpression+` <= 300 THEN `+durationSecondsExpression+`
+						ELSE NULL
+					END
 			END), 0) AS average_duration_seconds,
 			MAX(api_access_logs.created_at) AS last_request_at
 		FROM api_access_logs
@@ -1168,7 +1385,7 @@ func (r *Repository) AdminOperationsTrend(ctx context.Context, now time.Time, mi
 			`+bucketExpression+` AS minute_bucket,
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
-			COALESCE(SUM(CASE WHEN api_access_logs.status = 'failed' THEN 1 ELSE 0 END), 0) AS failed
+			COALESCE(SUM(CASE WHEN api_access_logs.response_status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS failed
 		FROM api_access_logs
 		WHERE api_access_logs.created_at >= ?
 			AND api_access_logs.created_at < ?
@@ -1235,7 +1452,7 @@ func (r *Repository) AdminStats(ctx context.Context) (AdminStats, error) {
 		SELECT
 			COUNT(*) AS today_requests,
 			COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS today_success,
-			COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0) AS today_failed,
+			COALESCE(SUM(CASE WHEN response_status_code IN (429, 502) THEN 1 ELSE 0 END), 0) AS today_failed,
 			COALESCE(SUM(CASE WHEN status = 'success' THEN image_count ELSE 0 END), 0) AS today_image_count
 		FROM api_access_logs
 		WHERE created_at >= CURRENT_DATE
@@ -1321,7 +1538,7 @@ type usageLogScanner interface {
 
 func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	var item UsageLog
-	var userEmail, keyName, keyPrefix, taskID, requestParams, taskUsage, errorMessage sql.NullString
+	var userEmail, keyName, keyPrefix, taskID, requestParams, taskUsage, errorMessage, errorCode, errorDetails sql.NullString
 	var finishedAt sql.NullTime
 	if err := row.Scan(
 		&item.ID,
@@ -1342,6 +1559,9 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 		&requestParams,
 		&item.Status,
 		&errorMessage,
+		&item.ResponseStatusCode,
+		&errorCode,
+		&errorDetails,
 		&item.ChargedCredits,
 		&item.ModelCostCredits,
 		&item.DurationSeconds,
@@ -1375,6 +1595,18 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	}
 	if errorMessage.Valid && strings.TrimSpace(errorMessage.String) != "" {
 		item.ErrorMessage = &errorMessage.String
+	}
+	if errorCode.Valid && strings.TrimSpace(errorCode.String) != "" {
+		item.ErrorCode = &errorCode.String
+	}
+	if errorDetails.Valid && strings.TrimSpace(errorDetails.String) != "" {
+		var details apierrors.Details
+		if err := json.Unmarshal([]byte(errorDetails.String), &details); err != nil {
+			return nil, err
+		}
+		details.StatusCode = item.ResponseStatusCode
+		apierrors.Normalize(&details)
+		item.ErrorDetails = &details
 	}
 	if finishedAt.Valid {
 		value := appclock.DatabaseTime(finishedAt.Time)

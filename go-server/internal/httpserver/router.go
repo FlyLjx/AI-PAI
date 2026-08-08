@@ -115,6 +115,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/admin/request-monitor", r.adminRequestMonitor)
 	r.mux.HandleFunc("/api/admin/upstream-maintenance", r.upstreamMaintenance)
 	r.mux.HandleFunc("/api/admin/system-update", r.systemUpdate)
+	r.mux.HandleFunc("/api/admin/data-export", r.adminDataExport)
 	r.mux.HandleFunc("/api/announcements/public", r.publicAnnouncements)
 	r.mux.HandleFunc("/api/announcements", r.announcements)
 	r.mux.HandleFunc("/api/announcements/", r.announcementByID)

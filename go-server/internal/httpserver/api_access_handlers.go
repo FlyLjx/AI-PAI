@@ -309,16 +309,25 @@ func (r *Router) adminAPIAccessKeys(w http.ResponseWriter, req *http.Request) {
 	if pageSize > 100 {
 		pageSize = 100
 	}
-	service := apiaccess.NewService(repo, users.NewRepository(r.db)).
-		WithDynamicConcurrencyConfig(config)
-	items, total, err := service.ListAdminKeys(ctx, apiaccess.ListKeysInput{
+	input := apiaccess.ListKeysInput{
 		Status:    req.URL.Query().Get("status"),
 		Keyword:   req.URL.Query().Get("keyword"),
 		Page:      page,
 		PageSize:  pageSize,
 		SortBy:    req.URL.Query().Get("sortBy"),
 		SortOrder: req.URL.Query().Get("sortOrder"),
-	})
+	}
+	targets, err := repo.ResolveIdentitySearchTargets(ctx, input.Keyword)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	input.IdentityOnly = targets.Enabled
+	input.UserIDs = targets.UserIDs
+	input.APIKeyIDs = targets.APIKeyIDs
+	service := apiaccess.NewService(repo, users.NewRepository(r.db)).
+		WithDynamicConcurrencyConfig(config)
+	items, total, err := service.ListAdminKeys(ctx, input)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -408,7 +417,16 @@ func (r *Router) adminAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 		SortBy:    req.URL.Query().Get("sortBy"),
 		SortOrder: req.URL.Query().Get("sortOrder"),
 	}
-	service := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db))
+	repo := apiaccess.NewRepository(r.db)
+	targets, err := repo.ResolveIdentitySearchTargets(ctx, input.Keyword)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	input.IdentityOnly = targets.Enabled
+	input.UserIDs = targets.UserIDs
+	input.APIKeyIDs = targets.APIKeyIDs
+	service := apiaccess.NewService(repo, users.NewRepository(r.db))
 	items, total, err := service.ListAdminLogs(ctx, input)
 	if err != nil {
 		writeError(w, err)
