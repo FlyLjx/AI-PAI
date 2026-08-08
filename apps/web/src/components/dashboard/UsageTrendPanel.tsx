@@ -128,9 +128,9 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
   };
 
   const series = [
-    { key: 'total', label: '调用量', value: summary.total, color: TREND_COLORS.total },
+    { key: 'total', label: '调用量（全部）', value: summary.total, color: TREND_COLORS.total },
     { key: 'success', label: '成功', value: summary.success, color: TREND_COLORS.success },
-    { key: 'failed', label: '失败', value: summary.failed, color: TREND_COLORS.failed },
+    { key: 'failed', label: '失败（计入统计）', value: summary.failed, color: TREND_COLORS.failed },
   ] as const;
 
   return (
@@ -224,7 +224,7 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
               />
               <Line type="linear" dataKey="total" name="调用量" stroke={TREND_COLORS.total} strokeWidth={2.25} dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
               <Line type="linear" dataKey="success" name="成功" stroke={TREND_COLORS.success} strokeWidth={2.25} dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-              <Line type="linear" dataKey="failed" name="失败" stroke={TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+              <Line type="linear" dataKey="failed" name="失败（计入统计）" stroke={TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
             </LineChart>
           </ResponsiveContainer>
         )}

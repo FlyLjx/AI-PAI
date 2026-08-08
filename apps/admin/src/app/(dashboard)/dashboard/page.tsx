@@ -308,9 +308,9 @@ export default function AdminDashboardPage() {
   const taskTrendSeries = [
     { key: 'total', label: '全部任务', value: taskTrendSummary.total, color: TASK_TREND_COLORS.total },
     { key: 'success', label: '成功', value: taskTrendSummary.success, color: TASK_TREND_COLORS.success },
-    { key: 'failed', label: '失败', value: taskTrendSummary.failed, color: TASK_TREND_COLORS.failed },
+    { key: 'failed', label: '失败（全部）', value: taskTrendSummary.failed, color: TASK_TREND_COLORS.failed },
     { key: 'running', label: '处理中', value: taskTrendSummary.running, color: TASK_TREND_COLORS.running },
-    { key: 'canceled', label: '已取消', value: taskTrendSummary.canceled, color: TASK_TREND_COLORS.canceled },
+    { key: 'canceled', label: '已取消（全部）', value: taskTrendSummary.canceled, color: TASK_TREND_COLORS.canceled },
     { key: 'excluded', label: '429/502（排除）', value: taskTrendSummary.excluded, color: TASK_TREND_COLORS.excluded },
   ] as const;
 
@@ -445,7 +445,7 @@ export default function AdminDashboardPage() {
                   <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `日期 ${String(label)}`} contentStyle={{ border: '1px solid #DCE4DF', borderRadius: 7, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 10 }} />
                   <Line type="linear" dataKey="total" name="全部任务" stroke={TASK_TREND_COLORS.total} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
                   <Line type="linear" dataKey="success" name="成功" stroke={TASK_TREND_COLORS.success} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-                  <Line type="linear" dataKey="failed" name="失败" stroke={TASK_TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+                  <Line type="linear" dataKey="failed" name="失败（全部）" stroke={TASK_TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
                   <Line type="linear" dataKey="running" name="处理中" stroke={TASK_TREND_COLORS.running} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
                   <Line type="linear" dataKey="canceled" name="已取消" stroke={TASK_TREND_COLORS.canceled} strokeWidth={1.75} strokeDasharray="3 4" dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
                   <Line type="linear" dataKey="excluded" name="429/502（不计成功率）" stroke={TASK_TREND_COLORS.excluded} strokeWidth={1.75} strokeDasharray="2 4" dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
