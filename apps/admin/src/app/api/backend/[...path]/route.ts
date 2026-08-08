@@ -43,6 +43,7 @@ const ADMIN_ROUTES: Rule[] = [
   { pattern: /^\/api\/announcements\/[^/]+$/, methods: ['PATCH', 'DELETE'] },
   { pattern: /^\/api\/tasks\/[^/]+\/cancel$/, methods: ['POST'] },
   { pattern: /^\/api\/settings$/, methods: ['GET', 'PATCH'] },
+  { pattern: /^\/api\/settings\/test-bark$/, methods: ['POST'] },
   { pattern: /^\/api\/system-logs$/, methods: ['GET'] },
   { pattern: /^\/api\/system-logs\/detail$/, methods: ['GET'] },
   { pattern: /^\/api\/system-logs\/[^/]+$/, methods: ['DELETE'] },
