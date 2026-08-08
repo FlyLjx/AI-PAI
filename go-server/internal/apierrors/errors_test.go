@@ -56,7 +56,7 @@ func TestDetailsJSONRoundTripPreservesRetryableFlag(t *testing.T) {
 	}
 }
 
-func TestCountedFailureStatusOnlyIncludes429And502(t *testing.T) {
+func TestSpecialUpstreamStatusOnlyIncludes429And502(t *testing.T) {
 	for _, status := range []int{http.StatusTooManyRequests, http.StatusBadGateway} {
 		if !IsCountedFailureStatus(status) {
 			t.Fatalf("status %d should be counted", status)

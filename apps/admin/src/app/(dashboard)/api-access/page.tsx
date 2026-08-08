@@ -105,16 +105,20 @@ function wantsBase64Response(format?: string | null): boolean {
   return ['b64_json', 'base64', 'b64'].includes(String(format || '').trim().toLowerCase());
 }
 
+function isCountedFailure(log: UsageLog): boolean {
+  const status = log.status.toLowerCase();
+  return ['failed', 'canceled', 'cancelled'].includes(status)
+    && ![429, 502].includes(Number(log.responseStatusCode || 0));
+}
+
+function isCountedRequest(log: UsageLog): boolean {
+  return ['success', 'succeeded'].includes(log.status.toLowerCase()) || isCountedFailure(log);
+}
+
 function responseParameters(log: DetailedUsageLog): Record<string, unknown> {
   if (log.responseParameters && Object.keys(log.responseParameters).length > 0) return log.responseParameters;
   const normalizedStatus = log.status.toLowerCase();
   if (['failed', 'canceled', 'cancelled'].includes(normalizedStatus)) {
-    if (Number(log.responseStatusCode || 0) !== 429 && Number(log.responseStatusCode || 0) !== 502) {
-      return {
-        status: normalizedStatus,
-        response_status_code: Number(log.responseStatusCode || 0) || undefined,
-      };
-    }
     return {
       error: {
         message: log.errorMessage || (normalizedStatus === 'failed' ? '图片生成失败' : '任务已取消'),
@@ -233,9 +237,9 @@ export default function AdminAPIAccessPage() {
       setLogTotal(responseTotal);
       setLogSummary(response.summary || {
         total: responseTotal,
-        counted: response.data.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase()) || [429, 502].includes(Number(log.responseStatusCode || 0))).length,
+        counted: response.data.filter(isCountedRequest).length,
         success: response.data.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase())).length,
-        failed: response.data.filter((log) => log.status.toLowerCase() === 'failed').length,
+        failed: response.data.filter(isCountedFailure).length,
         imageCount: response.data.reduce((total, log) => total + Number(log.imageCount || 0), 0),
       });
       setLogPage(page);

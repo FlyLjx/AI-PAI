@@ -359,12 +359,6 @@ func DynamicConcurrencyLimitWithConfig(baseConcurrency int, requestCount int, co
 }
 
 func ToPublicLog(log UsageLog) PublicUsageLog {
-	visibleErrorMessage := log.ErrorMessage
-	visibleErrorCode := log.ErrorCode
-	if !apierrors.IsCountedFailureStatus(log.ResponseStatusCode) {
-		visibleErrorMessage = nil
-		visibleErrorCode = nil
-	}
 	return PublicUsageLog{
 		ID:                 log.ID,
 		UserID:             log.UserID,
@@ -384,9 +378,9 @@ func ToPublicLog(log UsageLog) PublicUsageLog {
 		RequestParams:      log.RequestParams,
 		ResponseParams:     usageLogResponseParams(log),
 		Status:             log.Status,
-		ErrorMessage:       visibleErrorMessage,
+		ErrorMessage:       log.ErrorMessage,
 		ResponseStatusCode: log.ResponseStatusCode,
-		ErrorCode:          visibleErrorCode,
+		ErrorCode:          log.ErrorCode,
 		ChargedCredits:     log.ChargedCredits,
 		DurationSeconds:    log.DurationSeconds,
 		CreatedAt:          log.CreatedAt.Format(time.RFC3339),
@@ -466,13 +460,6 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 		}
 		return response
 	case "failed", "canceled", "cancelled":
-		if !apierrors.IsCountedFailureStatus(log.ResponseStatusCode) {
-			response := map[string]any{"status": status}
-			if log.ResponseStatusCode != 0 {
-				response["response_status_code"] = log.ResponseStatusCode
-			}
-			return response
-		}
 		message := "图片生成失败"
 		if status == "canceled" || status == "cancelled" {
 			message = "任务已取消"

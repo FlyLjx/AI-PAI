@@ -253,8 +253,8 @@ func trimLong(value string, limit int) string {
 	return value[:limit] + "..."
 }
 
-// IsCountedFailureStatus is the single success-rate failure rule used by API
-// access logs and request monitoring.
+// IsCountedFailureStatus identifies the 429/502 upstream statuses that use
+// special retry handling and are excluded from success-rate denominators.
 func IsCountedFailureStatus(status int) bool {
 	return status == http.StatusTooManyRequests || status == http.StatusBadGateway
 }

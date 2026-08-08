@@ -72,16 +72,20 @@ function wantsBase64Response(format?: string | null): boolean {
   return ['b64_json', 'base64', 'b64'].includes(String(format || '').trim().toLowerCase());
 }
 
+function isCountedFailure(log: UsageLog): boolean {
+  const status = log.status.toLowerCase();
+  return ['failed', 'canceled', 'cancelled'].includes(status)
+    && ![429, 502].includes(Number(log.responseStatusCode || 0));
+}
+
+function isCountedRequest(log: UsageLog): boolean {
+  return ['success', 'succeeded'].includes(log.status.toLowerCase()) || isCountedFailure(log);
+}
+
 function responseParameters(log: UsageLog): Record<string, unknown> {
   if (log.responseParameters && Object.keys(log.responseParameters).length > 0) return log.responseParameters;
   const normalizedStatus = log.status.toLowerCase();
   if (['failed', 'canceled', 'cancelled'].includes(normalizedStatus)) {
-    if (Number(log.responseStatusCode || 0) !== 429 && Number(log.responseStatusCode || 0) !== 502) {
-      return {
-        status: normalizedStatus,
-        response_status_code: Number(log.responseStatusCode || 0) || undefined,
-      };
-    }
     return {
       error: {
         message: log.errorMessage || (normalizedStatus === 'failed' ? '图片生成失败' : '任务已取消'),
@@ -155,9 +159,9 @@ export default function UsagePage() {
       setTotal(responseTotal);
       setSummary(response.summary || {
         total: responseTotal,
-        counted: items.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase()) || [429, 502].includes(Number(log.responseStatusCode || 0))).length,
+        counted: items.filter(isCountedRequest).length,
         success: items.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase())).length,
-        failed: items.filter((log) => log.status.toLowerCase() === 'failed').length,
+        failed: items.filter(isCountedFailure).length,
         imageCount: items.reduce((sum, log) => sum + Number(log.imageCount || 0), 0),
       });
     } catch (loadError) {
@@ -188,7 +192,7 @@ export default function UsagePage() {
 
   const countedRequests = Number(summary.counted ?? summary.success + summary.failed);
   const successRate = useMemo(() => countedRequests > 0 ? `${((summary.success / countedRequests) * 100).toFixed(1)}%` : '0.0%', [countedRequests, summary.success]);
-  const pending = Math.max(0, summary.total - countedRequests);
+  const excludedFromSuccessRate = Math.max(0, summary.total - countedRequests);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -246,7 +250,7 @@ export default function UsagePage() {
       <section className="metric-grid">
         <StatBlock title="请求总数" value={summary.total.toLocaleString()} subtext="当前筛选范围" icon={Activity} color="green" />
         <StatBlock title="成功请求" value={summary.success.toLocaleString()} subtext={`${summary.failed.toLocaleString()} 次失败`} icon={CheckCircle2} color="cyan" />
-        <StatBlock title="成功率" value={successRate} subtext={pending > 0 ? `${pending.toLocaleString()} 个未纳入统计` : '成功请求 / 纳入统计'} icon={Gauge} color="amber" />
+        <StatBlock title="成功率" value={successRate} subtext={excludedFromSuccessRate > 0 ? `${excludedFromSuccessRate.toLocaleString()} 个未纳入成功率统计` : '成功请求 / 纳入统计'} icon={Gauge} color="amber" />
         <StatBlock title="输出图片" value={summary.imageCount.toLocaleString()} subtext={`第 ${page} / ${totalPages} 页`} icon={ImageIcon} color="neutral" />
       </section>
 

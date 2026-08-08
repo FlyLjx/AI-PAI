@@ -54,8 +54,8 @@ const METHOD_OPTIONS = [
 const STATUS_OPTIONS = [
   { value: 'all', label: '全部状态' },
   { value: 'success', label: '正常响应' },
-  { value: 'client_error', label: '429 频率受限' },
-  { value: 'server_error', label: '502 上游异常' },
+  { value: 'client_error', label: '4xx 客户端错误' },
+  { value: 'server_error', label: '5xx 服务端错误' },
 ];
 
 function statusMeta(statusCode: number) {
@@ -170,7 +170,7 @@ export default function RequestMonitorPage() {
 
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <StatBlock title="请求总量" value={snapshot.summary.total.toLocaleString('zh-CN')} subtext={`正常 ${snapshot.summary.successful.toLocaleString('zh-CN')} 次`} icon={Activity} color="cyan" />
-        <StatBlock title="纳入统计错误" value={(snapshot.summary.clientErrors + snapshot.summary.serverErrors).toLocaleString('zh-CN')} subtext={`错误率 ${snapshot.summary.errorRate.toFixed(2)}% · 统计 ${snapshot.summary.counted.toLocaleString('zh-CN')} 次`} icon={ServerCrash} color={snapshot.summary.serverErrors ? 'amber' : 'neutral'} />
+        <StatBlock title="请求错误" value={(snapshot.summary.clientErrors + snapshot.summary.serverErrors).toLocaleString('zh-CN')} subtext={`错误率 ${snapshot.summary.errorRate.toFixed(2)}% · 统计 ${snapshot.summary.counted.toLocaleString('zh-CN')} 次`} icon={ServerCrash} color={snapshot.summary.serverErrors ? 'amber' : 'neutral'} />
         <StatBlock title="平均耗时" value={durationLabel(snapshot.summary.averageDurationMs)} subtext="接口响应平均用时" icon={Clock3} color="green" />
         <StatBlock title="独立来源 IP" value={snapshot.summary.uniqueSources.toLocaleString('zh-CN')} subtext="当前筛选范围去重" icon={Globe2} color="neutral" />
       </div>

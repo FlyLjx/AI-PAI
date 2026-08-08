@@ -102,7 +102,7 @@ func TestToPublicLogIncludesFailureResponseParameters(t *testing.T) {
 	}
 }
 
-func TestToPublicLogHidesNonCountedFailureMessage(t *testing.T) {
+func TestToPublicLogIncludes400FailureMessage(t *testing.T) {
 	message := "参考图缺失或格式不可识别"
 	publicLog := ToPublicLog(UsageLog{
 		Status:             "failed",
@@ -110,23 +110,31 @@ func TestToPublicLogHidesNonCountedFailureMessage(t *testing.T) {
 		ResponseStatusCode: 400,
 		CreatedAt:          time.Now(),
 	})
-	if publicLog.ErrorMessage != nil || publicLog.ResponseParams["error"] != nil {
-		t.Fatalf("non-429/502 error should stay hidden: %+v", publicLog)
+	if publicLog.ErrorMessage == nil || *publicLog.ErrorMessage != message {
+		t.Fatalf("non-429/502 error message should be visible: %+v", publicLog)
 	}
-	if publicLog.ResponseParams["response_status_code"] != 400 {
-		t.Fatalf("response status should remain visible: %#v", publicLog.ResponseParams)
+	errorPayload, ok := publicLog.ResponseParams["error"].(map[string]any)
+	if !ok || errorPayload["message"] != message || errorPayload["code"] != "invalid_request" {
+		t.Fatalf("non-429/502 error details should be visible: %#v", publicLog.ResponseParams)
 	}
 }
 
-func TestUsageLogErrorFieldsOnlyPersists429And502Details(t *testing.T) {
+func TestUsageLogErrorFieldsPersistsAllFailureDetails(t *testing.T) {
 	message := "参考图缺失"
 	status, storedMessage, storedCode, storedDetails := usageLogErrorFields(UsageLog{
 		Status:             "failed",
 		ErrorMessage:       &message,
 		ResponseStatusCode: 400,
 	})
-	if status != 400 || storedMessage != nil || storedCode != nil || storedDetails != nil {
-		t.Fatalf("400 error should keep only status: %d %v %v %v", status, storedMessage, storedCode, storedDetails)
+	if status != 400 || storedMessage != message || storedCode != "invalid_request" || storedDetails == nil {
+		t.Fatalf("400 error details were not persisted: %d %v %v %v", status, storedMessage, storedCode, storedDetails)
+	}
+	var stored400 apierrors.Details
+	if err := json.Unmarshal(storedDetails.([]byte), &stored400); err != nil {
+		t.Fatalf("decode 400 error details: %v", err)
+	}
+	if stored400.Message != message || stored400.Code != "invalid_request" || stored400.Retryable {
+		t.Fatalf("unexpected 400 error details: %+v", stored400)
 	}
 
 	details := apierrors.Details{StatusCode: 502, Code: "image_generation_failed", Message: "上游失败", Retryable: true, RetryableSet: true}
@@ -138,6 +146,14 @@ func TestUsageLogErrorFieldsOnlyPersists429And502Details(t *testing.T) {
 	})
 	if status != 502 || storedMessage != "上游失败" || storedCode != "image_generation_failed" || storedDetails == nil {
 		t.Fatalf("502 details were not persisted: %d %v %v %v", status, storedMessage, storedCode, storedDetails)
+	}
+
+	status, storedMessage, storedCode, storedDetails = usageLogErrorFields(UsageLog{
+		Status:       "canceled",
+		ErrorMessage: &message,
+	})
+	if status != 499 || storedMessage != message || storedCode != "request_canceled" || storedDetails == nil {
+		t.Fatalf("canceled error details were not persisted: %d %v %v %v", status, storedMessage, storedCode, storedDetails)
 	}
 }
 
