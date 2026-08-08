@@ -316,8 +316,11 @@ func (r *Repository) dashboardFast(ctx context.Context) (map[string]any, error) 
 	}
 
 	var todayTasks, todayRunning, todayFailed, todaySuccess int
+	var todayCountedFailed, todayExcluded int
 	var yesterdayTasks, yesterdayRunning, yesterdayFailed, yesterdaySuccess int
+	var yesterdayCountedFailed, yesterdayExcluded int
 	var taskTotal, taskQueued, taskPending, taskProcessing, taskSuccess, taskFailed, taskCanceled int
+	var taskCountedFailed, taskExcluded int
 	var taskTotalImages, runningTasks, recentFailed, privateImages int
 	var lastTask sql.NullTime
 	taskStatRows, err := r.db.QueryContext(ctx, `
@@ -330,6 +333,46 @@ func (r *Repository) dashboardFast(ctx context.Context) (map[string]any, error) 
 			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) AND status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS recent_total,
 			COALESCE(SUM(CASE WHEN status IN ('queued', 'pending', 'processing') THEN 1 ELSE 0 END), 0) AS running_total,
 			COALESCE(SUM(CASE WHEN status = 'success' AND display_enabled = FALSE THEN 1 ELSE 0 END), 0) AS private_total,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
+				AND NOT EXISTS (
+					SELECT 1 FROM api_access_logs
+					WHERE api_access_logs.task_id = generation_tasks.id
+						AND api_access_logs.response_status_code IN (429, 502)
+				) THEN 1 ELSE 0 END), 0) AS counted_failure_total,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
+				AND EXISTS (
+					SELECT 1 FROM api_access_logs
+					WHERE api_access_logs.task_id = generation_tasks.id
+						AND api_access_logs.response_status_code IN (429, 502)
+				) THEN 1 ELSE 0 END), 0) AS excluded_total,
+			COALESCE(SUM(CASE WHEN created_at >= CURDATE()
+				AND status IN ('failed', 'canceled', 'cancelled')
+				AND NOT EXISTS (
+					SELECT 1 FROM api_access_logs
+					WHERE api_access_logs.task_id = generation_tasks.id
+						AND api_access_logs.response_status_code IN (429, 502)
+				) THEN 1 ELSE 0 END), 0) AS today_counted_failure,
+			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE()
+				AND status IN ('failed', 'canceled', 'cancelled')
+				AND NOT EXISTS (
+					SELECT 1 FROM api_access_logs
+					WHERE api_access_logs.task_id = generation_tasks.id
+						AND api_access_logs.response_status_code IN (429, 502)
+				) THEN 1 ELSE 0 END), 0) AS yesterday_counted_failure,
+			COALESCE(SUM(CASE WHEN created_at >= CURDATE()
+				AND status IN ('failed', 'canceled', 'cancelled')
+				AND EXISTS (
+					SELECT 1 FROM api_access_logs
+					WHERE api_access_logs.task_id = generation_tasks.id
+						AND api_access_logs.response_status_code IN (429, 502)
+				) THEN 1 ELSE 0 END), 0) AS today_excluded,
+			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE()
+				AND status IN ('failed', 'canceled', 'cancelled')
+				AND EXISTS (
+					SELECT 1 FROM api_access_logs
+					WHERE api_access_logs.task_id = generation_tasks.id
+						AND api_access_logs.response_status_code IN (429, 502)
+				) THEN 1 ELSE 0 END), 0) AS yesterday_excluded,
 			MAX(created_at) AS last_created_at
 		FROM generation_tasks
 		GROUP BY status
@@ -340,8 +383,9 @@ func (r *Repository) dashboardFast(ctx context.Context) (map[string]any, error) 
 	for taskStatRows.Next() {
 		var status string
 		var total, images, todayTotal, yesterdayTotal, recentTotal, runningTotal, privateTotal int
+		var countedFailureTotal, excludedTotal, todayCountedFailureTotal, yesterdayCountedFailureTotal, todayExcludedTotal, yesterdayExcludedTotal int
 		var lastCreatedAt sql.NullTime
-		if err := taskStatRows.Scan(&status, &total, &images, &todayTotal, &yesterdayTotal, &recentTotal, &runningTotal, &privateTotal, &lastCreatedAt); err != nil {
+		if err := taskStatRows.Scan(&status, &total, &images, &todayTotal, &yesterdayTotal, &recentTotal, &runningTotal, &privateTotal, &countedFailureTotal, &excludedTotal, &todayCountedFailureTotal, &yesterdayCountedFailureTotal, &todayExcludedTotal, &yesterdayExcludedTotal, &lastCreatedAt); err != nil {
 			taskStatRows.Close()
 			return nil, err
 		}
@@ -352,6 +396,12 @@ func (r *Repository) dashboardFast(ctx context.Context) (map[string]any, error) 
 		runningTasks += runningTotal
 		recentFailed += recentTotal
 		privateImages += privateTotal
+		taskCountedFailed += countedFailureTotal
+		taskExcluded += excludedTotal
+		todayCountedFailed += todayCountedFailureTotal
+		yesterdayCountedFailed += yesterdayCountedFailureTotal
+		todayExcluded += todayExcludedTotal
+		yesterdayExcluded += yesterdayExcludedTotal
 		if lastCreatedAt.Valid && (!lastTask.Valid || lastCreatedAt.Time.After(lastTask.Time)) {
 			lastTask = lastCreatedAt
 		}
@@ -436,12 +486,16 @@ func (r *Repository) dashboardFast(ctx context.Context) (map[string]any, error) 
 	result["today"] = map[string]any{
 		"users": todayUsers, "orders": orderTotals.today, "paidAmount": orderTotals.todayPaidAmount,
 		"tasks": todayTasks, "runningTasks": todayRunning, "failedTasks": todayFailed,
-		"successfulTasks": todaySuccess, "balanceConsumed": balanceMetrics.TodayConsumed,
+		"successfulTasks": todaySuccess, "countedFailedTasks": todayCountedFailed,
+		"countedTasks": todaySuccess + todayCountedFailed, "excludedTasks": todayExcluded,
+		"balanceConsumed": balanceMetrics.TodayConsumed,
 	}
 	result["yesterday"] = map[string]any{
 		"users": yesterdayUsers, "orders": orderTotals.yesterday, "paidAmount": orderTotals.yesterdayPaidAmount,
 		"tasks": yesterdayTasks, "runningTasks": yesterdayRunning, "failedTasks": yesterdayFailed,
-		"successfulTasks": yesterdaySuccess, "balanceConsumed": balanceMetrics.YesterdayConsumed,
+		"successfulTasks": yesterdaySuccess, "countedFailedTasks": yesterdayCountedFailed,
+		"countedTasks": yesterdaySuccess + yesterdayCountedFailed, "excludedTasks": yesterdayExcluded,
+		"balanceConsumed": balanceMetrics.YesterdayConsumed,
 	}
 	result["users"] = map[string]any{
 		"total": userTotal, "active": activeUsers, "totalBalance": balanceMetrics.TotalBalance,
@@ -453,7 +507,9 @@ func (r *Repository) dashboardFast(ctx context.Context) (map[string]any, error) 
 	result["revenue"] = map[string]any{"totalPaidAmount": orderTotals.totalPaidAmount}
 	result["taskStats"] = map[string]any{
 		"total": taskTotal, "queued": taskQueued, "pending": taskPending, "processing": taskProcessing,
-		"success": taskSuccess, "failed": taskFailed, "canceled": taskCanceled, "totalImages": taskTotalImages,
+		"success": taskSuccess, "failed": taskFailed, "canceled": taskCanceled,
+		"counted": taskSuccess + taskCountedFailed, "countedFailed": taskCountedFailed,
+		"excluded": taskExcluded, "totalImages": taskTotalImages,
 	}
 	result["pending"] = map[string]any{
 		"pendingOrders": orderTotals.pending, "runningTasks": runningTasks,
@@ -486,7 +542,19 @@ func (r *Repository) DashboardTaskTrend(ctx context.Context, days int) ([]Dashbo
 			COALESCE(SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END), 0) AS processing,
 			COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) AS success,
 			COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) AS failed,
-			COALESCE(SUM(CASE WHEN status='canceled' THEN 1 ELSE 0 END), 0) AS canceled
+			COALESCE(SUM(CASE WHEN status='canceled' THEN 1 ELSE 0 END), 0) AS canceled,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
+				AND NOT EXISTS (
+					SELECT 1 FROM api_access_logs
+					WHERE api_access_logs.task_id = generation_tasks.id
+						AND api_access_logs.response_status_code IN (429, 502)
+				) THEN 1 ELSE 0 END), 0) AS counted_failed,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
+				AND EXISTS (
+					SELECT 1 FROM api_access_logs
+					WHERE api_access_logs.task_id = generation_tasks.id
+						AND api_access_logs.response_status_code IN (429, 502)
+				) THEN 1 ELSE 0 END), 0) AS excluded
 		FROM generation_tasks
 		WHERE created_at >= ? AND created_at < ?
 		GROUP BY %s
@@ -503,7 +571,7 @@ func (r *Repository) DashboardTaskTrend(ctx context.Context, days int) ([]Dashbo
 		var point DashboardTaskTrendPoint
 		if err := rows.Scan(
 			&rawDate, &point.Total, &point.Queued, &point.Pending, &point.Processing,
-			&point.Success, &point.Failed, &point.Canceled,
+			&point.Success, &point.Failed, &point.Canceled, &point.CountedFailed, &point.Excluded,
 		); err != nil {
 			return nil, err
 		}

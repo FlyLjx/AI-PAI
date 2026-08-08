@@ -110,14 +110,17 @@ export default function DashboardPage() {
     (summary, key) => ({
       requests: summary.requests + Number(key.requestCount || 0),
       success: summary.success + Number(key.successCount || 0),
+      failed: summary.failed + Number(key.failedCount || 0),
       images: summary.images + Number(key.imageCount || 0),
     }),
-    { requests: 0, success: 0, images: 0 },
+    { requests: 0, success: 0, failed: 0, images: 0 },
   ), [keys]);
 
   const activeKeys = keys.filter((key) => key.status === 'active').length;
-  const successRate = keyStats.requests > 0
-    ? `${((keyStats.success / keyStats.requests) * 100).toFixed(1)}%`
+  const countedRequests = keyStats.success + keyStats.failed;
+  const excludedRequests = Math.max(0, keyStats.requests - countedRequests);
+  const successRate = countedRequests > 0
+    ? `${((keyStats.success / countedRequests) * 100).toFixed(1)}%`
     : '0.0%';
   const remainingQuota = Number(
     subscription?.effectiveQuotaRemaining ?? subscription?.quotaRemaining ?? 0,
@@ -170,7 +173,7 @@ export default function DashboardPage() {
         <StatBlock
           title="累计调用"
           value={loading ? '--' : totalCalls.toLocaleString()}
-          subtext={`${keyStats.images.toLocaleString()} 张图片 · 成功率 ${successRate}`}
+          subtext={`${keyStats.images.toLocaleString()} 张图片 · 成功率 ${successRate}${excludedRequests > 0 ? ` · 排除 ${excludedRequests.toLocaleString()} 个429/502` : ''}`}
           icon={Activity}
           color="neutral"
         />

@@ -80,6 +80,8 @@ type TaskTrendPoint = {
   success: number;
   failed: number;
   canceled: number;
+  countedFailed?: number;
+  excluded?: number;
 };
 
 type DashboardData = {
@@ -90,6 +92,9 @@ type DashboardData = {
     tasks?: number;
     failedTasks?: number;
     successfulTasks?: number;
+    countedFailedTasks?: number;
+    countedTasks?: number;
+    excludedTasks?: number;
     balanceConsumed?: number;
   };
   yesterday?: {
@@ -100,6 +105,9 @@ type DashboardData = {
     runningTasks?: number;
     failedTasks?: number;
     successfulTasks?: number;
+    countedFailedTasks?: number;
+    countedTasks?: number;
+    excludedTasks?: number;
     balanceConsumed?: number;
   };
   users?: { total?: number; active?: number; totalBalance?: number };
@@ -112,6 +120,9 @@ type DashboardData = {
     success?: number;
     failed?: number;
     canceled?: number;
+    counted?: number;
+    countedFailed?: number;
+    excluded?: number;
     totalImages?: number;
   };
   pending?: { pendingOrders?: number; runningTasks?: number; recentFailedTasks?: number };
@@ -134,6 +145,7 @@ const TASK_TREND_COLORS = {
   failed: '#C43D3D',
   running: '#B86B0B',
   canceled: '#6652A3',
+  excluded: '#8A938E',
 } as const;
 
 function shortDate(value: string): string {
@@ -169,9 +181,9 @@ function dayOverDayTrend(currentValue: number | null, previousValue: number | nu
   return { value, type: 'neutral' as const, label: '今日较昨日' };
 }
 
-function dailySuccessRate(success: number | undefined, failed: number | undefined): number | null {
+function dailySuccessRate(success: number | undefined, countedFailed: number | undefined): number | null {
   const successCount = Number(success || 0);
-  const failedCount = Number(failed || 0);
+  const failedCount = Number(countedFailed || 0);
   const completed = successCount + failedCount;
   return completed > 0 ? (successCount / completed) * 100 : null;
 }
@@ -259,11 +271,12 @@ export default function AdminDashboardPage() {
 
   const stats = data.taskStats || {};
   const successful = Number(stats.success || 0);
-  const failed = Number(stats.failed || 0) + Number(stats.canceled || 0);
-  const completed = successful + failed;
+  const countedFailed = Number(stats.countedFailed ?? (Number(stats.failed || 0) + Number(stats.canceled || 0)));
+  const completed = Number(stats.counted ?? (successful + countedFailed));
   const totalSuccessRate = completed ? Math.round((successful / completed) * 100) : null;
-  const todaySuccessRate = dailySuccessRate(data.today?.successfulTasks, data.today?.failedTasks);
-  const yesterdaySuccessRate = dailySuccessRate(data.yesterday?.successfulTasks, data.yesterday?.failedTasks);
+  const todaySuccessRate = dailySuccessRate(data.today?.successfulTasks, data.today?.countedFailedTasks ?? data.today?.failedTasks);
+  const yesterdaySuccessRate = dailySuccessRate(data.yesterday?.successfulTasks, data.yesterday?.countedFailedTasks ?? data.yesterday?.failedTasks);
+  const totalExcluded = Number(stats.excluded || 0);
   const revenueTrend = dayOverDayTrend(Number(data.today?.paidAmount || 0), Number(data.yesterday?.paidAmount || 0));
   const requestTrend = dayOverDayTrend(Number(data.today?.tasks || 0), Number(data.yesterday?.tasks || 0));
   const successRateTrend = dayOverDayTrend(todaySuccessRate, yesterdaySuccessRate);
@@ -287,13 +300,18 @@ export default function AdminDashboardPage() {
     failed: summary.failed + Number(point.failed || 0),
     running: summary.running + Number(point.running || 0),
     canceled: summary.canceled + Number(point.canceled || 0),
-  }), { total: 0, success: 0, failed: 0, running: 0, canceled: 0 }), [taskTrend]);
+    countedFailed: summary.countedFailed + Number(point.countedFailed ?? (Number(point.failed || 0) + Number(point.canceled || 0) - Number(point.excluded || 0))),
+    excluded: summary.excluded + Number(point.excluded || 0),
+  }), { total: 0, success: 0, failed: 0, running: 0, canceled: 0, countedFailed: 0, excluded: 0 }), [taskTrend]);
+  const taskTrendCompleted = taskTrendSummary.success + taskTrendSummary.countedFailed;
+  const taskTrendSuccessRate = taskTrendCompleted > 0 ? (taskTrendSummary.success / taskTrendCompleted) * 100 : null;
   const taskTrendSeries = [
     { key: 'total', label: '全部任务', value: taskTrendSummary.total, color: TASK_TREND_COLORS.total },
     { key: 'success', label: '成功', value: taskTrendSummary.success, color: TASK_TREND_COLORS.success },
     { key: 'failed', label: '失败', value: taskTrendSummary.failed, color: TASK_TREND_COLORS.failed },
     { key: 'running', label: '处理中', value: taskTrendSummary.running, color: TASK_TREND_COLORS.running },
     { key: 'canceled', label: '已取消', value: taskTrendSummary.canceled, color: TASK_TREND_COLORS.canceled },
+    { key: 'excluded', label: '429/502（排除）', value: taskTrendSummary.excluded, color: TASK_TREND_COLORS.excluded },
   ] as const;
 
   const upstreamCode = Number(stability?.upstream_status_code || 0);
@@ -325,7 +343,7 @@ export default function AdminDashboardPage() {
     { key: 'revenue', label: '今日实收', value: formatCNY(Number(data.today?.paidAmount || 0)), note: `累计 ${formatCNY(Number(data.revenue?.totalPaidAmount || 0))}`, trend: revenueTrend, icon: CircleDollarSign, tone: 'bg-emerald-50 text-emerald-700' },
     { key: 'balance', label: '余额消耗', value: formatCNY(Number(data.today?.balanceConsumed || 0), 4), note: `总余额 ${formatCNY(Number(data.users?.totalBalance || 0), 4)}`, trend: balanceConsumptionTrend, icon: Wallet, tone: 'bg-amber-50 text-amber-700' },
     { key: 'requests', label: 'API 请求', value: Number(data.today?.tasks || 0).toLocaleString('zh-CN'), note: `累计 ${Number(stats.total || 0).toLocaleString('zh-CN')} 次`, trend: requestTrend, icon: Activity, tone: 'bg-cyan-50 text-cyan-700' },
-    { key: 'success-rate', label: '请求成功率', value: todaySuccessRate === null ? '--' : `${Math.round(todaySuccessRate)}%`, note: `累计 ${totalSuccessRate === null ? '--' : `${totalSuccessRate}%`} · ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张`, trend: successRateTrend, icon: Cable, tone: todaySuccessRate !== null && todaySuccessRate < 95 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700' },
+    { key: 'success-rate', label: '请求成功率（不含429/502）', value: todaySuccessRate === null ? '--' : `${Math.round(todaySuccessRate)}%`, note: `累计 ${totalSuccessRate === null ? '--' : `${totalSuccessRate}%`} · ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张 · 排除 ${totalExcluded.toLocaleString('zh-CN')} 个`, trend: successRateTrend, icon: Cable, tone: todaySuccessRate !== null && todaySuccessRate < 95 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700' },
     { key: 'customers', label: '新增客户', value: Number(data.today?.users || 0).toLocaleString('zh-CN'), note: `累计 ${Number(data.users?.total || 0).toLocaleString('zh-CN')} · 启用 ${Number(data.users?.active || 0).toLocaleString('zh-CN')}`, trend: customerTrend, icon: Users, tone: 'bg-zinc-100 text-zinc-600' },
   ];
   const alertItems = useMemo(() => [
@@ -415,8 +433,9 @@ export default function AdminDashboardPage() {
               {taskTrendSeries.map((item) => (
                 <span key={item.key} className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500"><i className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />{item.label}</span>
               ))}
+              <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#047857]">成功率 {taskTrendSuccessRate === null ? '--' : `${Math.round(taskTrendSuccessRate)}%`}</span>
             </div>
-            <p className="sr-only" id="task-trend-description">当前范围共 {taskTrendSummary.total} 个任务，成功 {taskTrendSummary.success} 个，失败 {taskTrendSummary.failed} 个，处理中 {taskTrendSummary.running} 个，已取消 {taskTrendSummary.canceled} 个。</p>
+            <p className="sr-only" id="task-trend-description">当前范围共 {taskTrendSummary.total} 个任务，成功 {taskTrendSummary.success} 个，失败 {taskTrendSummary.failed} 个，处理中 {taskTrendSummary.running} 个，已取消 {taskTrendSummary.canceled} 个。成功率为 {taskTrendSuccessRate === null ? '暂无数据' : `${Math.round(taskTrendSuccessRate)}%`}，按成功与未被429/502排除的失败计算，排除 {taskTrendSummary.excluded} 个。</p>
             <div className="h-[220px] w-full px-1 pb-3 pt-3 sm:h-[260px] sm:px-3" aria-describedby="task-trend-description">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart accessibilityLayer data={taskTrend} margin={{ top: 6, right: 14, left: -8, bottom: 0 }}>
@@ -424,11 +443,12 @@ export default function AdminDashboardPage() {
                   <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: '#778079', fontSize: 9 }} tickLine={false} axisLine={{ stroke: '#DCE4DF' }} minTickGap={22} />
                   <YAxis allowDecimals={false} tick={{ fill: '#778079', fontSize: 9 }} tickLine={false} axisLine={false} width={44} />
                   <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `日期 ${String(label)}`} contentStyle={{ border: '1px solid #DCE4DF', borderRadius: 7, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 10 }} />
-                  <Line type="monotone" dataKey="total" name="全部任务" stroke={TASK_TREND_COLORS.total} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-                  <Line type="monotone" dataKey="success" name="成功" stroke={TASK_TREND_COLORS.success} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-                  <Line type="monotone" dataKey="failed" name="失败" stroke={TASK_TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-                  <Line type="monotone" dataKey="running" name="处理中" stroke={TASK_TREND_COLORS.running} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
-                  <Line type="monotone" dataKey="canceled" name="已取消" stroke={TASK_TREND_COLORS.canceled} strokeWidth={1.75} strokeDasharray="3 4" dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
+                  <Line type="linear" dataKey="total" name="全部任务" stroke={TASK_TREND_COLORS.total} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+                  <Line type="linear" dataKey="success" name="成功" stroke={TASK_TREND_COLORS.success} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+                  <Line type="linear" dataKey="failed" name="失败" stroke={TASK_TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+                  <Line type="linear" dataKey="running" name="处理中" stroke={TASK_TREND_COLORS.running} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
+                  <Line type="linear" dataKey="canceled" name="已取消" stroke={TASK_TREND_COLORS.canceled} strokeWidth={1.75} strokeDasharray="3 4" dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
+                  <Line type="linear" dataKey="excluded" name="429/502（不计成功率）" stroke={TASK_TREND_COLORS.excluded} strokeWidth={1.75} strokeDasharray="2 4" dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>

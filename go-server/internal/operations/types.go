@@ -258,13 +258,15 @@ type DashboardTaskSummary struct {
 }
 
 type DashboardTaskTrendPoint struct {
-	Date       string `json:"date"`
-	Total      int    `json:"total"`
-	Queued     int    `json:"queued"`
-	Pending    int    `json:"pending"`
-	Processing int    `json:"processing"`
-	Running    int    `json:"running"`
-	Success    int    `json:"success"`
-	Failed     int    `json:"failed"`
-	Canceled   int    `json:"canceled"`
+	Date          string `json:"date"`
+	Total         int    `json:"total"`
+	Queued        int    `json:"queued"`
+	Pending       int    `json:"pending"`
+	Processing    int    `json:"processing"`
+	Running       int    `json:"running"`
+	Success       int    `json:"success"`
+	Failed        int    `json:"failed"`
+	Canceled      int    `json:"canceled"`
+	CountedFailed int    `json:"countedFailed"`
+	Excluded      int    `json:"excluded"`
 }

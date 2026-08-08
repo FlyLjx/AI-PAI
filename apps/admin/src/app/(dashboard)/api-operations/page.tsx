@@ -390,6 +390,14 @@ export default function AdminAPIOperationsPage() {
     stabilityError && `上游状态：${stabilityError}`,
   ].filter(Boolean) as string[];
   const trendHasData = trend.points.some((point) => point.total > 0 || point.success > 0 || point.failed > 0);
+  const trendSummary = useMemo(() => trend.points.reduce((summary, point) => ({
+    total: summary.total + Number(point.total || 0),
+    success: summary.success + Number(point.success || 0),
+    failed: summary.failed + Number(point.failed || 0),
+  }), { total: 0, success: 0, failed: 0 }), [trend.points]);
+  const trendCounted = trendSummary.success + trendSummary.failed;
+  const trendSuccessRate = trendCounted > 0 ? `${((trendSummary.success / trendCounted) * 100).toFixed(1)}%` : '0.0%';
+  const trendExcluded = Math.max(0, trendSummary.total - trendCounted);
 
   const summaryItems = [
     { label: '调用用户', value: live.activeUsers.toLocaleString('zh-CN'), note: '当前有任务', tone: 'bg-blue-500' },
@@ -435,11 +443,13 @@ export default function AdminAPIOperationsPage() {
 
       <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="operation-trend-title">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EDF0EE] px-4 py-3">
-          <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-md bg-blue-50 text-blue-700"><ChartNoAxesCombined className="h-4 w-4" /></span><div><h2 id="operation-trend-title" className="text-xs font-semibold text-[#17201B]">近 60 分钟调用趋势</h2><p className="mt-0.5 text-[10px] text-zinc-400">按分钟统计请求完成情况</p></div></div>
+          <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-md bg-blue-50 text-blue-700"><ChartNoAxesCombined className="h-4 w-4" /></span><div><h2 id="operation-trend-title" className="text-xs font-semibold text-[#17201B]">近 60 分钟调用趋势</h2><p className="mt-0.5 text-[10px] text-zinc-400">按分钟统计请求完成情况 · 成功率不含429/502</p></div></div>
           <div className="flex items-center gap-3 text-[10px] text-zinc-500">
             <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#1E5F91]" />调用</span>
             <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#087A55]" />成功</span>
             <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#C43D3D]" />失败</span>
+            <span className="font-semibold text-[#087A55]">成功率 {trendSuccessRate}</span>
+            {trendExcluded > 0 && <span className="text-zinc-400">未纳入 {trendExcluded}</span>}
           </div>
         </header>
         <div className="h-[220px] p-4 pl-1">
@@ -452,9 +462,9 @@ export default function AdminAPIOperationsPage() {
                 <XAxis dataKey="timestamp" tickFormatter={(value) => shortClock(String(value))} tick={{ fontSize: 10, fill: '#8A938E' }} tickLine={false} axisLine={false} minTickGap={30} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: '#8A938E' }} tickLine={false} axisLine={false} />
                 <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), ({ total: '调用', success: '成功', failed: '失败' } as Record<string, string>)[String(name)] || String(name)]} labelFormatter={(label) => formatDate(String(label))} contentStyle={{ border: '1px solid #DCE4DF', borderRadius: 7, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 10 }} />
-                <Line type="monotone" dataKey="total" stroke="#1E5F91" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
-                <Line type="monotone" dataKey="success" stroke="#087A55" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
-                <Line type="monotone" dataKey="failed" stroke="#C43D3D" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+                <Line type="linear" dataKey="total" stroke="#1E5F91" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+                <Line type="linear" dataKey="success" stroke="#087A55" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+                <Line type="linear" dataKey="failed" stroke="#C43D3D" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           ) : (

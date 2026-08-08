@@ -27,10 +27,10 @@ func TestDashboardTaskTrendFillsMissingDatesAndGroupsRunningStates(t *testing.T)
 	mock.ExpectQuery(`SELECT DATE\(created_at\) AS task_date`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnRows(sqlmock.NewRows([]string{
-			"task_date", "total", "queued", "pending", "processing", "success", "failed", "canceled",
+			"task_date", "total", "queued", "pending", "processing", "success", "failed", "canceled", "counted_failed", "excluded",
 		}).
-			AddRow(firstDate, 8, 1, 1, 2, 3, 1, 0).
-			AddRow(lastDate, 5, 0, 1, 0, 2, 1, 1))
+			AddRow(firstDate, 8, 1, 1, 2, 3, 1, 0, 1, 0).
+			AddRow(lastDate, 5, 0, 1, 0, 2, 1, 1, 1, 1))
 
 	points, err := NewRepository(database.Wrap(rawDB)).DashboardTaskTrend(context.Background(), 3)
 	if err != nil {
@@ -45,7 +45,7 @@ func TestDashboardTaskTrendFillsMissingDatesAndGroupsRunningStates(t *testing.T)
 	if points[1].Total != 0 || points[1].Running != 0 {
 		t.Fatalf("missing date was not zero-filled: %+v", points[1])
 	}
-	if points[2].Date != lastDate || points[2].Canceled != 1 {
+	if points[2].Date != lastDate || points[2].Canceled != 1 || points[2].CountedFailed != 1 || points[2].Excluded != 1 {
 		t.Fatalf("unexpected last point: %+v", points[2])
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {

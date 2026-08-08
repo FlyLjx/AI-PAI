@@ -95,6 +95,9 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
     }),
     { total: 0, success: 0, failed: 0 },
   ), [data]);
+  const countedRequests = summary.success + summary.failed;
+  const successRate = countedRequests > 0 ? `${((summary.success / countedRequests) * 100).toFixed(1)}%` : '0.0%';
+  const excludedRequests = Math.max(0, summary.total - countedRequests);
 
   const selectPreset = (days: 7 | 15 | 30) => {
     const nextRange = rangeForDays(days);
@@ -189,12 +192,14 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
             {item.label}<strong className="mono text-[13px] text-[#17201b]">{item.value.toLocaleString()}</strong>
           </span>
         ))}
+        <span className="inline-flex items-center gap-2 text-[11px] text-zinc-500">成功率<strong className="mono text-[13px] text-[#087443]">{successRate}</strong></span>
+        {excludedRequests > 0 && <span className="inline-flex items-center gap-2 text-[11px] text-zinc-400">未纳入<strong className="mono text-[13px] text-zinc-600">{excludedRequests.toLocaleString()}</strong></span>}
         {loading && <span className="ml-auto inline-flex items-center gap-1.5 text-[11px] text-zinc-400" role="status" aria-live="polite"><LoaderCircle size={12} className="animate-spin" />更新中</span>}
         {!loading && error && <span className="ml-auto text-[11px] font-semibold text-[#b42318]" role="alert">{error}</span>}
       </div>
 
       <p className="sr-only" id="usage-trend-description">
-        {loading ? '正在更新调用趋势。' : error ? `调用趋势加载失败：${error}` : `当前范围共调用 ${summary.total} 次，成功 ${summary.success} 次，失败 ${summary.failed} 次。`}
+        {loading ? '正在更新调用趋势。' : error ? `调用趋势加载失败：${error}` : `当前范围共调用 ${summary.total} 次，成功 ${summary.success} 次，失败 ${summary.failed} 次，成功率 ${successRate}。未纳入成功率统计 ${excludedRequests} 次。`}
       </p>
       <div className="relative h-[260px] w-full px-1 pb-3 pt-3 sm:h-[300px] sm:px-3" aria-describedby="usage-trend-description">
         {!loading && error ? (
@@ -217,9 +222,9 @@ export function UsageTrendPanel({ user, refreshSignal }: { user: PortalUser | nu
                 labelFormatter={(label) => `日期 ${String(label)}`}
                 contentStyle={{ border: '1px solid #dce4df', borderRadius: 7, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 10 }}
               />
-              <Line type="monotone" dataKey="total" name="调用量" stroke={TREND_COLORS.total} strokeWidth={2.25} dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-              <Line type="monotone" dataKey="success" name="成功" stroke={TREND_COLORS.success} strokeWidth={2.25} dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-              <Line type="monotone" dataKey="failed" name="失败" stroke={TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+              <Line type="linear" dataKey="total" name="调用量" stroke={TREND_COLORS.total} strokeWidth={2.25} dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+              <Line type="linear" dataKey="success" name="成功" stroke={TREND_COLORS.success} strokeWidth={2.25} dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
+              <Line type="linear" dataKey="failed" name="失败" stroke={TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={data.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
             </LineChart>
           </ResponsiveContainer>
         )}
