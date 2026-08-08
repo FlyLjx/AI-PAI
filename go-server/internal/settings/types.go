@@ -45,6 +45,8 @@ var Defaults = Settings{
 	"rechargeMinAmount":                    float64(1),
 	"rechargePresets":                      "10,30,50,100",
 	"subscriptionAccessUserId":             "",
+	"subscriptionAccessUserIds":            "",
+	"subscriptionAccessInitialized":        false,
 	"inviteEnabled":                        false,
 	"inviteRewardType":                     "subscription",
 	"inviteRewardPlanId":                   "",

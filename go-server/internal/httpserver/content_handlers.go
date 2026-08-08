@@ -165,7 +165,7 @@ func (r *Router) announcementByID(w http.ResponseWriter, req *http.Request) {
 
 func (r *Router) sendAnnouncementMail(parent context.Context, item content.Announcement) mailBroadcastResult {
 	input := announcementMailBroadcastInput(item)
-	ctx, cancel := context.WithTimeout(parent, 2*time.Minute)
+	ctx, cancel := newMailBroadcastContext(parent)
 	defer cancel()
 	result, err := r.sendMailBroadcast(ctx, input)
 	if err != nil {

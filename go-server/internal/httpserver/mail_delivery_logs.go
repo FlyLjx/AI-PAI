@@ -70,6 +70,15 @@ func deliverTrackedMail(
 				id, category, from_address, recipient, subject, content, action_url, status
 			) VALUES (?, ?, ?, ?, ?, ?, ?, 'sending')
 		`, id, category, fromAddress, strings.TrimSpace(to), strings.TrimSpace(subject), content, nullableMailText(actionURL))
+		if err != nil && ctx.Err() != nil {
+			writeCtx, cancel := mailLogWriteContext(ctx)
+			_, err = db.ExecContext(writeCtx, `
+				INSERT INTO email_delivery_logs (
+					id, category, from_address, recipient, subject, content, action_url, status
+				) VALUES (?, ?, ?, ?, ?, ?, ?, 'sending')
+			`, id, category, fromAddress, strings.TrimSpace(to), strings.TrimSpace(subject), content, nullableMailText(actionURL))
+			cancel()
+		}
 		recorded = err == nil
 	}
 
@@ -78,19 +87,27 @@ func deliverTrackedMail(
 		return sendErr
 	}
 	if sendErr != nil {
-		_, _ = db.ExecContext(ctx, `
+		writeCtx, cancel := mailLogWriteContext(ctx)
+		defer cancel()
+		_, _ = db.ExecContext(writeCtx, `
 			UPDATE email_delivery_logs
 			SET status='failed', error_message=?, sent_at=NULL
 			WHERE id=?
 		`, sendErr.Error(), id)
 		return sendErr
 	}
-	_, _ = db.ExecContext(ctx, `
+	writeCtx, cancel := mailLogWriteContext(ctx)
+	defer cancel()
+	_, _ = db.ExecContext(writeCtx, `
 		UPDATE email_delivery_logs
 		SET status='sent', error_message=NULL, sent_at=CURRENT_TIMESTAMP
 		WHERE id=?
 	`, id)
 	return nil
+}
+
+func mailLogWriteContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), 10*time.Second)
 }
 
 func validateMailAudience(category string, content string, actions []mailAction) error {
@@ -153,6 +170,7 @@ func (r *Router) adminMailLogs(w http.ResponseWriter, req *http.Request) {
 
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
+	reconcileStaleMailLogs(ctx, r.db)
 	page := queryInt(req, "page", 1)
 	if page < 1 {
 		page = 1
@@ -237,6 +255,20 @@ func (r *Router) adminMailLogs(w http.ResponseWriter, req *http.Request) {
 			"total": summary.Total, "page": page, "pageSize": pageSize,
 		},
 	})
+}
+
+func reconcileStaleMailLogs(ctx context.Context, db *database.DB) {
+	if db == nil {
+		return
+	}
+	cutoff := time.Now().Add(-10 * time.Minute)
+	_, _ = db.ExecContext(ctx, `
+		UPDATE email_delivery_logs
+		SET status='failed',
+			error_message=COALESCE(error_message, '发送任务超时，未能确认投递结果'),
+			sent_at=NULL
+		WHERE status='sending' AND created_at < ?
+	`, cutoff)
 }
 
 func mailLogWhere(req *http.Request) (string, []any) {

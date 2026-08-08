@@ -69,12 +69,17 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 			}
 			value = rate
 		}
-		if key == "subscriptionAccessUserId" {
+		if key == "subscriptionAccessUserId" || key == "subscriptionAccessUserIds" {
 			userID, ok := value.(string)
 			if !ok {
 				return nil, ErrInvalidSubscriptionAccessUser
 			}
 			value = strings.TrimSpace(userID)
+		}
+		if key == "subscriptionAccessInitialized" {
+			if _, ok := value.(bool); !ok {
+				return nil, ErrInvalidSubscriptionAccessUser
+			}
 		}
 		if key == "taskTimeoutMinutes" {
 			number, ok := numericSettingValue(value)

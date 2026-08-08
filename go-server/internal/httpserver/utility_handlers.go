@@ -7,13 +7,18 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"aipi-go/internal/settings"
 	"aipi-go/internal/users"
 )
 
-const upstreamStabilityEndpoint = "https://free-api.yccc.me/health/stability"
+const (
+	upstreamStabilityEndpoint = "https://free-api.yccc.me/health/stability"
+	mailBroadcastTimeout      = 5 * time.Minute
+	mailBroadcastWorkers      = 4
+)
 
 type mailBroadcastInput struct {
 	Subject    string   `json:"subject"`
@@ -188,7 +193,7 @@ func (r *Router) mailBroadcast(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(req.Context(), 2*time.Minute)
+	ctx, cancel := newMailBroadcastContext(req.Context())
 	defer cancel()
 	result, err := r.sendMailBroadcast(ctx, input)
 	if err != nil {
@@ -283,11 +288,43 @@ func (r *Router) sendMailBroadcast(ctx context.Context, input mailBroadcastInput
 		return mailBroadcastResult{}, newAppError(http.StatusBadRequest, "没有可发送的收件邮箱")
 	}
 
+	type deliveryOutcome struct {
+		index int
+		err   error
+	}
+	jobs := make(chan int)
+	outcomes := make(chan deliveryOutcome, len(recipients))
+	workerCount := min(mailBroadcastWorkers, len(recipients))
+	var workers sync.WaitGroup
+	for worker := 0; worker < workerCount; worker++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for index := range jobs {
+				email := recipients[index]
+				err := r.deliverMail(ctx, category, smtpConfig, email, input.Subject, input.Content, mailAction{Text: input.ActionText, URL: input.ActionURL})
+				outcomes <- deliveryOutcome{index: index, err: err}
+			}
+		}()
+	}
+	go func() {
+		for index := range recipients {
+			jobs <- index
+		}
+		close(jobs)
+	}()
+	workers.Wait()
+	close(outcomes)
+
+	errorsByIndex := make([]error, len(recipients))
+	for outcome := range outcomes {
+		errorsByIndex[outcome.index] = outcome.err
+	}
 	success := 0
 	failures := []map[string]string{}
-	for _, email := range recipients {
-		if err := r.deliverMail(ctx, category, smtpConfig, email, input.Subject, input.Content, mailAction{Text: input.ActionText, URL: input.ActionURL}); err != nil {
-			failures = append(failures, formatMailFailure(email, err))
+	for index, err := range errorsByIndex {
+		if err != nil {
+			failures = append(failures, formatMailFailure(recipients[index], err))
 			continue
 		}
 		success++
@@ -302,6 +339,10 @@ func (r *Router) sendMailBroadcast(ctx context.Context, input mailBroadcastInput
 		Subject:  input.Subject,
 		Message:  smtpSummary(len(recipients), success, failed),
 	}, nil
+}
+
+func newMailBroadcastContext(parent context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(parent), mailBroadcastTimeout)
 }
 
 func normalizeMailBroadcastInput(input mailBroadcastInput) (mailBroadcastInput, error) {

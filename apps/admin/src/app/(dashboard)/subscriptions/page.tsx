@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CreditCard, Gauge, Gift, Loader2, PackageCheck, RefreshCw, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronDown, CreditCard, Gauge, Gift, Loader2, PackageCheck, RefreshCw, UserRound, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/DataTable';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
@@ -24,6 +24,15 @@ function expiryDays(user: PortalUser) {
   return Math.ceil((time - Date.now()) / 86_400_000);
 }
 
+function normalizeUserIDs(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : String(value || '').split(/[;,\n\r]/);
+  return Array.from(new Set(values.map((item) => String(item).trim()).filter(Boolean)));
+}
+
+function sameUserIDs(left: string[], right: string[]) {
+  return [...new Set(left)].sort().join(',') === [...new Set(right)].sort().join(',');
+}
+
 export default function AdminSubscriptionsPage() {
   const [users, setUsers] = useState<PortalUser[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -42,17 +51,30 @@ export default function AdminSubscriptionsPage() {
   const [customName, setCustomName] = useState('自定义订阅');
   const [customDurationDays, setCustomDurationDays] = useState(30);
   const [customQuotaImages, setCustomQuotaImages] = useState(100);
+  const [subscriptionAccessUserIds, setSubscriptionAccessUserIds] = useState<string[]>([]);
+  const [savedSubscriptionAccessUserIds, setSavedSubscriptionAccessUserIds] = useState<string[]>([]);
+  const [subscriptionAccessSaving, setSubscriptionAccessSaving] = useState(false);
+  const [subscriptionPickerOpen, setSubscriptionPickerOpen] = useState(false);
+  const subscriptionPickerRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      const [userResponse, planResponse] = await Promise.all([
+      const [userResponse, planResponse, settingsResponse] = await Promise.all([
         portalApi.users(),
         portalApi.adminPlans(),
+        portalApi.settings(),
       ]);
-      setUsers(userResponse.data);
+      const loadedUsers = userResponse.data || [];
+      const configuredUserIds = normalizeUserIDs(settingsResponse.data.subscriptionAccessUserIds || settingsResponse.data.subscriptionAccessUserId);
+      const subscribedUserIds = loadedUsers.filter((user) => user.role === 'user' && user.subscription?.isPaid === true).map((user) => user.id);
+      const initialized = Boolean(settingsResponse.data.subscriptionAccessInitialized);
+      const nextAccessUserIds = initialized ? configuredUserIds : Array.from(new Set([...configuredUserIds, ...subscribedUserIds]));
+      setUsers(loadedUsers);
       setPlans(planResponse.data);
+      setSubscriptionAccessUserIds(nextAccessUserIds);
+      setSavedSubscriptionAccessUserIds(nextAccessUserIds);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '订阅数据加载失败');
     } finally {
@@ -64,6 +86,17 @@ export default function AdminSubscriptionsPage() {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => {
+    if (!subscriptionPickerOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (subscriptionPickerRef.current && !subscriptionPickerRef.current.contains(event.target as Node)) {
+        setSubscriptionPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [subscriptionPickerOpen]);
 
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
@@ -79,6 +112,11 @@ export default function AdminSubscriptionsPage() {
   const currentPage = Math.min(page, totalPages);
   const activePlans = plans.filter((plan) => plan.status === 'active');
   const activeUsers = users.filter(isActive);
+  const subscriptionUsers = users
+    .filter((user) => user.role === 'user' && (user.status === 'active' || subscriptionAccessUserIds.includes(user.id)))
+    .sort((left, right) => left.email.localeCompare(right.email));
+  const selectedSubscriptionUsers = subscriptionUsers.filter((user) => subscriptionAccessUserIds.includes(user.id));
+  const subscriptionAccessDirty = !sameUserIDs(subscriptionAccessUserIds, savedSubscriptionAccessUserIds);
 
   const summary = useMemo(() => ({
     active: activeUsers.length,
@@ -86,6 +124,29 @@ export default function AdminSubscriptionsPage() {
     remaining: activeUsers.reduce((sum, user) => sum + Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0), 0),
     plans: activePlans.length,
   }), [activePlans.length, activeUsers]);
+
+  const toggleSubscriptionUser = (userId: string) => {
+    setSubscriptionAccessUserIds((current) => current.includes(userId)
+      ? current.filter((id) => id !== userId)
+      : [...current, userId]);
+  };
+
+  const saveSubscriptionVisibility = async () => {
+    setSubscriptionAccessSaving(true);
+    try {
+      await portalApi.updateSettings({
+        subscriptionAccessUserIds: subscriptionAccessUserIds.join(','),
+        subscriptionAccessUserId: subscriptionAccessUserIds[0] || '',
+        subscriptionAccessInitialized: true,
+      });
+      setSavedSubscriptionAccessUserIds(subscriptionAccessUserIds);
+      toast.success(subscriptionAccessUserIds.length ? `已开放给 ${subscriptionAccessUserIds.length} 个账号` : '订阅入口已关闭');
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '订阅可见性保存失败');
+    } finally {
+      setSubscriptionAccessSaving(false);
+    }
+  };
 
   const openGrant = (user?: PortalUser) => {
     setUserId(user?.id || users[0]?.id || '');
@@ -152,6 +213,33 @@ export default function AdminSubscriptionsPage() {
           ['上架套餐', summary.plans, '当前可发放'],
         ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
       </div>
+
+      <section className="rounded-md border border-[#DCE4DF] bg-white p-5">
+        <div className="flex items-center gap-2 border-b border-[#DCE4DF] pb-2.5"><UserRound className="h-4 w-4 text-[#D97706]" /><div><h2 className="text-xs font-semibold">订阅可见性</h2><p className="mt-0.5 text-[10px] text-zinc-400">在这里选择可以看到套餐、当前订阅和订阅订单的账号；已有有效订阅用户首次会自动勾选。</p></div></div>
+        <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)_auto] lg:items-end">
+          <div ref={subscriptionPickerRef} className="relative">
+            <span className="mb-1 block text-[11px] font-semibold text-zinc-500">开放账号</span>
+            <button type="button" onClick={() => setSubscriptionPickerOpen((open) => !open)} aria-expanded={subscriptionPickerOpen} aria-haspopup="listbox" className="flex h-9 w-full items-center justify-between rounded-md border border-[#DCE4DF] bg-white px-3 text-left text-xs outline-none hover:border-[#12B76A]">
+              <span className="min-w-0 truncate">{selectedSubscriptionUsers.length ? `已选择 ${selectedSubscriptionUsers.length} 个账号` : '暂不开放（默认）'}</span>
+              <ChevronDown className={`h-4 w-4 shrink-0 text-zinc-400 transition-transform ${subscriptionPickerOpen ? 'rotate-180' : ''}`} />
+            </button>
+            {subscriptionPickerOpen && (
+              <div role="listbox" aria-multiselectable="true" className="absolute left-0 right-0 z-30 mt-1 max-h-64 overflow-y-auto rounded-md border border-[#DCE4DF] bg-white p-1 shadow-lg">
+                <button type="button" onClick={() => setSubscriptionAccessUserIds([])} className={`flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-[11px] hover:bg-[#F6F8F6] ${selectedSubscriptionUsers.length === 0 ? 'bg-emerald-50 text-emerald-800' : 'text-zinc-600'}`}>
+                  <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${selectedSubscriptionUsers.length === 0 ? 'border-emerald-500 bg-emerald-600 text-white' : 'border-[#CBD5CF] bg-white'}`}>{selectedSubscriptionUsers.length === 0 && <Check className="h-3 w-3" />}</span>
+                  暂不开放（默认）
+                </button>
+                {subscriptionUsers.map((user) => {
+                  const selected = subscriptionAccessUserIds.includes(user.id);
+                  return <button key={user.id} type="button" role="option" aria-selected={selected} onClick={() => toggleSubscriptionUser(user.id)} className={`flex w-full items-center gap-2 rounded px-2.5 py-2 text-left hover:bg-[#F6F8F6] ${selected ? 'bg-emerald-50' : ''}`}><span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${selected ? 'border-emerald-500 bg-emerald-600 text-white' : 'border-[#CBD5CF] bg-white'}`}>{selected && <Check className="h-3 w-3" />}</span><span className="min-w-0"><strong className="block truncate text-[11px] font-medium">{user.email}</strong><small className="block truncate font-mono text-[9px] text-zinc-400">{user.subscription?.isPaid ? '已有有效订阅' : user.status !== 'active' ? '已停用' : user.id}</small></span></button>;
+                })}
+              </div>
+            )}
+          </div>
+          <div className="rounded-md border border-[#DCE4DF] bg-[#FAFBFA] px-3 py-2.5 text-[11px] leading-5 text-zinc-500"><strong className="block text-zinc-700">生效规则</strong><span>未选择账号时订阅模块保持关闭；保存后所有选中账号都可以读取订阅相关数据。</span>{selectedSubscriptionUsers.length > 0 && <small className="mt-1 block text-emerald-700">当前已选择 {selectedSubscriptionUsers.length} 个账号</small>}</div>
+          <button type="button" onClick={() => void saveSubscriptionVisibility()} disabled={subscriptionAccessSaving || !subscriptionAccessDirty} className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white hover:bg-[#036B4F] disabled:cursor-not-allowed disabled:opacity-50">{subscriptionAccessSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}保存可见性</button>
+        </div>
+      </section>
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>}
 

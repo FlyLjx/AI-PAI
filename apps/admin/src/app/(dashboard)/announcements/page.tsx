@@ -12,7 +12,7 @@ import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { PageHeader } from '@/components/common/PageHeader';
 import { formatDate } from '@/lib/common/utils';
-import { portalApi, type Announcement, type PortalUser } from '@/lib/admin-api';
+import { portalApi, type Announcement, type MailBroadcastResult, type PortalUser } from '@/lib/admin-api';
 
 type AnnouncementDraft = Omit<Announcement, 'id' | 'createdAt' | 'updatedAt'>;
 
@@ -79,6 +79,7 @@ export default function AnnouncementsPage() {
   const [draft, setDraft] = useState<AnnouncementDraft>(emptyDraft);
   const [userSearch, setUserSearch] = useState('');
   const [sendEmail, setSendEmail] = useState(false);
+  const [mailReport, setMailReport] = useState<MailBroadcastResult | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -130,6 +131,7 @@ export default function AnnouncementsPage() {
     setDraft({ ...emptyDraft, userIds: [] });
     setUserSearch('');
     setSendEmail(false);
+    setMailReport(null);
     setEditorOpen(true);
   };
 
@@ -138,6 +140,7 @@ export default function AnnouncementsPage() {
     setDraft(toDraft(item));
     setUserSearch('');
     setSendEmail(false);
+    setMailReport(null);
     setEditorOpen(true);
   };
 
@@ -176,6 +179,7 @@ export default function AnnouncementsPage() {
       } else {
         toast.success(`${actionLabel}，已同步发送 ${response.mailDelivery.success} 封邮件`);
       }
+      if (sendEmail && response.mailDelivery) setMailReport(response.mailDelivery);
       setEditorOpen(false);
       await load();
     } catch (saveError) {
@@ -326,6 +330,41 @@ export default function AnnouncementsPage() {
             </div>
             <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setEditorOpen(false)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{editing ? '保存修改' : '发布公告'}</button></div>
           </form>
+        </div>
+      )}
+
+      {mailReport && (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-black/40 p-4">
+          <section className="w-full max-w-xl overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-[#DCE4DF] px-5 py-3.5">
+              <div><h2 className="text-sm font-semibold">公告邮件发送结果</h2><p className="mt-0.5 text-[11px] text-zinc-500">每个收件人的结果已写入邮件记录。</p></div>
+              <button type="button" onClick={() => setMailReport(null)} title="关闭" className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button>
+            </div>
+            <div className="grid grid-cols-3 gap-2 border-b border-[#EDF0EE] bg-[#FAFBFA] p-4 text-center">
+              <div><small className="block text-[10px] text-zinc-400">收件人</small><strong className="mt-1 block font-mono text-lg">{mailReport.total}</strong></div>
+              <div><small className="block text-[10px] text-zinc-400">发送成功</small><strong className="mt-1 block font-mono text-lg text-emerald-700">{mailReport.success}</strong></div>
+              <div><small className="block text-[10px] text-zinc-400">发送失败</small><strong className="mt-1 block font-mono text-lg text-red-700">{mailReport.failed}</strong></div>
+            </div>
+            <div className="p-5">
+              {mailReport.failures.length > 0 ? (
+                <div>
+                  <strong className="text-xs text-red-700">未发送收件人及原因</strong>
+                  <div className="mt-2 max-h-64 overflow-y-auto rounded-md border border-red-200 bg-red-50/60">
+                    {mailReport.failures.map((failure) => (
+                      <div key={`${failure.email}-${failure.message}`} className="border-b border-red-100 px-3 py-2.5 last:border-b-0">
+                        <strong className="block break-all text-[11px] text-zinc-700">{failure.email}</strong>
+                        <small className="mt-1 block break-words text-[10px] leading-4 text-red-700">{failure.message}</small>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs text-emerald-700">全部收件人已发送成功。</div>
+              )}
+              <p className="mt-3 text-[10px] leading-4 text-zinc-400">如需查看完整正文和单封投递状态，请打开“邮件记录”页面并按主题搜索。</p>
+            </div>
+            <div className="flex justify-end border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setMailReport(null)} className="h-8 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white hover:bg-[#036B4F]">知道了</button></div>
+          </section>
         </div>
       )}
 

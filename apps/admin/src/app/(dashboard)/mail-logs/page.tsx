@@ -354,7 +354,7 @@ export default function AdminMailLogsPage() {
                       return (
                         <tr key={item.id} onClick={() => setSelectedId(item.id)} className={`cursor-pointer ${active ? 'bg-[#F0FDF4]' : 'hover:bg-[#FAFBFA]'}`}>
                           <td className="max-w-[280px] px-4 py-3"><strong className="block truncate text-[11px]">{item.subject}</strong><small className="mt-0.5 block truncate font-mono text-[9px] text-zinc-400">{item.id}</small></td>
-                          <td className="max-w-[210px] px-4 py-3"><span className="block truncate text-[10px]" title={item.recipient}>{item.recipient}</span></td>
+                          <td className="max-w-[230px] px-4 py-3"><span className="block truncate text-[10px]" title={item.recipient}>{item.recipient}</span>{item.errorMessage && <small className="mt-1 block line-clamp-2 break-words text-[9px] leading-4 text-red-600" title={item.errorMessage}>{item.errorMessage}</small>}</td>
                           <td className="whitespace-nowrap px-4 py-3 text-[10px] text-zinc-600">{categoryLabel(item.category)}</td>
                           <td className="px-4 py-3"><span className={`inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${state.className}`}><StateIcon className="h-3 w-3" />{state.label}</span></td>
                           <td className="whitespace-nowrap px-4 py-3 text-[10px] text-zinc-500">{formatDate(item.sentAt || item.createdAt)}</td>

@@ -40,8 +40,14 @@ func TestSubscriptionAccessSettingDefaultsClosedAndRemainsPrivate(t *testing.T) 
 	if Defaults["subscriptionAccessUserId"] != "" {
 		t.Fatalf("subscription access default = %v, want empty", Defaults["subscriptionAccessUserId"])
 	}
+	if Defaults["subscriptionAccessUserIds"] != "" || Defaults["subscriptionAccessInitialized"] != false {
+		t.Fatalf("subscription access multi-user defaults are not closed: ids=%v initialized=%v", Defaults["subscriptionAccessUserIds"], Defaults["subscriptionAccessInitialized"])
+	}
 	if _, ok := Public(Defaults)["subscriptionAccessUserId"]; ok {
 		t.Fatal("subscription access user id must not be public")
+	}
+	if _, ok := Public(Defaults)["subscriptionAccessUserIds"]; ok {
+		t.Fatal("subscription access user ids must not be public")
 	}
 }
 

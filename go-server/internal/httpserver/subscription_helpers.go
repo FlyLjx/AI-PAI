@@ -38,8 +38,22 @@ func freeQuotaLimitsFromSettings(values settings.Settings) operations.FreeQuotaL
 }
 
 func subscriptionAccessAllowed(values settings.Settings, userID string) bool {
-	configuredUserID := strings.TrimSpace(anyString(values["subscriptionAccessUserId"]))
-	return configuredUserID != "" && configuredUserID == strings.TrimSpace(userID)
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return false
+	}
+	rawUserIDs := strings.TrimSpace(anyString(values["subscriptionAccessUserIds"]))
+	if rawUserIDs == "" {
+		rawUserIDs = strings.TrimSpace(anyString(values["subscriptionAccessUserId"]))
+	}
+	for _, configuredUserID := range strings.FieldsFunc(rawUserIDs, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	}) {
+		if strings.TrimSpace(configuredUserID) == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Router) requireSubscriptionAccess(ctx context.Context, userID string) error {

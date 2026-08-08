@@ -21,6 +21,18 @@ func TestSubscriptionAccessAllowedOnlyForConfiguredUser(t *testing.T) {
 	}
 }
 
+func TestSubscriptionAccessAllowsConfiguredUsers(t *testing.T) {
+	values := settings.Settings{"subscriptionAccessUserIds": " user-1, user-2;user-3 "}
+	for _, userID := range []string{"user-1", "user-2", "user-3"} {
+		if !subscriptionAccessAllowed(values, userID) {
+			t.Fatalf("configured user %s should have subscription access", userID)
+		}
+	}
+	if subscriptionAccessAllowed(values, "user-4") {
+		t.Fatal("unconfigured user should not have subscription access")
+	}
+}
+
 func TestSubscriptionAccessSettingIsNotPublic(t *testing.T) {
 	if _, ok := settings.Public(settings.Defaults)["subscriptionAccessUserId"]; ok {
 		t.Fatal("subscription access user id must remain admin-only")
