@@ -179,7 +179,10 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 	}
 	requestParams := compatRequestParams(req, input)
 
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	// Model lookup and task admission can briefly wait for the account
+	// generation lock. Keep this deadline separate from the image-processing
+	// wait below so a slow database lock cannot surface as a generic 500.
+	ctx, cancel := context.WithTimeout(req.Context(), generationEnqueueTimeout)
 	defer cancel()
 	model, err := models.NewRepository(r.db).FindActiveByNameOrDisplayName(ctx, input.Model)
 	if err != nil {
@@ -295,7 +298,11 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 				})
 				logCancel()
 			} else if status >= http.StatusBadRequest && status < http.StatusInternalServerError {
-				errorType = "invalid_request_error"
+				if status == http.StatusTooManyRequests {
+					errorType = "rate_limit_error"
+				} else {
+					errorType = "invalid_request_error"
+				}
 			}
 		}
 		writeOpenAIError(w, status, message, errorType)

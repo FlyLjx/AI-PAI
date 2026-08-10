@@ -33,10 +33,33 @@ func (r *Repository) CreateWithTx(ctx context.Context, tx *database.Tx, task Tas
 	if tx == nil {
 		return r.Create(ctx, task)
 	}
-	return r.create(ctx, tx, task)
+	// The caller already holds the user-generation transaction lock. Re-reading
+	// the task through the wide user/model/provider join here needlessly keeps
+	// that lock while the database resolves several unrelated rows. The task
+	// fields supplied by the caller are the authoritative values at insert
+	// time, so return them directly and let the normal FindByID path enrich a
+	// task after the transaction has committed.
+	if err := insertTask(ctx, tx, task); err != nil {
+		return nil, err
+	}
+	return &task, nil
 }
 
 func (r *Repository) create(ctx context.Context, store taskStore, task Task) (*Task, error) {
+	if err := insertTask(ctx, store, task); err != nil {
+		return nil, err
+	}
+	row := store.QueryRowContext(ctx, `
+		SELECT `+taskSelectColumns+`
+		FROM generation_tasks
+		`+taskJoins+`
+		WHERE generation_tasks.id = ?
+		LIMIT 1
+	`, task.ID)
+	return scanTask(row)
+}
+
+func insertTask(ctx context.Context, store taskStore, task Task) error {
 	resultJSON := any(nil)
 	if task.ResultJSON != nil {
 		bytes, _ := json.Marshal(task.ResultJSON)
@@ -54,17 +77,7 @@ func (r *Repository) create(ctx context.Context, store taskStore, task Task) (*T
 	`, task.ID, task.UserID, task.ModelID, task.ProviderID, task.Capability, task.Prompt, task.ReferenceImageURL, task.SizeTier, task.Size, task.OutputFormat, task.TransparentBackground, task.Quantity, task.UserIP,
 		task.SubscriptionQuotaUnits, task.CostCredits, task.ModelCostCredits, task.RemainingCredits, task.DurationSeconds, task.Status, task.ErrorMessage, resultJSON,
 		task.FavoriteEnabled, task.PublicStatus, task.DisplayEnabled, task.DisplayNote)
-	if err != nil {
-		return nil, err
-	}
-	row := store.QueryRowContext(ctx, `
-		SELECT `+taskSelectColumns+`
-		FROM generation_tasks
-		`+taskJoins+`
-		WHERE generation_tasks.id = ?
-		LIMIT 1
-	`, task.ID)
-	return scanTask(row)
+	return err
 }
 
 func (r *Repository) FindByID(ctx context.Context, id string) (*Task, error) {

@@ -29,6 +29,8 @@ const USER_NAV_ITEMS: NavItem[] = [
 ];
 
 const OPENAI_STATUS_REFRESH_MS = 60_000;
+const ACCOUNT_REFRESH_MS = 60_000;
+const BUILD_CHECK_INTERVAL_MS = 5 * 60_000;
 
 type OpenAIAlertBanner = {
   severity: 'warning' | 'critical';
@@ -51,7 +53,7 @@ function Navigation({ items, pathname, mobile = false, onNavigate }: { items: Na
       {items.map(({ label, href, icon: Icon }) => {
         const active = pathname === href;
         return (
-          <Link key={`${label}-${href}`} href={href} onClick={onNavigate} className={`nav-item ${active ? 'is-active' : ''}`}>
+          <Link key={`${label}-${href}`} href={href} prefetch={false} onClick={onNavigate} className={`nav-item ${active ? 'is-active' : ''}`}>
             <Icon size={16} />
             <span>{label}</span>
             {!mobile && <ChevronRight size={13} className="nav-arrow" aria-hidden="true" />}
@@ -196,7 +198,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     const syncVisibleAccount = () => {
       if (document.visibilityState === 'visible') void syncAccount();
     };
-    const timer = window.setInterval(() => void syncAccount(), 10000);
+    const timer = window.setInterval(() => void syncAccount(), ACCOUNT_REFRESH_MS);
     window.addEventListener('focus', syncVisibleAccount);
     document.addEventListener('visibilitychange', syncVisibleAccount);
     return () => {
@@ -225,7 +227,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       if (document.visibilityState === 'visible') void checkBuild();
     };
     const firstCheck = window.setTimeout(() => void checkBuild(), 1_000);
-    const timer = window.setInterval(() => void checkBuild(), 30_000);
+    const timer = window.setInterval(() => void checkBuild(), BUILD_CHECK_INTERVAL_MS);
     window.addEventListener('focus', checkVisibleBuild);
     document.addEventListener('visibilitychange', checkVisibleBuild);
     return () => {
@@ -343,7 +345,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className={`app-frame ${pathname === '/docs' ? 'docs-frame' : ''}`}>
       <aside className="app-sidebar">
-        <Link href="/dashboard" className="brand-lockup">
+        <Link href="/dashboard" prefetch={false} className="brand-lockup">
           <span className="brand-mark">AIπ</span>
           <span><strong>图片中转站</strong><small title={`Commit ${WEB_BUILD_COMMIT}`}>开发者控制台</small></span>
         </Link>
@@ -382,7 +384,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               {accountMenuOpen && (
                 <div className="topbar-account-menu" role="menu">
                   <div className="topbar-account-meta"><strong>{user.email}</strong><small>图片中转站用户</small></div>
-                  <Link href="/settings" onClick={() => setAccountMenuOpen(false)}><Settings size={14} />账户设置</Link>
+                  <Link href="/settings" prefetch={false} onClick={() => setAccountMenuOpen(false)}><Settings size={14} />账户设置</Link>
                   <button type="button" onClick={logout}><LogOut size={14} />退出登录</button>
                 </div>
               )}
@@ -391,7 +393,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </header>
 
         <header className="mobile-header">
-          <Link href="/dashboard" className="brand-lockup compact">
+          <Link href="/dashboard" prefetch={false} className="brand-lockup compact">
             <span className="brand-mark">AIπ</span>
             <span><strong>图片中转站</strong><small>开发者控制台</small></span>
           </Link>
@@ -431,6 +433,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </div>
                   <Link
                     href="/status"
+                    prefetch={false}
                     className={`btn shrink-0 justify-center whitespace-nowrap ${openAIAlert.isCritical ? 'border-red-200 bg-white text-red-700 hover:border-red-300 hover:bg-red-50' : 'border-amber-200 bg-white text-amber-700 hover:border-amber-300 hover:bg-amber-50'}`}
                   >
                     查看状态页
@@ -469,7 +472,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </main>
       </div>
       <nav className="bottom-nav">
-        {mobileNav.map(({ label, href, icon: Icon }) => <Link key={`${label}-${href}`} href={href} className={pathname === href ? 'is-active' : ''}><Icon size={18} /><span>{label}</span></Link>)}
+        {mobileNav.map(({ label, href, icon: Icon }) => <Link key={`${label}-${href}`} href={href} prefetch={false} className={pathname === href ? 'is-active' : ''}><Icon size={18} /><span>{label}</span></Link>)}
       </nav>
       {(announcementOpen || Boolean(activePopup)) && notificationAnnouncement && (
         <div className="modal-backdrop" role="presentation">

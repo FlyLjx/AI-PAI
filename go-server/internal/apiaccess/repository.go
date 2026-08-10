@@ -648,13 +648,27 @@ func (r *Repository) CreateLogWithTx(ctx context.Context, tx *database.Tx, log U
 	if tx == nil {
 		return r.CreateLog(ctx, log)
 	}
-	return r.createLog(ctx, tx, log)
+	// Task admission already holds the account transaction lock. Avoid the
+	// follow-up wide join used by the non-transactional read path so that log
+	// enrichment cannot extend the lock's critical section.
+	if err := insertUsageLog(ctx, tx, log); err != nil {
+		return nil, err
+	}
+	return &log, nil
 }
 
 func (r *Repository) createLog(ctx context.Context, store accessStore, log UsageLog) (*UsageLog, error) {
+	if err := insertUsageLog(ctx, store, log); err != nil {
+		return nil, err
+	}
+	row := store.QueryRowContext(ctx, usageLogSelect()+` WHERE api_access_logs.id = ? LIMIT 1`, log.ID)
+	return scanUsageLog(row)
+}
+
+func insertUsageLog(ctx context.Context, store accessStore, log UsageLog) error {
 	requestParams, err := encodeRequestParams(log.RequestParams)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	responseStatusCode, errorMessage, errorCode, errorDetails := usageLogErrorFields(log)
 	_, err = store.ExecContext(ctx, `
@@ -663,11 +677,7 @@ func (r *Repository) createLog(ctx context.Context, store accessStore, log Usage
 		VALUES
 			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, log.ID, log.UserID, log.APIKeyID, log.TaskID, log.Endpoint, log.Model, log.Prompt, log.Size, log.Quality, log.Quantity, log.ImageCount, log.ResponseFormat, requestParams, log.Status, errorMessage, responseStatusCode, errorCode, errorDetails, log.FinishedAt)
-	if err != nil {
-		return nil, err
-	}
-	row := store.QueryRowContext(ctx, usageLogSelect()+` WHERE api_access_logs.id = ? LIMIT 1`, log.ID)
-	return scanUsageLog(row)
+	return err
 }
 
 func encodeRequestParams(value map[string]any) (any, error) {

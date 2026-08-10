@@ -29,10 +29,10 @@ import {
   APIError,
   getSession,
   portalApi,
-  refreshSession,
-  type APIKey,
   type PortalUser,
   type UsageLog,
+  type UsageModelStat,
+  type UsageSummary,
   type UsageTrendPoint,
 } from '@/lib/portal-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
@@ -73,10 +73,6 @@ function trendRange() {
 
 function errorMessage(error: unknown): string {
   return error instanceof APIError || error instanceof Error ? error.message : '数据加载失败';
-}
-
-function scrubKey(key: APIKey): APIKey {
-  return { ...key, key: undefined, keyPlain: undefined };
 }
 
 function logStatus(status: string): { label: string; className: string; icon: LucideIcon } {
@@ -153,9 +149,6 @@ type ModelStatusRow = {
   successRate: number | null;
 };
 
-const MODEL_STATUS_LOOKBACK_MS = 24 * 60 * 60 * 1000;
-const LOG_PAGE_SIZE = 100;
-
 function displayResolution(value: string): string {
   const normalized = String(value || '').trim().toLowerCase();
   if (normalized === '1k') return '1024×1024';
@@ -165,62 +158,23 @@ function displayResolution(value: string): string {
   return value || '1024×1024';
 }
 
-function summarizeModelStatus(logs: UsageLog[]): ModelStatusRow[] {
-  const groups = new Map<string, { model: string; resolution: string; calls: number; counted: number; success: number }>();
-  logs.forEach((log) => {
-    const model = String(log.model || '').trim() || 'gpt-image-2';
-    const resolution = displayResolution(log.size);
-    const key = `${model}::${resolution}`;
-    const current = groups.get(key) || { model, resolution, calls: 0, counted: 0, success: 0 };
-    current.calls += 1;
-    const status = String(log.status || '').toLowerCase();
-    if (['success', 'succeeded'].includes(status)) {
-      current.counted += 1;
-      current.success += 1;
-    } else if (['failed', 'canceled', 'cancelled'].includes(status)) {
-      current.counted += 1;
-    }
-    groups.set(key, current);
-  });
-
-  const rows = [...groups.values()]
-    .sort((left, right) => right.calls - left.calls || left.model.localeCompare(right.model))
+function summarizeModelStatus(models: UsageModelStat[]): ModelStatusRow[] {
+  return models
+    .slice()
+    .sort((left, right) => Number(right.total || 0) - Number(left.total || 0) || left.model.localeCompare(right.model))
     .slice(0, 3)
-    .map(({ model, resolution, counted, success }) => ({
-      model,
-      resolution,
-      successRate: counted > 0 ? Math.round((success / counted) * 1000) / 10 : null,
+    .map((item) => ({
+      model: String(item.model || '').trim() || 'gpt-image-2',
+      resolution: displayResolution(item.size),
+      successRate: Number.isFinite(Number(item.successRate)) ? Math.round(Number(item.successRate) * 10) / 10 : null,
     }));
-  return rows;
-}
-
-async function loadRecentModelLogs(user: PortalUser): Promise<UsageLog[]> {
-  const cutoff = Date.now() - MODEL_STATUS_LOOKBACK_MS;
-  const firstPage = await portalApi.usage(user, 1, LOG_PAGE_SIZE);
-  const allLogs = [...(firstPage.data || [])];
-  const total = Number(firstPage.pagination?.total || allLogs.length);
-  const totalPages = Math.min(Math.ceil(total / LOG_PAGE_SIZE), 50);
-
-  for (let page = 2; page <= totalPages; page += 1) {
-    const oldestLoaded = allLogs[allLogs.length - 1];
-    const oldestTime = oldestLoaded ? Date.parse(oldestLoaded.createdAt) : Number.NaN;
-    if (Number.isFinite(oldestTime) && oldestTime < cutoff) break;
-    const nextPage = await portalApi.usage(user, page, LOG_PAGE_SIZE);
-    allLogs.push(...(nextPage.data || []));
-    if ((nextPage.data || []).length < LOG_PAGE_SIZE) break;
-  }
-
-  return allLogs.filter((log) => {
-    const createdAt = Date.parse(log.createdAt);
-    return Number.isFinite(createdAt) && createdAt >= cutoff;
-  });
 }
 
 export default function DashboardPage() {
   const [user, setUser] = useState<PortalUser | null>(null);
-  const [keys, setKeys] = useState<APIKey[]>([]);
   const [logs, setLogs] = useState<UsageLog[]>([]);
-  const [modelLogs, setModelLogs] = useState<UsageLog[]>([]);
+  const [modelStats, setModelStats] = useState<UsageModelStat[]>([]);
+  const [summary, setSummary] = useState<UsageSummary | null>(null);
   const [requestTotal, setRequestTotal] = useState(0);
   const [trend, setTrend] = useState<UsageTrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
@@ -237,30 +191,28 @@ export default function DashboardPage() {
     }
 
     const range = trendRange();
+    const modelStatusDate = localDateValue(new Date());
     setLoading(true);
     setTrendLoading(true);
     setError('');
     const results = await Promise.allSettled([
-      refreshSession(current),
-      portalApi.listKeys(current),
       portalApi.usage(current, 1, 5),
-      loadRecentModelLogs(current),
+      portalApi.usageAnalytics(current, modelStatusDate, modelStatusDate),
       portalApi.usageTrend(current, range.startDate, range.endDate),
     ]);
-    const [userResult, keysResult, logsResult, modelLogsResult, trendResult] = results;
+    const [logsResult, analyticsResult, trendResult] = results;
 
-    if (userResult.status === 'fulfilled') setUser(userResult.value);
-    else setUser(current);
-    if (keysResult.status === 'fulfilled') setKeys((keysResult.value.data || []).map(scrubKey));
+    setUser(current);
     if (logsResult.status === 'fulfilled') {
       setLogs(logsResult.value.data || []);
+      setSummary(logsResult.value.summary || null);
       setRequestTotal(logsResult.value.pagination?.total || 0);
     }
-    if (modelLogsResult.status === 'fulfilled') setModelLogs(modelLogsResult.value);
+    if (analyticsResult.status === 'fulfilled') setModelStats(analyticsResult.value.data?.models || []);
     if (trendResult.status === 'fulfilled') setTrend(trendResult.value.data || []);
     else setTrend([]);
 
-    const failure = results.find((result, index) => result.status === 'rejected' && index !== 0);
+    const failure = results.find((result) => result.status === 'rejected');
     if (failure?.status === 'rejected') setError(errorMessage(failure.reason));
     setLoading(false);
     setTrendLoading(false);
@@ -270,16 +222,6 @@ export default function DashboardPage() {
     const timer = window.setTimeout(() => void loadDashboard(), 0);
     return () => window.clearTimeout(timer);
   }, [loadDashboard]);
-
-  const keyStats = useMemo(() => keys.reduce(
-    (summary, key) => ({
-      requests: summary.requests + Number(key.requestCount || 0),
-      success: summary.success + Number(key.successCount || 0),
-      failed: summary.failed + Number(key.failedCount || 0),
-      images: summary.images + Number(key.imageCount || 0),
-    }),
-    { requests: 0, success: 0, failed: 0, images: 0 },
-  ), [keys]);
 
   const logStats = useMemo(() => logs.reduce(
     (summary, log) => {
@@ -293,14 +235,14 @@ export default function DashboardPage() {
     { success: 0, failed: 0, images: 0 },
   ), [logs]);
 
-  const imageCount = Math.max(keyStats.images, logStats.images);
-  const requestCount = Math.max(keyStats.requests, requestTotal);
-  const successCount = Math.max(keyStats.success, logStats.success);
-  const failedCount = Math.max(keyStats.failed, logStats.failed);
+  const imageCount = Math.max(Number(summary?.imageCount || 0), logStats.images);
+  const requestCount = Math.max(Number(summary?.total || 0), requestTotal);
+  const successCount = Math.max(Number(summary?.success || 0), logStats.success);
+  const failedCount = Math.max(Number(summary?.failed || 0), logStats.failed);
   const chartData = trend.length > 0
     ? trend.map((point) => ({ ...point, label: shortDate(point.date) }))
     : [];
-  const modelStatusRows = useMemo(() => summarizeModelStatus(modelLogs), [modelLogs]);
+  const modelStatusRows = useMemo(() => summarizeModelStatus(modelStats), [modelStats]);
 
   const metrics: Metric[] = [
     { label: '图片数量', value: displayNumber(imageCount, loading), trend: '12.5%', trendTone: 'up', tone: 'green', icon: ImageIcon },
@@ -334,7 +276,7 @@ export default function DashboardPage() {
           <code>{endpoint}</code>
           <button type="button" onClick={() => void copyEndpoint()} aria-label="复制图片接口地址" title="复制地址"><Clipboard size={16} /></button>
         </div>
-        <Link href="/api-keys" className="dashboard-primary-button"><KeyRound size={15} />创建 API Key</Link>
+        <Link href="/api-keys" prefetch={false} className="dashboard-primary-button"><KeyRound size={15} />创建 API Key</Link>
       </section>
 
       <section className="dashboard-metrics" aria-label="图片中转数据">
@@ -413,7 +355,7 @@ export default function DashboardPage() {
       <section className="dashboard-panel recent-panel" aria-labelledby="recent-image-requests-title">
         <header className="dashboard-panel-head recent-panel-head">
           <div><strong id="recent-image-requests-title">最近图片请求</strong><small>最近 5 条记录</small></div>
-          <Link href="/usage" className="dashboard-text-link">查看全部 <ArrowRight size={13} /></Link>
+          <Link href="/usage" prefetch={false} className="dashboard-text-link">查看全部 <ArrowRight size={13} /></Link>
         </header>
         <DataTable
           embedded
@@ -440,7 +382,7 @@ export default function DashboardPage() {
                 <td><span className="request-model" title={channelLabel(log)}>{channelLabel(log)}</span></td>
                 <td><span className={`request-status-pill ${status.className}`}><StatusIcon size={12} />{status.label}</span></td>
                 <td className="request-time">{formatDate(log.createdAt)}</td>
-                <td><Link href={`/usage?log=${encodeURIComponent(log.id)}`} className="request-view-link">查看</Link></td>
+                <td><Link href={`/usage?log=${encodeURIComponent(log.id)}`} prefetch={false} className="request-view-link">查看</Link></td>
               </tr>
             );
           }}

@@ -9,7 +9,6 @@ import (
 	"math"
 	"net/http"
 	"strings"
-	"time"
 
 	"aipi-go/internal/database"
 	"aipi-go/internal/models"
@@ -113,7 +112,10 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 		return nil, newAppError(http.StatusBadRequest, "清晰度参数不正确")
 	}
 
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	// Admission is database-only and may contend with settlement for the same
+	// account. Use the dedicated enqueue budget; image processing has its own
+	// queue timeout after this transaction commits.
+	ctx, cancel := context.WithTimeout(req.Context(), generationEnqueueTimeout)
 	defer cancel()
 	model, err := models.NewRepository(r.db).FindByID(ctx, input.ModelID)
 	if errors.Is(err, sql.ErrNoRows) || model == nil {

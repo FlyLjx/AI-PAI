@@ -25,15 +25,51 @@ var (
 )
 
 func (s *Service) finishSuccessWithBilling(ctx context.Context, input BillingSuccessInput) error {
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		lastErr = s.finishSuccessWithBillingOnce(ctx, input)
+		if lastErr == nil || !isRetryableBillingTransactionError(lastErr) || ctx.Err() != nil || attempt == 2 {
+			return lastErr
+		}
+		backoff := time.Duration(attempt+1) * 75 * time.Millisecond
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+	}
+	return lastErr
+}
+
+func (s *Service) finishSuccessWithBillingOnce(ctx context.Context, input BillingSuccessInput) error {
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
 
+	// Settlement and task admission must use the same lock order. Admission
+	// locks the user row before inserting a task; settlement therefore reads the
+	// task without locking only to discover its owner, then locks user -> task.
+	// The second read is the authoritative status/cost check.
 	var taskUserID string
 	var taskStatus string
 	var costCredits float64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT user_id, status, cost_credits
+		FROM generation_tasks
+		WHERE id = ?
+	`, input.TaskID).Scan(&taskUserID, &taskStatus, &costCredits); err != nil {
+		return err
+	}
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id
+		FROM users
+		WHERE id = ?
+		FOR UPDATE
+	`, taskUserID).Scan(&taskUserID); err != nil {
+		return err
+	}
 	if err := tx.QueryRowContext(ctx, `
 		SELECT user_id, status, cost_credits
 		FROM generation_tasks
@@ -61,7 +97,7 @@ func (s *Service) finishSuccessWithBilling(ctx context.Context, input BillingSuc
 		return err
 	}
 	var credits float64
-	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ? FOR UPDATE`, taskUserID).Scan(&credits); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ?`, taskUserID).Scan(&credits); err != nil {
 		return err
 	}
 	remaining, enough := remainingBalanceAfterCharge(credits, costCredits)
@@ -111,6 +147,29 @@ func (s *Service) finishSuccessWithBilling(ctx context.Context, input BillingSuc
 		}
 	}
 	return nil
+}
+
+func isRetryableBillingTransactionError(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"deadlock",
+		"lock wait timeout",
+		"could not obtain lock",
+		"could not serialize access",
+		"serialization failure",
+		"sqlstate 40001",
+		"sqlstate 40p01",
+		"error 1213",
+		"error 1205",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) claimResultImages(ctx context.Context, tx *database.Tx, providerID string, taskID string, result any) error {
