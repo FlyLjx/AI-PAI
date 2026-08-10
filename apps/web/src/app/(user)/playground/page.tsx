@@ -21,7 +21,6 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect, type AppSelectOption } from '@/components/common/AppSelect';
-import { PageHeader } from '@/components/common/PageHeader';
 import {
   APIError,
   getSession,
@@ -426,18 +425,25 @@ export default function PlaygroundPage() {
 
   return (
     <div className="page-stack generation-page">
-      <PageHeader title="生图台" description="文本与参考图生成 · OpenAI Images API">
-        <Link href="/api-keys" className="btn"><KeyRound size={14} />管理 Key</Link>
-        <button className="btn" type="button" onClick={() => void loadKeys()} disabled={loadingKeys || generating}>
-          <RefreshCw size={14} className={loadingKeys ? 'animate-spin' : ''} />刷新
-        </button>
-      </PageHeader>
+      <section className="generation-hero generation-toolbar" aria-label="生图配置工具栏">
+        <div className="generation-hero-meta" aria-label="当前生成概览">
+          <div><span>当前模型</span><strong title={selectedModel}>{selectedModel || '模型准备中'}</strong></div>
+          <div><span>输出配置</span><strong>{sizeTier.toUpperCase()} · {aspectRatio}</strong></div>
+        </div>
+        <div className="generation-hero-actions">
+          <Link href="/api-keys" className="btn"><KeyRound size={14} />管理 Key</Link>
+          <button className="btn" type="button" onClick={() => void loadKeys()} disabled={loadingKeys || generating}>
+            <RefreshCw size={14} className={loadingKeys ? 'animate-spin' : ''} />刷新
+          </button>
+        </div>
+      </section>
 
       {loadError && <div className="notice generation-error-notice" role="alert"><AlertCircle size={15} />{loadError}</div>}
 
       {!loadingKeys && apiKeys.length === 0 ? (
         <section className="section-panel generation-key-empty">
-          {user?.emailVerifiedAt ? <KeyRound size={30} /> : <MailWarning size={30} />}
+          <span className="generation-empty-icon">{user?.emailVerifiedAt ? <KeyRound size={25} /> : <MailWarning size={25} />}</span>
+          <span className="generation-eyebrow">SETUP REQUIRED</span>
           <strong>{user?.emailVerifiedAt ? '还没有可用的 API Key' : '邮箱尚未验证'}</strong>
           <p>{user?.emailVerifiedAt ? '创建并启用 API Key 后即可进入生图台。' : '完成邮箱验证后，先创建 API Key 再开始生成。'}</p>
           <Link className="btn primary" href={user?.emailVerifiedAt ? '/api-keys' : '/settings'}>
@@ -448,13 +454,20 @@ export default function PlaygroundPage() {
       ) : (
         <div className="generation-workspace">
           <form ref={generationFormRef} className="section-panel generation-form" onSubmit={generate}>
-            <div className="section-head generation-panel-head">
-              <span><Sparkles size={15} /></span>
-              <div><strong>生成参数</strong><small>{selectedModel || '模型准备中'}</small></div>
-            </div>
+            <header className="generation-section-head">
+              <div className="generation-heading-group">
+                <span className="generation-step">01</span>
+                <div><span>CONFIGURE</span><strong>生成参数</strong></div>
+              </div>
+              <span className="generation-head-context" title={selectedModel}>{selectedModel || '模型准备中'}</span>
+            </header>
+
             <div className="generation-form-body">
-              <div className="field">
-                <label htmlFor="generation-key">API Key</label>
+              <div className="generation-control-block">
+                <div className="generation-label-row generation-label-row-expanded">
+                  <div><label htmlFor="generation-key">API Key</label><small>选择用于请求的密钥</small></div>
+                  <KeyRound size={13} aria-hidden="true" />
+                </div>
                 <AppSelect
                   id="generation-key"
                   value={selectedKeyId}
@@ -464,9 +477,9 @@ export default function PlaygroundPage() {
                 />
               </div>
 
-              <div className="field">
-                <div className="generation-label-row">
-                  <label htmlFor="generation-model">模型</label>
+              <div className="generation-control-block">
+                <div className="generation-label-row generation-label-row-expanded">
+                  <div><label htmlFor="generation-model">模型</label><small>使用该 Key 可用的模型</small></div>
                   <button type="button" onClick={refreshModels} disabled={!selectedKeyId || loadingModels || generating} title="重新获取模型" aria-label="重新获取模型">
                     <RefreshCw size={12} className={loadingModels ? 'animate-spin' : ''} />
                   </button>
@@ -481,9 +494,9 @@ export default function PlaygroundPage() {
                 {modelError && <span className="generation-field-error" role="alert"><AlertCircle size={12} />{modelError}</span>}
               </div>
 
-              <div className="field generation-prompt-field">
-                <div className="generation-label-row">
-                  <label htmlFor="generation-prompt">提示词</label>
+              <div className="generation-control-block generation-prompt-field">
+                <div className="generation-label-row generation-label-row-expanded">
+                  <div><label htmlFor="generation-prompt">提示词</label><small>描述主体、风格、光线与构图</small></div>
                   <span>{prompt.length}/4000</span>
                 </div>
                 <textarea
@@ -494,11 +507,12 @@ export default function PlaygroundPage() {
                   disabled={generating}
                   rows={7}
                 />
+                <div className="generation-prompt-hint"><Sparkles size={12} /><span>提示词越具体，画面越接近你的想法</span></div>
               </div>
 
-              <div className="field generation-reference-field">
-                <div className="generation-label-row">
-                  <label htmlFor="generation-reference-input">参考图</label>
+              <div className="generation-control-block generation-reference-field">
+                <div className="generation-label-row generation-label-row-expanded">
+                  <div><label htmlFor="generation-reference-input">参考图</label><small>可选，帮助控制画面方向</small></div>
                   <span>{referenceImages.length}/{maxReferenceImages}</span>
                 </div>
                 <input
@@ -538,24 +552,28 @@ export default function PlaygroundPage() {
                     </button>
                   )}
                 </div>
+                <small className="generation-help-line">支持 JPG、PNG、WEBP · 单张不超过 20MB</small>
               </div>
 
-              <div className="generation-parameter-grid">
-                <div className="field">
-                  <label htmlFor="generation-size">清晰度</label>
-                  <AppSelect id="generation-size" value={sizeTier} options={enabledSizeOptions} onValueChange={(value) => setSizeTier(value as SizeTier)} disabled={generating || loadingModels} />
-                </div>
-                <div className="field">
-                  <label htmlFor="generation-ratio">画面比例</label>
-                  <AppSelect id="generation-ratio" value={aspectRatio} options={ratioOptions} onValueChange={(value) => setAspectRatio(value as AspectRatio)} disabled={generating} />
-                </div>
-                <div className="field">
-                  <label htmlFor="generation-quantity">生成数量</label>
-                  <AppSelect id="generation-quantity" value={String(quantity)} options={quantityOptions} onValueChange={(value) => setQuantity(Number(value))} disabled={generating} />
-                </div>
-                <div className="field">
-                  <label htmlFor="generation-format">输出格式</label>
-                  <AppSelect id="generation-format" value={outputFormat} options={formatOptions} onValueChange={(value) => setOutputFormat(value as OutputFormat)} disabled={generating} />
+              <div className="generation-options-block">
+                <div className="generation-options-heading"><span>OUTPUT SETTINGS</span><small>输出设置</small></div>
+                <div className="generation-parameter-grid">
+                  <div className="field">
+                    <label htmlFor="generation-size">清晰度</label>
+                    <AppSelect id="generation-size" value={sizeTier} options={enabledSizeOptions} onValueChange={(value) => setSizeTier(value as SizeTier)} disabled={generating || loadingModels} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="generation-ratio">画面比例</label>
+                    <AppSelect id="generation-ratio" value={aspectRatio} options={ratioOptions} onValueChange={(value) => setAspectRatio(value as AspectRatio)} disabled={generating} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="generation-quantity">生成数量</label>
+                    <AppSelect id="generation-quantity" value={String(quantity)} options={quantityOptions} onValueChange={(value) => setQuantity(Number(value))} disabled={generating} />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="generation-format">输出格式</label>
+                    <AppSelect id="generation-format" value={outputFormat} options={formatOptions} onValueChange={(value) => setOutputFormat(value as OutputFormat)} disabled={generating} />
+                  </div>
                 </div>
               </div>
 
@@ -579,17 +597,22 @@ export default function PlaygroundPage() {
             aria-live="polite"
             style={generationFormHeight ? { '--generation-form-height': `${generationFormHeight}px` } as React.CSSProperties : undefined}
           >
-            <div className="section-head">
-              <div>
-                <strong>生成结果</strong>
-                <small>{generating ? '任务处理中' : results.length > 0 ? `${results.length} 张 · ${generatedTime}` : '等待生成'}</small>
+            <header className="generation-section-head generation-results-head">
+              <div className="generation-heading-group">
+                <span className="generation-step">02</span>
+                <div><span>OUTPUT</span><strong>生成结果</strong></div>
               </div>
-              {results.length > 0 && !generating && (
-                <button className="btn icon" type="button" onClick={() => setResults([])} title="清空结果" aria-label="清空结果">
-                  <Trash2 size={14} />
-                </button>
-              )}
-            </div>
+              <div className="generation-result-head-actions">
+                <span className={`generation-result-status ${generating ? 'is-processing' : results.length > 0 ? 'is-ready' : 'is-idle'}`}>
+                  <i aria-hidden="true" />{generating ? '任务处理中' : results.length > 0 ? `${results.length} 张 · ${generatedTime}` : '等待生成'}
+                </span>
+                {results.length > 0 && !generating && (
+                  <button className="btn icon" type="button" onClick={() => setResults([])} title="清空结果" aria-label="清空结果">
+                    <Trash2 size={14} />
+                  </button>
+                )}
+              </div>
+            </header>
 
             <div className={`generation-results-body ${results.length > 1 ? 'has-multiple' : ''}`}>
               {generating ? (
@@ -610,6 +633,7 @@ export default function PlaygroundPage() {
                   <span className="generation-state-icon"><Images size={27} /></span>
                   <strong>暂无生成结果</strong>
                   <small>{sizeTier.toUpperCase()} · {aspectRatio} · {outputFormat.toUpperCase()}</small>
+                  <span className="generation-result-tip">填写左侧参数后，生成的图片会显示在这里</span>
                 </div>
               ) : (
                 <div className="generation-result-grid">

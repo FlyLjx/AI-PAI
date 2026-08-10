@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { ArrowLeft, ExternalLink, KeyRound, Mail } from 'lucide-react';
 import { toast } from 'sonner';
 import { forgotPassword, type PasswordResetRequest } from '@/lib/portal-api';
+import styles from '../auth.module.css';
 
 export default function ForgotPasswordPage() {
   const [email, setEmail] = useState('');
@@ -28,12 +29,11 @@ export default function ForgotPasswordPage() {
   );
 
   return (
-    <main className="min-h-screen grid place-items-center bg-[#f7f8f6] p-5">
-      <section className="w-full max-w-md section-panel p-6 sm:p-8">
-        <div className="flex items-center gap-2"><span className="brand-mark">AI</span><strong>AI-PAI</strong></div>
-        <KeyRound className="mt-8 text-[#0f7a4b]" size={26} />
-        <h1 className="mt-4 text-xl font-bold">重置账户密码</h1>
-        <p className="mt-1 text-xs leading-5 text-[#6b756f]">输入注册邮箱，我们会发送密码重置说明。</p>
+    <main className={`${styles.authPage} ${styles.authStandalone}`}>
+      <section className={styles.authFormPanel}>
+        <div className={styles.brandLockup}><span className={styles.brandMark}>AIπ</span><span className={styles.brandCopy}><strong>图片中转站</strong><small>开发者控制台</small></span></div>
+        <span className={`${styles.authIcon} mt-8`}><KeyRound size={22} /></span>
+        <div className={styles.formHeader}><h1>重置账户密码</h1><p>输入注册邮箱，我们会发送密码重置说明。</p></div>
 
         {result ? (
           <div className="mt-6" aria-live="polite">
@@ -55,9 +55,9 @@ export default function ForgotPasswordPage() {
             <button className="btn mt-5 w-full" type="button" onClick={() => setResult(null)}>重新输入邮箱</button>
           </div>
         ) : (
-          <form className="mt-7" onSubmit={submit}>
-            <label className="field">
-              <span className="flex items-center gap-1.5"><Mail size={13} />邮箱</span>
+          <form className={styles.authFields} onSubmit={submit}>
+            <label className={styles.authField}>
+              <span><Mail size={14} />邮箱</span>
               <input
                 type="email"
                 required
@@ -67,13 +67,13 @@ export default function ForgotPasswordPage() {
                 placeholder="name@example.com"
               />
             </label>
-            <button className="btn primary mt-6 w-full" disabled={loading}>
+            <button className={`btn primary ${styles.submitButton}`} disabled={loading}>
               {loading ? '提交中...' : '发送重置说明'}
             </button>
           </form>
         )}
 
-        <Link className="mt-5 flex items-center justify-center gap-1.5 text-xs font-semibold text-[#087443]" href="/login">
+        <Link className={`${styles.authLink} mt-5 flex items-center justify-center gap-1.5`} href="/login">
           <ArrowLeft size={13} /> 返回登录
         </Link>
       </section>

@@ -5,8 +5,8 @@ import { Toaster } from "sonner";
 import { SupportWidget } from "@/components/common/SupportWidget";
 
 export const metadata: Metadata = {
-  title: "AI-PAI - 图像 API 中转站",
-  description: "统一管理图像 API、上游模型、调用用量、订阅额度与账户余额。",
+  title: "AIπ 图片中转站",
+  description: "统一管理图片请求、转发渠道、调用记录与账户余额。",
 };
 
 export default function RootLayout({

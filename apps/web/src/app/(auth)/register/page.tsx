@@ -3,10 +3,11 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowRight, CircleAlert, ExternalLink, LoaderCircle, MailCheck, UserPlus } from 'lucide-react';
+import { ArrowRight, CircleAlert, ExternalLink, LoaderCircle, MailCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { isRegistrationVerification, register, registrationChallenge, type RegistrationChallenge, type RegistrationVerification } from '@/lib/portal-api';
 import { useRegistrationAvailability } from '@/lib/use-registration-availability';
+import styles from '../auth.module.css';
 
 const REGISTRATION_DEVICE_KEY = 'aipai_registration_device';
 
@@ -94,14 +95,14 @@ export default function RegisterPage() {
   };
 
   if (registrationAvailability === 'loading') {
-    return <main className="min-h-screen grid place-items-center bg-[#f7f8f6]"><div className="loading-ring" /></main>;
+    return <main className={styles.authPage}><div className="loading-ring" /></main>;
   }
 
   if (registrationAvailability === 'closed') {
     return (
-      <main className="min-h-screen grid place-items-center bg-[#f7f8f6] p-5">
-        <section className="w-full max-w-md section-panel p-6 text-center sm:p-8">
-          <div className="flex items-center justify-center gap-2"><span className="brand-mark">AI</span><strong>AI-PAI</strong></div>
+      <main className={`${styles.authPage} ${styles.authStandalone}`}>
+        <section className={`${styles.authFormPanel} text-center`}>
+          <div className={styles.brandLockup}><span className={styles.brandMark}>AIπ</span><span className={styles.brandCopy}><strong>图片中转站</strong><small>开发者控制台</small></span></div>
           <CircleAlert className="mx-auto mt-8 text-[#b7791f]" size={30} />
           <h1 className="mt-4 text-xl font-bold">注册暂未开放</h1>
           <p className="mt-2 text-xs leading-6 text-[#6b756f]">当前仅支持已有账户登录，请联系管理员开通账户。</p>
@@ -113,9 +114,9 @@ export default function RegisterPage() {
 
   if (verification) {
     return (
-      <main className="min-h-screen grid place-items-center bg-[#f7f8f6] p-5">
-        <section className="w-full max-w-md section-panel p-6 sm:p-8" aria-live="polite">
-          <div className="flex items-center gap-2"><span className="brand-mark">AI</span><strong>AI-PAI</strong></div>
+      <main className={`${styles.authPage} ${styles.authStandalone}`}>
+        <section className={styles.authFormPanel} aria-live="polite">
+          <div className={styles.brandLockup}><span className={styles.brandMark}>AIπ</span><span className={styles.brandCopy}><strong>图片中转站</strong><small>开发者控制台</small></span></div>
           <span className="mt-8 grid size-11 place-items-center rounded-[8px] bg-[#eaf8ef] text-[#0f7a4b]">
             <MailCheck size={23} />
           </span>
@@ -143,22 +144,22 @@ export default function RegisterPage() {
   }
 
   return (
-    <main className="min-h-screen grid place-items-center bg-[#f7f8f6] p-5">
-      <form onSubmit={submit} className="w-full max-w-md section-panel p-6 sm:p-8">
-        <div className="flex items-center gap-2"><span className="brand-mark">AI</span><strong>AI-PAI</strong></div>
-        <UserPlus className="mt-8 text-[#0f7a4b]" size={26} />
-        <h1 className="mt-4 text-xl font-bold">创建 API 账户</h1>
-        <p className="mt-1 text-xs text-[#6b756f]">注册后可登录控制台，验证邮箱后创建 Key</p>
-        <div className="mt-7 space-y-4">
-          <label className="field"><span>邮箱</span><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
-          <label className="field"><span>密码</span><input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
-          <label className="field"><span>确认密码</span><input type="password" required minLength={6} value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} /></label>
-          <label className="field"><span>邀请码（选填）</span><input className="font-mono uppercase" maxLength={16} value={form.inviteCode} onChange={(e) => setForm({ ...form, inviteCode: e.target.value.toUpperCase() })} placeholder="输入好友邀请码" /></label>
+    <main className={styles.authPage}>
+      <section className={styles.authShell}>
+        <form onSubmit={submit} className={styles.authFormPanel}>
+          <div className={styles.formBrand}><span className={styles.brandMark}>AIπ</span><span className={styles.brandCopy}><strong>图片中转站</strong><small>开发者控制台</small></span></div>
+          <div className={styles.formHeader}><h1>创建 API 账户</h1><p>注册后可登录控制台，验证邮箱后创建 Key</p></div>
+          <div className={styles.authFields}>
+          <label className={styles.authField}><span>邮箱</span><input type="email" required value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></label>
+          <label className={styles.authField}><span>密码</span><input type="password" required minLength={6} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></label>
+          <label className={styles.authField}><span>确认密码</span><input type="password" required minLength={6} value={form.confirm} onChange={(e) => setForm({ ...form, confirm: e.target.value })} /></label>
+          <label className={styles.authField}><span>邀请码（选填）</span><input className="font-mono uppercase" maxLength={16} value={form.inviteCode} onChange={(e) => setForm({ ...form, inviteCode: e.target.value.toUpperCase() })} placeholder="输入好友邀请码" /></label>
           <label className="pointer-events-none absolute -left-[10000px] top-auto h-px w-px overflow-hidden" aria-hidden="true"><span>网站</span><input tabIndex={-1} autoComplete="off" value={form.website} onChange={(e) => setForm({ ...form, website: e.target.value })} /></label>
-        </div>
-        <button className="btn primary w-full mt-6" disabled={loading || challengeLoading || !challenge || (challenge.required && (!challenge.token || !challengeReady))}>{loading ? '创建中...' : challengeLoading || !challengeReady ? <><LoaderCircle size={14} className="animate-spin" />安全校验中</> : <>创建账户 <ArrowRight size={15} /></>}</button>
-        <p className="mt-5 text-center text-xs text-[#748078]">已有账户？ <Link className="text-[#087443] font-bold" href="/login">返回登录</Link></p>
-      </form>
+          </div>
+          <button className={`btn primary ${styles.submitButton}`} disabled={loading || challengeLoading || !challenge || (challenge.required && (!challenge.token || !challengeReady))}>{loading ? '创建中...' : challengeLoading || !challengeReady ? <><LoaderCircle size={14} className="animate-spin" />安全校验中</> : <>创建账户 <ArrowRight size={15} /></>}</button>
+          <p className={styles.authFooter}>已有账户？<Link className={styles.authLink} href="/login">返回登录</Link></p>
+        </form>
+      </section>
     </main>
   );
 }

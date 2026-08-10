@@ -289,6 +289,19 @@ func (s Service) UsageTrend(ctx context.Context, userID string, startDate time.T
 	return fillUsageTrend(startDate, endDate, items), nil
 }
 
+func (s Service) UsageAnalytics(ctx context.Context, userID string, startDate time.Time, endDate time.Time) (UsageAnalytics, error) {
+	for {
+		synced, err := s.keys.syncTerminalTaskLogBatch(ctx, 500)
+		if err != nil {
+			return UsageAnalytics{}, err
+		}
+		if synced < 500 {
+			break
+		}
+	}
+	return s.keys.UsageAnalytics(ctx, userID, startDate, endDate.AddDate(0, 0, 1))
+}
+
 func fillUsageTrend(startDate time.Time, endDate time.Time, items []UsageTrendPoint) []UsageTrendPoint {
 	byDate := make(map[string]UsageTrendPoint, len(items))
 	for _, item := range items {

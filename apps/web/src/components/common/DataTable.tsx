@@ -8,27 +8,108 @@ interface Header {
   label: string;
   className?: string;
 }
+type PaginationItem = number | 'ellipsis';
 
 interface DataTableProps<T> {
   headers: Header[];
   data: T[];
   renderRow: (item: T, index: number) => React.ReactNode;
-  renderMobileItem: (item: T, index: number) => React.ReactNode;
+  renderMobileItem?: (item: T, index: number) => React.ReactNode;
 
   // Search & Filter
   searchPlaceholder?: string;
   searchValue?: string;
   onSearchChange?: (val: string) => void;
-
-  // Custom headers slot
   filterControls?: React.ReactNode;
 
   // Pagination
   currentPage?: number;
   totalPages?: number;
+  totalItems?: number;
   onPageChange?: (page: number) => void;
+  paginationDisabled?: boolean;
 
   emptyState?: React.ReactNode;
+  loading?: boolean;
+  loadingState?: React.ReactNode;
+
+  // Layout hooks used by pages that need their established table styles.
+  className?: string;
+  tableWrapClassName?: string;
+  tableClassName?: string;
+  mobileListClassName?: string;
+  embedded?: boolean;
+}
+
+function pageItems(currentPage: number, totalPages: number): PaginationItem[] {
+  if (totalPages <= 7) return Array.from({ length: totalPages }, (_, index) => index + 1);
+
+  const items: PaginationItem[] = [1];
+  const start = Math.max(2, currentPage - 1);
+  const end = Math.min(totalPages - 1, currentPage + 1);
+
+  if (start > 2) items.push('ellipsis');
+  for (let page = start; page <= end; page += 1) items.push(page);
+  if (end < totalPages - 1) items.push('ellipsis');
+  items.push(totalPages);
+  return items;
+}
+
+interface TablePaginationProps {
+  currentPage: number;
+  totalPages: number;
+  totalItems: number;
+  onPageChange: (page: number) => void;
+  disabled?: boolean;
+}
+
+function TablePagination({ currentPage, totalPages, totalItems, onPageChange, disabled = false }: TablePaginationProps) {
+  const items = pageItems(currentPage, totalPages);
+
+  return (
+    <footer className="table-pagination" aria-label="分页">
+      <span className="table-pagination-summary">
+        第 <strong>{currentPage}</strong> / <strong>{totalPages}</strong> 页 · 共 {totalItems.toLocaleString('zh-CN')} 条
+      </span>
+      <div className="table-pagination-controls">
+        <button
+          type="button"
+          className="table-pagination-button"
+          onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+          disabled={disabled || currentPage <= 1}
+          aria-label="上一页"
+        >
+          <ChevronLeft size={14} />
+        </button>
+        <div className="table-pagination-pages" aria-label="页码">
+          {items.map((item, index) => item === 'ellipsis' ? (
+            <span key={`ellipsis-${index}`} aria-hidden="true">…</span>
+          ) : (
+            <button
+              key={item}
+              type="button"
+              className={`table-pagination-page ${item === currentPage ? 'is-active' : ''}`}
+              onClick={() => onPageChange(item)}
+              disabled={disabled}
+              aria-current={item === currentPage ? 'page' : undefined}
+              aria-label={`第 ${item} 页`}
+            >
+              {item}
+            </button>
+          ))}
+        </div>
+        <button
+          type="button"
+          className="table-pagination-button"
+          onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+          disabled={disabled || currentPage >= totalPages}
+          aria-label="下一页"
+        >
+          <ChevronRight size={14} />
+        </button>
+      </div>
+    </footer>
+  );
 }
 
 export function DataTable<T>({
@@ -42,98 +123,81 @@ export function DataTable<T>({
   filterControls,
   currentPage,
   totalPages,
+  totalItems,
   onPageChange,
-  emptyState
+  paginationDisabled = false,
+  emptyState,
+  loading = false,
+  loadingState,
+  className = '',
+  tableWrapClassName = '',
+  tableClassName = '',
+  mobileListClassName = '',
+  embedded = false,
 }: DataTableProps<T>) {
-  const showPagination = !!(currentPage && totalPages && totalPages > 1);
+  const showPagination = typeof currentPage === 'number'
+    && typeof totalPages === 'number'
+    && totalPages > 0
+    && typeof onPageChange === 'function';
+  const resolvedTotalItems = typeof totalItems === 'number' ? totalItems : data.length;
+  const hasRows = data.length > 0;
 
   return (
-    <div className="space-y-4">
-      {/* Search & Filter bar */}
+    <div className={`shared-data-table ${embedded ? 'is-embedded' : ''} ${className}`.trim()}>
       {(onSearchChange || filterControls) && (
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white p-3 border border-[#DCE4DF] rounded-md">
+        <div className="shared-data-table-toolbar">
           {onSearchChange && (
-            <div className="relative flex-1 max-w-sm">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-[#17201B]/40" />
+            <label className="shared-data-table-search">
+              <Search aria-hidden="true" />
               <input
                 type="text"
                 placeholder={searchPlaceholder}
-                value={searchValue}
-                onChange={(e) => onSearchChange(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 border border-[#DCE4DF] rounded-md text-xs bg-white placeholder-[#17201B]/40 focus:outline-none focus:ring-1 focus:ring-[#12B76A] focus:border-[#12B76A] font-sans"
+                value={searchValue || ''}
+                onChange={(event) => onSearchChange(event.target.value)}
               />
-            </div>
+            </label>
           )}
-          {filterControls && (
-            <div className="flex flex-wrap items-center gap-2.5 sm:justify-end">
-              {filterControls}
-            </div>
-          )}
+          {filterControls && <div className="shared-data-table-filters">{filterControls}</div>}
         </div>
       )}
 
-      {/* Main Table view */}
-      {data.length === 0 ? (
-        emptyState || (
-          <div className="text-center p-8 bg-white border border-[#DCE4DF] rounded-md text-xs text-[#17201B]/50 font-sans">
-            无匹配数据
-          </div>
-        )
-      ) : (
-        <>
-          {/* Desktop Table View */}
-          <div className="hidden md:block overflow-x-auto bg-white border border-[#DCE4DF] rounded-md shadow-sm">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-[#F6F8F6] border-b border-[#DCE4DF]">
-                  {headers.map((h) => (
-                    <th
-                      key={h.key}
-                      className={`px-4 py-2.5 text-xs font-semibold text-[#17201B]/60 tracking-wider ${h.className || ''}`}
-                    >
-                      {h.label}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#DCE4DF] text-xs text-[#17201B]">
-                {data.map((item, idx) => renderRow(item, idx))}
-              </tbody>
-            </table>
-          </div>
+      <div className="shared-data-table-surface">
+        {loading && !hasRows ? (
+          loadingState || <div className="shared-data-table-empty">正在加载...</div>
+        ) : !hasRows ? (
+          emptyState || <div className="shared-data-table-empty">无匹配数据</div>
+        ) : (
+          <>
+            <div className={`shared-data-table-viewport ${renderMobileItem ? 'hidden md:block' : ''} ${tableWrapClassName}`.trim()}>
+              <table className={`shared-data-table-grid ${tableClassName}`.trim()}>
+                <thead>
+                  <tr>
+                    {headers.map((header) => (
+                      <th key={header.key} className={header.className || ''}>{header.label}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>{data.map((item, index) => renderRow(item, index))}</tbody>
+              </table>
+            </div>
+            {renderMobileItem && (
+              <div className={`shared-data-table-mobile block md:hidden ${mobileListClassName}`.trim()}>
+                {data.map((item, index) => renderMobileItem(item, index))}
+              </div>
+            )}
+          </>
+        )}
 
-          {/* Mobile Collapsed Cards View */}
-          <div className="block md:hidden space-y-3.5">
-            {data.map((item, idx) => renderMobileItem(item, idx))}
-          </div>
-        </>
-      )}
-
-      {/* Pagination Footer */}
-      {showPagination && currentPage && totalPages && onPageChange && (
-        <div className="flex items-center justify-between bg-white px-4 py-3 border border-[#DCE4DF] rounded-md text-xs shadow-sm">
-          <div className="text-[#17201B]/60 font-sans">
-            第 <span className="font-mono font-semibold text-[#17201B]">{currentPage}</span> 页，共{' '}
-            <span className="font-mono font-semibold text-[#17201B]">{totalPages}</span> 页
-          </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => onPageChange(currentPage - 1)}
-              disabled={currentPage === 1}
-              className="p-1 border border-[#DCE4DF] rounded-md bg-white text-[#17201B] hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => onPageChange(currentPage + 1)}
-              disabled={currentPage === totalPages}
-              className="p-1 border border-[#DCE4DF] rounded-md bg-white text-[#17201B] hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
+        {showPagination && (
+          <TablePagination
+            currentPage={currentPage as number}
+            totalPages={totalPages as number}
+            totalItems={resolvedTotalItems}
+            onPageChange={onPageChange as (page: number) => void}
+            disabled={paginationDisabled}
+          />
+        )}
+      </div>
     </div>
   );
 }

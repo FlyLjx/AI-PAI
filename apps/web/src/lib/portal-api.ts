@@ -235,6 +235,27 @@ export type UsageTrendPoint = {
   failed: number;
 };
 
+export type UsageModelStat = {
+  model: string;
+  size: string;
+  total: number;
+  success: number;
+  failed: number;
+  successRate: number;
+};
+
+export type UsageHourlyPoint = {
+  hour: number;
+  total: number;
+  success: number;
+  failed: number;
+};
+
+export type UsageAnalytics = {
+  models: UsageModelStat[];
+  hourly: UsageHourlyPoint[];
+};
+
 export type StabilitySeriesPoint = {
   time: string;
   label?: string;
@@ -534,8 +555,9 @@ export const portalApi = {
   revealKey: (user: PortalUser, id: string) => api<{ key: string }>(`/api/api-access/keys/${encodeURIComponent(id)}/reveal`, { method: 'POST' }, user.token),
   updateKey: (user: PortalUser, id: string, status: string) => api<APIKey>(`/api/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ userId: user.id, status }) }, user.token),
   deleteKey: (user: PortalUser, id: string) => api(`/api/api-access/keys/${encodeURIComponent(id)}${query({ userId: user.id })}`, { method: 'DELETE' }, user.token),
-  usage: (user: PortalUser, page = 1, pageSize = 20, keyword = '', status = '') => api<UsageLog[]>(`/api/api-access/logs${query({ userId: user.id, page, pageSize, keyword, status })}`, {}, user.token),
+  usage: (user: PortalUser, page = 1, pageSize = 20, keyword = '', status = '', startDate = '', endDate = '') => api<UsageLog[]>(`/api/api-access/logs${query({ userId: user.id, page, pageSize, keyword, status, startDate, endDate })}`, {}, user.token),
   usageTrend: (user: PortalUser, startDate: string, endDate: string) => api<UsageTrendPoint[]>(`/api/api-access/logs/trend${query({ userId: user.id, startDate, endDate })}`, {}, user.token),
+  usageAnalytics: (user: PortalUser, startDate: string, endDate: string) => api<UsageAnalytics>(`/api/api-access/logs/analytics${query({ userId: user.id, startDate, endDate })}`, {}, user.token),
   stability: () => api<StabilitySnapshot>('/api/upstream/stability'),
   openAIImageStatus: () => api<OpenAIImageStatusSnapshot>('/api/upstream/openai-status'),
   plans: (user: PortalUser) => api<Plan[]>(`/api/subscriptions/public/plans${query({ userId: user.id })}`, {}, user.token),

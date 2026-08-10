@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Check,
   Copy,
@@ -21,9 +21,6 @@ import {
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable } from '@/components/common/DataTable';
-import { EmptyState } from '@/components/common/EmptyState';
-import { PageHeader } from '@/components/common/PageHeader';
-import { StatusBadge } from '@/components/common/StatusBadge';
 import {
   APIError,
   getSession,
@@ -41,6 +38,19 @@ type CreatedCredential = {
   secret: string;
   billingMode?: APIKeyBillingMode | null;
 };
+
+const API_KEY_PAGE_SIZE = 8;
+
+const API_KEY_TABLE_HEADERS = [
+  { key: 'name', label: '名称' },
+  { key: 'prefix', label: '凭证前缀' },
+  { key: 'billing', label: '计费方式' },
+  { key: 'status', label: '状态' },
+  { key: 'requests', label: '调用 / 成功' },
+  { key: 'last-used', label: '最后调用' },
+  { key: 'created', label: '创建时间' },
+  { key: 'actions', label: '操作', className: 'is-actions' },
+];
 
 function errorMessage(error: unknown): string {
   return error instanceof APIError || error instanceof Error ? error.message : '操作失败，请稍后重试';
@@ -77,8 +87,17 @@ function BillingModeBadge({ mode, subscriptionEnabled = true }: { mode?: APIKeyB
   if (mode === 'subscription' && !subscriptionEnabled) return null;
   const meta = billingModeMeta(mode);
   return (
-    <span className={`inline-flex h-6 items-center whitespace-nowrap rounded border px-2 text-[11px] font-semibold ${meta.className}`}>
+    <span className={`api-key-billing-badge inline-flex h-6 items-center whitespace-nowrap rounded border px-2 text-[11px] font-semibold ${meta.className}`}>
       {meta.label}
+    </span>
+  );
+}
+
+function APIKeyStatusBadge({ status }: { status: string }) {
+  const active = status === 'active';
+  return (
+    <span className={`api-key-status ${active ? 'is-active' : 'is-disabled'}`}>
+      <i aria-hidden="true" />{active ? '已启用' : '已停用'}
     </span>
   );
 }
@@ -90,6 +109,7 @@ export default function ApiKeysPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [pendingId, setPendingId] = useState('');
+  const [keyPage, setKeyPage] = useState(1);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
@@ -122,6 +142,7 @@ export default function ApiKeysPage() {
         portalApi.subscription(current).catch(() => null),
       ]);
       setApiKeys((response.data || []).map(scrubKey));
+      setKeyPage(1);
       const hasSubscriptionAccess = subscriptionResponse !== null;
       setSubscriptionEnabled(hasSubscriptionAccess);
       if (!hasSubscriptionAccess) setNewBillingMode('balance');
@@ -177,6 +198,7 @@ export default function ApiKeysPage() {
         scrubKey(created),
         ...items.filter((item) => item.id !== created.id),
       ]);
+      setKeyPage(1);
       setCreatedCredential({ id: created.id, name: created.name, secret, billingMode: newBillingMode });
       setNewKeyName('');
       toast.success('API Key 创建成功');
@@ -264,9 +286,9 @@ export default function ApiKeysPage() {
   };
 
   const actions = (key: APIKey) => (
-    <div className="action-row justify-end">
+    <div className="api-key-actions">
       <button
-        className="btn icon"
+        className="api-key-action"
         type="button"
         title="查看完整 API Key"
         aria-label={`查看 ${key.name} 的完整 API Key`}
@@ -276,9 +298,10 @@ export default function ApiKeysPage() {
         {revealingId === key.id
           ? <LoaderCircle size={14} className="animate-spin" />
           : <Eye size={14} />}
+        <span>查看</span>
       </button>
       <button
-        className="btn icon"
+        className="api-key-action"
         type="button"
         title={key.status === 'active' ? '停用 API Key' : '启用 API Key'}
         aria-label={key.status === 'active' ? '停用 API Key' : '启用 API Key'}
@@ -288,9 +311,10 @@ export default function ApiKeysPage() {
         {pendingId === key.id
           ? <LoaderCircle size={14} className="animate-spin" />
           : key.status === 'active' ? <PowerOff size={14} /> : <Power size={14} />}
+        <span>{key.status === 'active' ? '停用' : '启用'}</span>
       </button>
       <button
-        className="btn icon danger"
+        className="api-key-action is-danger"
         type="button"
         title="删除 API Key"
         aria-label="删除 API Key"
@@ -298,103 +322,118 @@ export default function ApiKeysPage() {
         disabled={pendingId === key.id}
       >
         <Trash2 size={14} />
+        <span>删除</span>
       </button>
     </div>
   );
 
-  const headers = [
-    { key: 'name', label: '名称' },
-    { key: 'credential', label: '凭证前缀' },
-    { key: 'billingMode', label: '计费方式' },
-    { key: 'status', label: '状态' },
-    { key: 'usage', label: '调用 / 成功' },
-    { key: 'lastUsed', label: '最后调用' },
-    { key: 'createdAt', label: '创建时间' },
-    { key: 'actions', label: '操作', className: 'text-right' },
-  ];
+  const activeKeyCount = apiKeys.filter((key) => key.status === 'active').length;
+  const disabledKeyCount = apiKeys.filter((key) => key.status !== 'active').length;
+  const keyTotalPages = Math.max(1, Math.ceil(apiKeys.length / API_KEY_PAGE_SIZE));
+  const safeKeyPage = Math.min(keyPage, keyTotalPages);
+  const visibleKeys = useMemo(
+    () => apiKeys.slice((safeKeyPage - 1) * API_KEY_PAGE_SIZE, safeKeyPage * API_KEY_PAGE_SIZE),
+    [apiKeys, safeKeyPage],
+  );
 
   return (
-    <div className="page-stack">
-      <PageHeader title="API Key" description="管理 OpenAI 兼容接口的访问凭证">
-        <button className="btn" type="button" onClick={() => void loadKeys()} disabled={loading}>
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />刷新
-        </button>
-        <button className={`btn ${canCreateKey ? 'primary' : ''}`} type="button" onClick={openCreateModal} disabled={!canCreateKey} title={canCreateKey ? '创建 API Key' : '请先验证邮箱'}>
-          <Plus size={14} />创建 Key
-        </button>
-      </PageHeader>
+    <div className="page-stack api-key-page">
+      <section className="api-key-hero api-key-toolbar" aria-label="API Key 操作">
+        <div className="api-key-hero-actions">
+          <button className="btn" type="button" onClick={() => void loadKeys()} disabled={loading}>
+            <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />刷新
+          </button>
+          <button className={`btn ${canCreateKey ? 'primary' : ''}`} type="button" onClick={openCreateModal} disabled={!canCreateKey} title={canCreateKey ? '创建 API Key' : '请先验证邮箱'}>
+            <Plus size={14} />创建 API Key
+          </button>
+        </div>
+      </section>
 
-      {error && <div className="notice" role="alert">{error}</div>}
+      {error && <div className="notice api-key-error" role="alert">{error}</div>}
       {user && !canCreateKey && (
-        <div className="flex flex-col items-start gap-3 rounded-[7px] border border-[#fed7aa] bg-[#fff7ed] px-3 py-2.5 text-[12px] leading-5 text-[#9a4a08] sm:flex-row sm:items-center" role="status">
-          <MailWarning size={16} className="shrink-0" />
-          <span className="min-w-0 flex-1">邮箱尚未验证，当前账户可以登录和查看用量，但暂不能创建 API Key。</span>
-          <Link className="btn shrink-0" href="/settings">验证邮箱</Link>
+        <div className="api-key-verification-notice" role="status">
+          <MailWarning size={16} />
+          <span>邮箱尚未验证，当前账户可以登录和查看用量，但暂不能创建 API Key。</span>
+          <Link className="btn" href="/settings">验证邮箱</Link>
         </div>
       )}
 
-      {loading && apiKeys.length === 0 ? (
-        <div className="section-panel empty-row">正在读取 API Key...</div>
-      ) : (
+      <section className="api-key-security-card" aria-label="API Key 安全提示">
+        <span className="api-key-security-icon"><LockKeyhole size={19} /></span>
+        <div>
+          <strong>保护您的 API 密钥</strong>
+          <p>请妥善保管您的 API 密钥，不要与他人共享或暴露在客户端代码中，以确保账户和数据安全。</p>
+        </div>
+      </section>
+
+      <section className="section-panel api-key-list-panel" aria-labelledby="api-key-list-title">
+        <header className="api-key-list-head">
+          <div className="api-key-list-heading">
+            <span className="api-key-list-icon"><LockKeyhole size={16} /></span>
+            <div>
+              <span>ACCESS TOKENS</span>
+              <strong id="api-key-list-title">密钥列表</strong>
+              <small>用于图片接口的访问凭证</small>
+            </div>
+          </div>
+          <div className="api-key-summary" aria-label="API Key 数量统计">
+            <span>全部 <strong>{loading && apiKeys.length === 0 ? '--' : apiKeys.length}</strong></span>
+            <i aria-hidden="true" />
+            <span>启用 <strong>{loading && apiKeys.length === 0 ? '--' : activeKeyCount}</strong></span>
+            {(!loading || apiKeys.length > 0) && disabledKeyCount > 0 && <span className="api-key-summary-muted">停用 {disabledKeyCount}</span>}
+          </div>
+        </header>
+
         <DataTable
-          headers={headers}
-          data={apiKeys}
+          embedded
+          className="api-key-data-table"
+          headers={API_KEY_TABLE_HEADERS}
+          data={visibleKeys}
+          currentPage={safeKeyPage}
+          totalPages={keyTotalPages}
+          totalItems={apiKeys.length}
+          onPageChange={setKeyPage}
+          paginationDisabled={loading}
+          loading={loading}
+          loadingState={<div className="api-key-loading" aria-live="polite"><LoaderCircle size={21} className="animate-spin" />正在读取 API Key...</div>}
+          emptyState={<div className="api-key-empty"><span className="api-key-empty-icon"><LockKeyhole size={24} /></span><strong>还没有 API Key</strong><p>{canCreateKey ? '创建凭证后即可调用 OpenAI 兼容 API。' : '完成邮箱验证后即可创建访问凭证。'}</p>{canCreateKey ? <button className="btn primary" type="button" onClick={openCreateModal}><Plus size={14} />创建 API Key</button> : <Link className="btn primary" href="/settings"><MailWarning size={14} />验证邮箱</Link>}</div>}
+          tableWrapClassName="api-key-table-scroll"
+          tableClassName="api-key-table"
+          mobileListClassName="api-key-mobile-list"
           renderRow={(key) => (
             <tr key={key.id}>
-              <td className="px-4 py-3 font-semibold">{key.name}</td>
-              <td className="px-4 py-3 mono text-[12px]">{maskedPrefix(key)}</td>
-              <td className="px-4 py-3"><BillingModeBadge mode={key.billingMode} subscriptionEnabled={subscriptionEnabled} /></td>
-              <td className="px-4 py-3">
-                <StatusBadge status={key.status === 'active' ? 'active' : 'disabled'} />
-              </td>
-              <td className="px-4 py-3 mono">{Number(key.requestCount || 0)} / {Number(key.successCount || 0)}</td>
-              <td className="px-4 py-3 mono text-zinc-500">{key.lastUsedAt ? formatDate(key.lastUsedAt) : '从未调用'}</td>
-              <td className="px-4 py-3 mono text-zinc-500">{formatDate(key.createdAt)}</td>
-              <td className="px-4 py-3">{actions(key)}</td>
+              <td className="api-key-name"><strong title={key.name}>{key.name}</strong></td>
+              <td><code title={maskedPrefix(key)}>{maskedPrefix(key)}</code></td>
+              <td><BillingModeBadge mode={key.billingMode} subscriptionEnabled={subscriptionEnabled} /></td>
+              <td><APIKeyStatusBadge status={key.status} /></td>
+              <td><code>{Number(key.requestCount || 0)} / {Number(key.successCount || 0)}</code></td>
+              <td><code className="api-key-muted-cell">{key.lastUsedAt ? formatDate(key.lastUsedAt) : '从未调用'}</code></td>
+              <td><code className="api-key-muted-cell">{formatDate(key.createdAt)}</code></td>
+              <td className="api-key-action-cell">{actions(key)}</td>
             </tr>
           )}
           renderMobileItem={(key) => (
-            <article key={key.id} className="section-panel p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <strong className="block truncate text-sm">{key.name}</strong>
-                  <code className="mt-1 block truncate text-[11px] text-zinc-500">{maskedPrefix(key)}</code>
-                </div>
-                <div className="flex shrink-0 flex-col items-end gap-1.5">
-                  <StatusBadge status={key.status === 'active' ? 'active' : 'disabled'} />
-                  <BillingModeBadge mode={key.billingMode} subscriptionEnabled={subscriptionEnabled} />
-                </div>
+            <article className="api-key-mobile-card" key={key.id}>
+              <div className="api-key-mobile-head">
+                <div className="api-key-mobile-identity"><strong title={key.name}>{key.name}</strong><code title={maskedPrefix(key)}>{maskedPrefix(key)}</code></div>
+                <div className="api-key-mobile-badges"><APIKeyStatusBadge status={key.status} /><BillingModeBadge mode={key.billingMode} subscriptionEnabled={subscriptionEnabled} /></div>
               </div>
-              <div className="mt-3 grid grid-cols-2 gap-2 border-y border-[#edf0ee] py-3 text-[11px] text-zinc-500">
-                <span>调用 <strong className="mono text-[#17201b]">{Number(key.requestCount || 0)}</strong></span>
-                <span>成功 <strong className="mono text-[#17201b]">{Number(key.successCount || 0)}</strong></span>
-                <span className="col-span-2">最后调用：{key.lastUsedAt ? formatDate(key.lastUsedAt) : '从未调用'}</span>
-              </div>
-              <div className="mt-3 flex justify-end">{actions(key)}</div>
+              <dl className="api-key-mobile-meta"><div><dt>调用 / 成功</dt><dd>{Number(key.requestCount || 0)} / {Number(key.successCount || 0)}</dd></div><div><dt>最后调用</dt><dd>{key.lastUsedAt ? formatDate(key.lastUsedAt) : '从未调用'}</dd></div><div><dt>创建时间</dt><dd>{formatDate(key.createdAt)}</dd></div></dl>
+              <div className="api-key-mobile-actions">{actions(key)}</div>
             </article>
           )}
-          emptyState={(
-            <EmptyState
-              title="还没有 API Key"
-              description={canCreateKey ? '创建凭证后即可调用 OpenAI 兼容 API。' : '完成邮箱验证后即可创建访问凭证。'}
-              icon={LockKeyhole}
-              action={canCreateKey
-                ? <button className="btn primary" type="button" onClick={openCreateModal}><Plus size={14} />创建 Key</button>
-                : <Link className="btn primary" href="/settings"><MailWarning size={14} />验证邮箱</Link>}
-            />
-          )}
         />
-      )}
+      </section>
 
       {showCreateModal && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="create-key-title">
-            <div className="modal-title">
+        <div className="modal-backdrop api-key-modal-backdrop" role="presentation">
+          <section className="modal-panel api-key-modal" role="dialog" aria-modal="true" aria-labelledby="create-key-title">
+            <div className="modal-title api-key-modal-title">
               <strong id="create-key-title">{createdCredential ? '保存 API Key' : '创建 API Key'}</strong>
               <button type="button" onClick={closeCreateModal} title="关闭" aria-label="关闭"><X size={17} /></button>
             </div>
             {createdCredential ? (
-              <div className="modal-content space-y-4">
+              <div className="modal-content api-key-modal-content space-y-4">
                 <div className="notice flex gap-2">
                   <Check size={16} className="mt-0.5 shrink-0" />
                   <span>密钥已创建。你可以立即复制，也可稍后在 Key 列表中再次查看。</span>
@@ -424,7 +463,7 @@ export default function ApiKeysPage() {
                 </div>
               </div>
             ) : (
-              <form className="modal-content space-y-4" onSubmit={(event) => void handleCreate(event)}>
+              <form className="modal-content api-key-modal-content space-y-4" onSubmit={(event) => void handleCreate(event)}>
                 <div className="field">
                   <label htmlFor="key-name">Key 名称</label>
                   <input
@@ -480,13 +519,13 @@ export default function ApiKeysPage() {
       )}
 
       {revealedCredential && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel" role="dialog" aria-modal="true" aria-labelledby="reveal-key-title">
-            <div className="modal-title">
+        <div className="modal-backdrop api-key-modal-backdrop" role="presentation">
+          <section className="modal-panel api-key-modal" role="dialog" aria-modal="true" aria-labelledby="reveal-key-title">
+            <div className="modal-title api-key-modal-title">
               <strong id="reveal-key-title">查看 API Key</strong>
               <button type="button" onClick={closeRevealModal} title="关闭" aria-label="关闭"><X size={17} /></button>
             </div>
-            <div className="modal-content space-y-4">
+            <div className="modal-content api-key-modal-content space-y-4">
               <div className="notice flex gap-2">
                 <LockKeyhole size={16} className="mt-0.5 shrink-0" />
                 <span>完整密钥属于敏感凭证，请仅在受信任的环境中查看和复制。</span>

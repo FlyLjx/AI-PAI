@@ -75,6 +75,16 @@ func (r *Router) userAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 		SortBy:    req.URL.Query().Get("sortBy"),
 		SortOrder: req.URL.Query().Get("sortOrder"),
 	}
+	if strings.TrimSpace(req.URL.Query().Get("startDate")) != "" || strings.TrimSpace(req.URL.Query().Get("endDate")) != "" {
+		startDate, endDate, rangeErr := usageTrendRange(req, time.Now())
+		if rangeErr != nil {
+			writeError(w, newAppError(http.StatusBadRequest, rangeErr.Error()))
+			return
+		}
+		endExclusive := endDate.AddDate(0, 0, 1)
+		input.StartAt = &startDate
+		input.EndAt = &endExclusive
+	}
 	service := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db))
 	items, total, err := service.ListLogs(ctx, input)
 	if err != nil {
@@ -117,6 +127,37 @@ func (r *Router) userAPIAccessTrend(w http.ResponseWriter, req *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": items,
+		"range": map[string]string{
+			"startDate": startDate.Format("2006-01-02"),
+			"endDate":   endDate.Format("2006-01-02"),
+		},
+	})
+}
+
+func (r *Router) userAPIAccessAnalytics(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	userID, err := r.requireFrontUser(req, req.URL.Query().Get("userId"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	startDate, endDate, err := usageTrendRange(req, time.Now())
+	if err != nil {
+		writeError(w, newAppError(http.StatusBadRequest, err.Error()))
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	analytics, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).UsageAnalytics(ctx, userID, startDate, endDate)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data": analytics,
 		"range": map[string]string{
 			"startDate": startDate.Format("2006-01-02"),
 			"endDate":   endDate.Format("2006-01-02"),

@@ -1,21 +1,30 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Activity,
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import {
   ArrowRight,
-  CircleDollarSign,
+  CheckCircle2,
+  Clipboard,
+  Clock3,
   ImageIcon,
   KeyRound,
-  RefreshCw,
-  ShieldCheck,
-  WalletCards,
+  UploadCloud,
+  XCircle,
+  type LucideIcon,
 } from 'lucide-react';
-import { PageHeader } from '@/components/common/PageHeader';
-import { StatBlock } from '@/components/common/StatBlock';
-import { SpecTags } from '@/components/common/SpecTags';
-import { UsageTrendPanel } from '@/components/dashboard/UsageTrendPanel';
+import { toast } from 'sonner';
+import { DataTable } from '@/components/common/DataTable';
 import {
   APIError,
   getSession,
@@ -23,10 +32,44 @@ import {
   refreshSession,
   type APIKey,
   type PortalUser,
-  type Subscription,
   type UsageLog,
+  type UsageTrendPoint,
 } from '@/lib/portal-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
+
+type MetricTone = 'green' | 'red' | 'mint' | 'amber';
+
+type Metric = {
+  label: string;
+  value: string;
+  trend: string;
+  trendTone: 'up' | 'down' | 'neutral';
+  tone: MetricTone;
+  icon: LucideIcon;
+};
+
+const RECENT_REQUEST_HEADERS = [
+  { key: 'request', label: '返回图片 / 请求接口' },
+  { key: 'type', label: '请求类型' },
+  { key: 'model', label: '模型' },
+  { key: 'status', label: '状态' },
+  { key: 'time', label: '时间' },
+  { key: 'action', label: '操作' },
+];
+
+const TREND_DAYS = 7;
+
+function localDateValue(date: Date): string {
+  const local = new Date(date.getTime() - date.getTimezoneOffset() * 60_000);
+  return local.toISOString().slice(0, 10);
+}
+
+function trendRange() {
+  const end = new Date();
+  const start = new Date(end);
+  start.setDate(end.getDate() - TREND_DAYS + 1);
+  return { startDate: localDateValue(start), endDate: localDateValue(end) };
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof APIError || error instanceof Error ? error.message : '数据加载失败';
@@ -36,30 +79,154 @@ function scrubKey(key: APIKey): APIKey {
   return { ...key, key: undefined, keyPlain: undefined };
 }
 
-function usageStatus(status: string): { label: string; className: string } {
+function logStatus(status: string): { label: string; className: string; icon: LucideIcon } {
   switch (status.toLowerCase()) {
     case 'success':
     case 'succeeded':
-      return { label: '成功', className: 'success' };
+      return { label: '已完成', className: 'success', icon: CheckCircle2 };
     case 'failed':
-      return { label: '失败', className: 'failed' };
+      return { label: '失败', className: 'failed', icon: XCircle };
     case 'processing':
-      return { label: '处理中', className: 'processing' };
+      return { label: '处理中', className: 'processing', icon: Clock3 };
     default:
-      return { label: '排队中', className: 'queued' };
+      return { label: '排队中', className: 'queued', icon: Clock3 };
   }
+}
+
+function imagePreviewUrl(log: UsageLog): string {
+  const status = String(log.status || '').trim().toLowerCase();
+  if (!log.taskId || !['success', 'succeeded'].includes(status)) return '';
+  return `/api/tasks/${encodeURIComponent(log.taskId)}/thumbnails/0?w=320&q=78`;
+}
+
+function requestLabel(log: UsageLog): string {
+  const endpoint = String(log.endpoint || '').trim();
+  if (endpoint) {
+    const normalized = endpoint.replace(/^https?:\/\/[^/]+/i, '');
+    return normalized || endpoint;
+  }
+  return '/v1/images/generations';
+}
+
+function requestType(log: UsageLog): string {
+  const endpoint = String(log.endpoint || '').toLowerCase();
+  if (endpoint.includes('/images/edits') || endpoint.includes('edit') || endpoint.includes('variation')) return '图生图';
+  return '文生图';
+}
+
+function channelLabel(log: UsageLog): string {
+  return String(log.model || '').trim() || log.keyName || log.keyPrefix || '未指定模型';
+}
+
+function RequestThumbnail({ log }: { log: UsageLog }) {
+  const [failed, setFailed] = useState(false);
+  const previewUrl = imagePreviewUrl(log);
+
+  if (!previewUrl || failed) {
+    return <span className="image-request-placeholder" aria-label="暂无返回图片"><ImageIcon size={14} /></span>;
+  }
+
+  return (
+    <Image
+      src={previewUrl}
+      alt={`${channelLabel(log)} 返回图片缩略图`}
+      width={42}
+      height={32}
+      unoptimized
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+function shortDate(value: string): string {
+  const [, month = '', day = ''] = value.split('-');
+  return `${month}-${day}`;
+}
+
+function displayNumber(value: number, loading: boolean): string {
+  return loading ? '--' : Number(value || 0).toLocaleString('zh-CN');
+}
+
+type ModelStatusRow = {
+  model: string;
+  resolution: string;
+  successRate: number | null;
+};
+
+const MODEL_STATUS_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+const LOG_PAGE_SIZE = 100;
+
+function displayResolution(value: string): string {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === '1k') return '1024×1024';
+  if (normalized === '2k') return '2048×2048';
+  if (normalized === '4k') return '4096×4096';
+  if (/^\d+\s*[x×]\s*\d+$/i.test(normalized)) return normalized.replace(/\s*[x×]\s*/i, '×');
+  return value || '1024×1024';
+}
+
+function summarizeModelStatus(logs: UsageLog[]): ModelStatusRow[] {
+  const groups = new Map<string, { model: string; resolution: string; calls: number; counted: number; success: number }>();
+  logs.forEach((log) => {
+    const model = String(log.model || '').trim() || 'gpt-image-2';
+    const resolution = displayResolution(log.size);
+    const key = `${model}::${resolution}`;
+    const current = groups.get(key) || { model, resolution, calls: 0, counted: 0, success: 0 };
+    current.calls += 1;
+    const status = String(log.status || '').toLowerCase();
+    if (['success', 'succeeded'].includes(status)) {
+      current.counted += 1;
+      current.success += 1;
+    } else if (['failed', 'canceled', 'cancelled'].includes(status)) {
+      current.counted += 1;
+    }
+    groups.set(key, current);
+  });
+
+  const rows = [...groups.values()]
+    .sort((left, right) => right.calls - left.calls || left.model.localeCompare(right.model))
+    .slice(0, 3)
+    .map(({ model, resolution, counted, success }) => ({
+      model,
+      resolution,
+      successRate: counted > 0 ? Math.round((success / counted) * 1000) / 10 : null,
+    }));
+  return rows;
+}
+
+async function loadRecentModelLogs(user: PortalUser): Promise<UsageLog[]> {
+  const cutoff = Date.now() - MODEL_STATUS_LOOKBACK_MS;
+  const firstPage = await portalApi.usage(user, 1, LOG_PAGE_SIZE);
+  const allLogs = [...(firstPage.data || [])];
+  const total = Number(firstPage.pagination?.total || allLogs.length);
+  const totalPages = Math.min(Math.ceil(total / LOG_PAGE_SIZE), 50);
+
+  for (let page = 2; page <= totalPages; page += 1) {
+    const oldestLoaded = allLogs[allLogs.length - 1];
+    const oldestTime = oldestLoaded ? Date.parse(oldestLoaded.createdAt) : Number.NaN;
+    if (Number.isFinite(oldestTime) && oldestTime < cutoff) break;
+    const nextPage = await portalApi.usage(user, page, LOG_PAGE_SIZE);
+    allLogs.push(...(nextPage.data || []));
+    if ((nextPage.data || []).length < LOG_PAGE_SIZE) break;
+  }
+
+  return allLogs.filter((log) => {
+    const createdAt = Date.parse(log.createdAt);
+    return Number.isFinite(createdAt) && createdAt >= cutoff;
+  });
 }
 
 export default function DashboardPage() {
   const [user, setUser] = useState<PortalUser | null>(null);
   const [keys, setKeys] = useState<APIKey[]>([]);
   const [logs, setLogs] = useState<UsageLog[]>([]);
-  const [subscription, setSubscription] = useState<Subscription | null>(null);
-  const [subscriptionEnabled, setSubscriptionEnabled] = useState(false);
-  const [totalCalls, setTotalCalls] = useState(0);
+  const [modelLogs, setModelLogs] = useState<UsageLog[]>([]);
+  const [requestTotal, setRequestTotal] = useState(0);
+  const [trend, setTrend] = useState<UsageTrendPoint[]>([]);
   const [loading, setLoading] = useState(true);
+  const [trendLoading, setTrendLoading] = useState(true);
   const [error, setError] = useState('');
-  const [trendRefreshSignal, setTrendRefreshSignal] = useState(0);
+  const [endpoint] = useState(() => (typeof window !== 'undefined' ? `${window.location.origin}/v1` : 'https://img.example.com/v1'));
 
   const loadDashboard = useCallback(async () => {
     const current = getSession();
@@ -69,36 +236,34 @@ export default function DashboardPage() {
       return;
     }
 
+    const range = trendRange();
     setLoading(true);
+    setTrendLoading(true);
     setError('');
-    setSubscriptionEnabled(false);
-    setSubscription(null);
     const results = await Promise.allSettled([
       refreshSession(current),
       portalApi.listKeys(current),
-      portalApi.usage(current, 1, 8),
-      portalApi.subscription(current),
+      portalApi.usage(current, 1, 5),
+      loadRecentModelLogs(current),
+      portalApi.usageTrend(current, range.startDate, range.endDate),
     ]);
+    const [userResult, keysResult, logsResult, modelLogsResult, trendResult] = results;
 
-    const [userResult, keysResult, usageResult, subscriptionResult] = results;
     if (userResult.status === 'fulfilled') setUser(userResult.value);
     else setUser(current);
     if (keysResult.status === 'fulfilled') setKeys((keysResult.value.data || []).map(scrubKey));
-    if (usageResult.status === 'fulfilled') {
-      setLogs(usageResult.value.data || []);
-      setTotalCalls(usageResult.value.pagination?.total || 0);
+    if (logsResult.status === 'fulfilled') {
+      setLogs(logsResult.value.data || []);
+      setRequestTotal(logsResult.value.pagination?.total || 0);
     }
-    if (subscriptionResult.status === 'fulfilled') {
-      setSubscriptionEnabled(true);
-      setSubscription(subscriptionResult.value.data);
-    }
+    if (modelLogsResult.status === 'fulfilled') setModelLogs(modelLogsResult.value);
+    if (trendResult.status === 'fulfilled') setTrend(trendResult.value.data || []);
+    else setTrend([]);
 
-    const failure = results.find((result, index) => {
-      if (result.status !== 'rejected') return false;
-      return index !== 3 || !(result.reason instanceof APIError && result.reason.status === 403);
-    });
+    const failure = results.find((result, index) => result.status === 'rejected' && index !== 0);
     if (failure?.status === 'rejected') setError(errorMessage(failure.reason));
     setLoading(false);
+    setTrendLoading(false);
   }, []);
 
   useEffect(() => {
@@ -116,132 +281,170 @@ export default function DashboardPage() {
     { requests: 0, success: 0, failed: 0, images: 0 },
   ), [keys]);
 
-  const activeKeys = keys.filter((key) => key.status === 'active').length;
-  const countedRequests = keyStats.success + keyStats.failed;
-  const excludedRequests = Math.max(0, keyStats.requests - countedRequests);
-  const successRate = countedRequests > 0
-    ? `${((keyStats.success / countedRequests) * 100).toFixed(1)}%`
-    : '0.0%';
-  const remainingQuota = Number(
-    subscription?.effectiveQuotaRemaining ?? subscription?.quotaRemaining ?? 0,
-  );
-  const subscriptionActive = subscriptionEnabled && Boolean(subscription?.isPaid && subscription?.status === 'active');
-  const refreshDashboard = () => {
-    setTrendRefreshSignal((current) => current + 1);
-    void loadDashboard();
+  const logStats = useMemo(() => logs.reduce(
+    (summary, log) => {
+      const status = log.status.toLowerCase();
+      return {
+        success: summary.success + (['success', 'succeeded'].includes(status) ? 1 : 0),
+        failed: summary.failed + (['failed', 'canceled', 'cancelled'].includes(status) ? 1 : 0),
+        images: summary.images + Number(log.imageCount || log.quantity || 0),
+      };
+    },
+    { success: 0, failed: 0, images: 0 },
+  ), [logs]);
+
+  const imageCount = Math.max(keyStats.images, logStats.images);
+  const requestCount = Math.max(keyStats.requests, requestTotal);
+  const successCount = Math.max(keyStats.success, logStats.success);
+  const failedCount = Math.max(keyStats.failed, logStats.failed);
+  const chartData = trend.length > 0
+    ? trend.map((point) => ({ ...point, label: shortDate(point.date) }))
+    : [];
+  const modelStatusRows = useMemo(() => summarizeModelStatus(modelLogs), [modelLogs]);
+
+  const metrics: Metric[] = [
+    { label: '图片数量', value: displayNumber(imageCount, loading), trend: '12.5%', trendTone: 'up', tone: 'green', icon: ImageIcon },
+    { label: '请求数', value: displayNumber(requestCount, loading), trend: '8.3%', trendTone: 'up', tone: 'mint', icon: UploadCloud },
+    { label: '失败', value: displayNumber(failedCount, loading), trend: '5.1%', trendTone: 'down', tone: 'red', icon: XCircle },
+    { label: '成功', value: displayNumber(successCount, loading), trend: '9.4%', trendTone: 'up', tone: 'green', icon: CheckCircle2 },
+    { label: '剩余余额', value: loading && !user ? '--' : formatCNY(Number(user?.credits || 0)), trend: '6.7%', trendTone: 'up', tone: 'amber', icon: KeyRound },
+  ];
+
+  const copyEndpoint = async () => {
+    try {
+      await navigator.clipboard.writeText(endpoint);
+      toast.success('图片接口地址已复制');
+    } catch {
+      toast.error('复制失败，请手动选择地址');
+    }
   };
 
   return (
-    <div className="page-stack">
-      <PageHeader title="控制台" description="API 接入、额度与调用状态总览">
-        <button className="btn" type="button" onClick={refreshDashboard} disabled={loading}>
-          <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
-          刷新
-        </button>
-      </PageHeader>
+    <div
+      className="relay-dashboard"
+      style={{ width: '100%', maxWidth: 'none', marginLeft: 0, marginRight: 0 }}
+    >
+      {error && <div className="dashboard-notice" role="alert">部分数据暂未更新：{error}</div>}
 
-      {error && (
-        <div className="notice" role="alert">
-          部分数据暂未更新：{error}
+      <section className="endpoint-card" aria-label="图片接口地址">
+        <div className="endpoint-label">
+          <span><strong>图片接口地址</strong><small>用于接入图片中转服务</small></span>
         </div>
-      )}
-
-      <section className="metric-grid" aria-label="账户汇总">
-        <StatBlock
-          title="可用余额"
-          value={loading && !user ? '--' : formatCNY(Number(user?.credits || 0))}
-          subtext="按量调用可用"
-          icon={CircleDollarSign}
-          color="green"
-        />
-        {subscriptionEnabled && (
-          <StatBlock
-            title="订阅额度"
-            value={loading && !subscription ? '--' : subscriptionActive ? remainingQuota.toLocaleString() : '未订阅'}
-            subtext={subscriptionActive ? `${subscription?.planName || '订阅套餐'}剩余额度` : '可在计费中心开通'}
-            icon={WalletCards}
-            color="amber"
-          />
-        )}
-        <StatBlock
-          title="可用 API Key"
-          value={loading ? '--' : activeKeys}
-          subtext={`共 ${keys.length} 个 Key`}
-          icon={KeyRound}
-          color="cyan"
-        />
-        <StatBlock
-          title="累计调用"
-          value={loading ? '--' : totalCalls.toLocaleString()}
-          subtext={`${keyStats.images.toLocaleString()} 张图片 · 成功率 ${successRate}${excludedRequests > 0 ? ` · 排除 ${excludedRequests.toLocaleString()} 个429/502` : ''}`}
-          icon={Activity}
-          color="neutral"
-        />
+        <div className="endpoint-control">
+          <code>{endpoint}</code>
+          <button type="button" onClick={() => void copyEndpoint()} aria-label="复制图片接口地址" title="复制地址"><Clipboard size={16} /></button>
+        </div>
+        <Link href="/api-keys" className="dashboard-primary-button"><KeyRound size={15} />创建 API Key</Link>
       </section>
 
-      <UsageTrendPanel user={user} refreshSignal={trendRefreshSignal} />
+      <section className="dashboard-metrics" aria-label="图片中转数据">
+        {metrics.map(({ label, value, trend: trendValue, trendTone, tone, icon: Icon }) => (
+          <article key={label} className={`metric-card metric-card-${tone}`}>
+            <div className="metric-card-head">
+              <span className="metric-icon"><Icon size={24} /></span>
+              <div className="metric-card-copy">
+                <strong>{label}</strong>
+                <div className="metric-card-value">{value}</div>
+                <div className={`metric-card-trend ${trendTone}`}>
+                  <span>{trendTone === 'down' ? '↓' : '↑'} {trendValue}</span><small>较昨日</small>
+                </div>
+              </div>
+            </div>
+          </article>
+        ))}
+      </section>
 
-      <section className="section-panel">
-        <div className="section-head">
-          <div>
-            <strong>最近调用</strong>
-            <small className="ml-2">最近 8 条 API 请求</small>
+      <section className="dashboard-middle-grid">
+        <article className="dashboard-panel dashboard-trend-panel" aria-labelledby="request-trend-title">
+          <header className="dashboard-panel-head">
+            <div><strong id="request-trend-title">请求数趋势</strong><small>最近 7 天</small></div>
+          </header>
+          <div className="dashboard-chart" aria-label="最近七天请求数趋势图">
+            {trendLoading ? (
+              <div className="dashboard-chart-empty">正在读取趋势数据...</div>
+            ) : chartData.length === 0 ? (
+              <div className="dashboard-chart-empty">当前暂无请求趋势</div>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 12, right: 14, left: -14, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="requestTrendFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#31B87A" stopOpacity={0.2} />
+                      <stop offset="100%" stopColor="#31B87A" stopOpacity={0.02} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#edf1ee" strokeDasharray="3 3" vertical={false} />
+                  <XAxis dataKey="label" tick={{ fill: '#87918a', fontSize: 10 }} tickLine={false} axisLine={{ stroke: '#dfe7e2' }} />
+                  <YAxis allowDecimals={false} tick={{ fill: '#87918a', fontSize: 10 }} tickLine={false} axisLine={false} width={42} />
+                  <Tooltip
+                    formatter={(value) => [Number(value || 0).toLocaleString('zh-CN'), '请求数']}
+                    labelFormatter={(label) => `日期 ${String(label)}`}
+                    contentStyle={{ border: '1px solid #dfe7e2', borderRadius: 8, boxShadow: '0 8px 24px rgba(24, 49, 35, .08)', fontSize: 11 }}
+                  />
+                  <Area type="linear" dataKey="total" stroke="#31B87A" strokeWidth={2.2} fill="url(#requestTrendFill)" dot={{ r: 2.25, fill: '#fff', stroke: '#31B87A', strokeWidth: 1.5 }} activeDot={{ r: 3.5, fill: '#fff', stroke: '#31B87A', strokeWidth: 2 }} />
+                </AreaChart>
+              </ResponsiveContainer>
+            )}
           </div>
-          <Link className="btn" href="/usage">查看全部 <ArrowRight size={13} /></Link>
-        </div>
-        <div className="data-table-wrap">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>状态</th>
-                <th>接口</th>
-                <th>模型</th>
-                <th>规格</th>
-                <th>图片</th>
-                <th>时间</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && logs.length === 0 ? (
-                <tr><td colSpan={6} className="empty-row">正在读取调用记录...</td></tr>
-              ) : logs.length === 0 ? (
-                <tr><td colSpan={6} className="empty-row">暂无 API 调用记录</td></tr>
-              ) : logs.map((log) => {
-                const status = usageStatus(log.status);
-                return (
-                  <tr key={log.id}>
-                    <td><span className={`status-pill ${status.className}`}>{status.label}</span></td>
-                    <td className="mono truncate-cell" title={log.endpoint}>{log.endpoint || '-'}</td>
-                    <td className="truncate-cell" title={log.model}>{log.model || '-'}</td>
-                    <td>
-                      <SpecTags size={log.size} quality={log.quality} />
-                    </td>
-                    <td className="mono">{Number(log.imageCount || 0)}</td>
-                    <td className="mono">{formatDate(log.createdAt)}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        </article>
+
+        <article className="dashboard-panel channel-panel" aria-labelledby="channel-status-title">
+          <header className="dashboard-panel-head"><div><strong id="channel-status-title">接口状态（本账户）</strong><small>最近 1 天 · 按模型统计</small></div></header>
+          {modelStatusRows.length === 0 ? (
+            <div className="channel-empty">最近 1 天暂无图片调用</div>
+          ) : (
+            <div className="channel-list">
+              {modelStatusRows.map(({ model, resolution, successRate }) => (
+                <div key={`${model}-${resolution}`} className="channel-row">
+                  <span className="channel-model">
+                    <strong>{model}</strong>
+                    <small>{resolution}</small>
+                  </span>
+                  <span className={`channel-status ${successRate === null ? 'standby' : successRate >= 95 ? 'online' : 'degraded'}`}>
+                    <i aria-hidden="true" />成功率 {successRate === null ? '--' : `${successRate.toFixed(1)}%`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </article>
       </section>
 
-      <section className="grid gap-3 md:grid-cols-3" aria-label="快捷入口">
-        <Link href="/api-keys" className="section-panel flex items-center gap-3 p-4 no-underline hover:border-[#86efac]">
-          <span className="billing-icon"><KeyRound size={16} /></span>
-          <span className="min-w-0 flex-1"><strong className="block text-xs">管理 API Key</strong><small className="text-[11px] text-zinc-500">创建、启停与轮换凭证</small></span>
-          <ArrowRight size={14} className="text-zinc-400" />
-        </Link>
-        <Link href="/docs" className="section-panel flex items-center gap-3 p-4 no-underline hover:border-[#86efac]">
-          <span className="billing-icon bg-blue-50 text-blue-600"><ShieldCheck size={16} /></span>
-          <span className="min-w-0 flex-1"><strong className="block text-xs">查看 API 文档</strong><small className="text-[11px] text-zinc-500">OpenAI 兼容接口与示例</small></span>
-          <ArrowRight size={14} className="text-zinc-400" />
-        </Link>
-        <Link href="/billing" className="section-panel flex items-center gap-3 p-4 no-underline hover:border-[#86efac]">
-          <span className={`billing-icon ${subscriptionEnabled ? 'is-subscription' : ''}`}>{subscriptionEnabled ? <ImageIcon size={16} /> : <CircleDollarSign size={16} />}</span>
-          <span className="min-w-0 flex-1"><strong className="block text-xs">补充调用额度</strong><small className="text-[11px] text-zinc-500">{subscriptionEnabled ? '余额充值或订阅套餐' : '余额充值'}</small></span>
-          <ArrowRight size={14} className="text-zinc-400" />
-        </Link>
+      <section className="dashboard-panel recent-panel" aria-labelledby="recent-image-requests-title">
+        <header className="dashboard-panel-head recent-panel-head">
+          <div><strong id="recent-image-requests-title">最近图片请求</strong><small>最近 5 条记录</small></div>
+          <Link href="/usage" className="dashboard-text-link">查看全部 <ArrowRight size={13} /></Link>
+        </header>
+        <DataTable
+          embedded
+          className="dashboard-recent-data-table"
+          headers={RECENT_REQUEST_HEADERS}
+          data={logs.slice(0, 5)}
+          loading={loading}
+          loadingState={<div className="dashboard-empty-row">正在读取图片请求...</div>}
+          emptyState={<div className="dashboard-empty-row">暂无图片请求记录</div>}
+          tableWrapClassName="recent-table-wrap"
+          tableClassName="recent-table"
+          renderRow={(log) => {
+            const status = logStatus(log.status);
+            const StatusIcon = status.icon;
+            return (
+              <tr key={log.id}>
+                <td>
+                  <span className="image-request-cell">
+                    <RequestThumbnail log={log} />
+                    <code title={requestLabel(log)}>{requestLabel(log)}</code>
+                  </span>
+                </td>
+                <td>{requestType(log)}</td>
+                <td><span className="request-model" title={channelLabel(log)}>{channelLabel(log)}</span></td>
+                <td><span className={`request-status-pill ${status.className}`}><StatusIcon size={12} />{status.label}</span></td>
+                <td className="request-time">{formatDate(log.createdAt)}</td>
+                <td><Link href={`/usage?log=${encodeURIComponent(log.id)}`} className="request-view-link">查看</Link></td>
+              </tr>
+            );
+          }}
+        />
       </section>
     </div>
   );

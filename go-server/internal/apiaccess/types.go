@@ -177,6 +177,8 @@ type ListLogsInput struct {
 	APIKeyID     string
 	Status       string
 	Keyword      string
+	StartAt      *time.Time
+	EndAt        *time.Time
 	Page         int
 	PageSize     int
 	SortBy       string
@@ -213,6 +215,27 @@ type UsageTrendPoint struct {
 	Total   int    `json:"total"`
 	Success int    `json:"success"`
 	Failed  int    `json:"failed"`
+}
+
+type UsageModelStat struct {
+	Model       string  `json:"model"`
+	Size        string  `json:"size"`
+	Total       int     `json:"total"`
+	Success     int     `json:"success"`
+	Failed      int     `json:"failed"`
+	SuccessRate float64 `json:"successRate"`
+}
+
+type UsageHourlyPoint struct {
+	Hour    int `json:"hour"`
+	Total   int `json:"total"`
+	Success int `json:"success"`
+	Failed  int `json:"failed"`
+}
+
+type UsageAnalytics struct {
+	Models []UsageModelStat   `json:"models"`
+	Hourly []UsageHourlyPoint `json:"hourly"`
 }
 
 type AdminStats struct {

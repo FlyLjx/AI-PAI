@@ -21,7 +21,6 @@ import { QRCodeSVG } from 'qrcode.react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
-import { PageHeader } from '@/components/common/PageHeader';
 import { StatBlock } from '@/components/common/StatBlock';
 import {
   APIError,
@@ -339,105 +338,95 @@ export default function BillingPage() {
     { key: 'actions', label: '操作', className: 'text-right' },
   ];
 
-  const refreshBilling = () => {
-    void loadBilling();
-    void loadOrderHistory(historyPage);
-  };
-
   return (
-    <div className="page-stack">
-      <PageHeader title="计费中心" description={subscriptionEnabled ? '余额按量扣费与订阅额度可同时使用' : '余额充值与按量调用额度管理'}>
-        <button className="btn" type="button" onClick={refreshBilling} disabled={loading || historyLoading}>
-          <RefreshCw size={14} className={loading || historyLoading ? 'animate-spin' : ''} />刷新
-        </button>
-      </PageHeader>
+    <div className="page-stack billing-page">
+      {error && <div className="billing-notice" role="alert">部分计费信息暂未更新：{error}</div>}
 
-      {error && <div className="notice" role="alert">部分计费信息暂未更新：{error}</div>}
-
-      <section className="metric-grid">
+      <section className="metric-grid billing-stats" aria-label="计费摘要">
         <StatBlock title="账户余额" value={loading && !user ? '--' : formatCNY(Number(user?.credits || 0))} subtext="按量请求自动扣减" icon={CircleDollarSign} color="green" />
-        {subscriptionEnabled && <>
-          <StatBlock title="订阅状态" value={loading ? '--' : subscriptionActive ? subscription?.planName || '已订阅' : '未订阅'} subtext={subscriptionActive ? `有效至 ${subscription?.expiresAt ? formatDate(subscription.expiresAt, false) : '-'}` : '可独立购买套餐'} icon={Crown} color="amber" />
-          <StatBlock title="订阅剩余" value={loading ? '--' : subscriptionActive ? remainingQuota.toLocaleString() : '0'} subtext={subscriptionActive ? `总额度 ${quotaLimit.toLocaleString()}` : '未开通订阅额度'} icon={WalletCards} color="cyan" />
-        </>}
+        <StatBlock title="订阅状态" value={loading ? '--' : subscriptionEnabled ? subscriptionActive ? subscription?.planName || '已订阅' : '未订阅' : '未开放'} subtext={subscriptionEnabled ? subscriptionActive ? `有效至 ${subscription?.expiresAt ? formatDate(subscription.expiresAt, false) : '-'}` : '可独立购买套餐' : '当前未启用订阅'} icon={Crown} color="amber" />
+        <StatBlock title="订阅剩余" value={loading ? '--' : subscriptionEnabled ? subscriptionActive ? remainingQuota.toLocaleString() : '0' : '--'} subtext={subscriptionEnabled ? subscriptionActive ? `总额度 ${quotaLimit.toLocaleString()}` : '未开通订阅额度' : '订阅功能未启用'} icon={WalletCards} color="cyan" />
         <StatBlock title="充值兑换" value={`1 : ${rechargeRate.toLocaleString()}`} subtext={`最低 ${formatCNY(minimumAmount)}`} icon={ShieldCheck} color="neutral" />
       </section>
 
-      <div className="section-panel overflow-hidden">
-        <div className={`grid border-b border-[#dce4df] bg-[#fafbf9] p-1.5 ${subscriptionEnabled ? 'grid-cols-2' : 'grid-cols-1'}`}>
+      <div className="section-panel billing-workspace overflow-hidden">
+        <div className={`billing-tabs ${subscriptionEnabled ? 'has-subscription' : ''}`}>
           <button
             type="button"
-            className={`min-h-9 rounded-md px-3 text-xs font-bold ${activeTab === 'balance' ? 'bg-white text-[#087443] shadow-sm' : 'text-zinc-500'}`}
+            className={`billing-tab ${activeTab === 'balance' ? 'is-active' : ''}`}
             onClick={() => setActiveTab('balance')}
             aria-pressed={activeTab === 'balance'}
           >
-            <CircleDollarSign size={14} className="mr-1.5 inline" />余额充值
+            <CircleDollarSign size={14} />余额充值
           </button>
           {subscriptionEnabled && (
             <button
               type="button"
-              className={`min-h-9 rounded-md px-3 text-xs font-bold ${activeTab === 'subscription' ? 'bg-white text-[#92400e] shadow-sm' : 'text-zinc-500'}`}
+              className={`billing-tab ${activeTab === 'subscription' ? 'is-active is-subscription' : ''}`}
               onClick={() => setActiveTab('subscription')}
               aria-pressed={activeTab === 'subscription'}
             >
-              <Crown size={14} className="mr-1.5 inline" />订阅套餐
+              <Crown size={14} />订阅套餐
             </button>
           )}
         </div>
 
         {activeTab === 'balance' || !subscriptionEnabled ? (
-          <div className="section-body grid gap-5 lg:grid-cols-[minmax(0,1fr)_280px]">
-            <div>
-              <div className="mb-4 flex items-center justify-between gap-3">
-                <div><strong className="text-sm">选择充值金额</strong><p className="mt-1 text-[11px] text-zinc-500">到账余额用于 API 按量调用</p></div>
-                <span className={`status-pill ${rechargeEnabled ? 'active' : 'disabled'}`}>{rechargeEnabled ? '充值可用' : '充值暂停'}</span>
+          <div className="section-body billing-balance-body">
+            <div className="billing-balance-main">
+              <div className="billing-section-heading">
+                <div><strong>选择充值金额</strong><p>到账余额用于 API 按量调用</p></div>
+                <div className="billing-payment-methods">
+                  <span className={`billing-availability ${rechargeEnabled ? 'is-ready' : 'is-disabled'}`}><i />{rechargeEnabled ? '充值可用' : '充值暂停'}</span>
+                  <span className="billing-method"><BadgeCheck size={13} />支付宝扫码</span>
+                </div>
               </div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-4">
+              <div className="billing-amount-grid">
                 {presets.map((amount) => (
                   <button
                     key={amount}
                     type="button"
-                    className={`min-h-[72px] rounded-md border p-3 text-left transition-colors ${!customAmount && selectedAmount === amount ? 'border-[#86efac] bg-[#f0fdf4]' : 'border-[#dce4df] bg-white hover:border-[#86efac]'}`}
+                    className={`billing-amount-option ${!customAmount && selectedAmount === amount ? 'is-selected' : ''}`}
                     onClick={() => { setSelectedAmount(amount); setCustomAmount(''); }}
                     aria-pressed={!customAmount && selectedAmount === amount}
                   >
-                    <strong className="block text-lg">{formatCNY(amount)}</strong>
-                    <small className="mt-1 block text-[11px] text-zinc-500">预计到账 {(amount * rechargeRate).toFixed(2)}</small>
+                    <strong>{formatCNY(amount)}</strong>
+                    <small>预计到账 {(amount * rechargeRate).toFixed(2)}</small>
                   </button>
                 ))}
               </div>
-              <div className="field mt-4 max-w-sm">
+              <div className="field billing-custom-amount">
                 <label htmlFor="custom-recharge">自定义金额</label>
-                <div className="flex gap-2">
+                <div className="billing-custom-row">
                   <input id="custom-recharge" type="number" min={minimumAmount} step="0.01" value={customAmount} onChange={(event) => setCustomAmount(event.target.value)} placeholder={`最低 ${minimumAmount}`} />
-                  <button className="btn primary shrink-0" type="button" onClick={startBalancePayment} disabled={!rechargeEnabled || Boolean(payingFor)}>
+                  <span className="billing-currency">元</span>
+                  <button className="btn primary billing-pay-button" type="button" onClick={startBalancePayment} disabled={!rechargeEnabled || Boolean(payingFor)}>
                     {payingFor.startsWith('balance-') && <LoaderCircle size={14} className="animate-spin" />}
                     支付充值
                   </button>
                 </div>
               </div>
             </div>
-            <aside className="border-t border-[#edf0ee] pt-4 lg:border-l lg:border-t-0 lg:pl-5 lg:pt-0">
-              <strong className="text-xs">余额账户</strong>
-              <div className="mt-3 rounded-md border border-[#dce4df] bg-[#fafbf9] p-4">
-                <small className="text-[11px] text-zinc-500">当前可用</small>
-                <div className="mt-1 text-2xl font-bold">{formatCNY(Number(user?.credits || 0))}</div>
-                <div className="mt-4 grid gap-2 text-[11px] text-zinc-500">
-                  <span className="flex items-center gap-2"><BadgeCheck size={13} className="text-[#087443]" />支付完成后自动到账</span>
-                  <span className="flex items-center gap-2"><ShieldCheck size={13} className="text-blue-600" />调用失败按服务端账单规则回退</span>
+            <aside className="billing-balance-aside">
+              <div className="billing-aside-card">
+                <header><strong>余额账户</strong></header>
+                <div className="billing-aside-body">
+                  <small>当前可用</small>
+                  <strong>{formatCNY(Number(user?.credits || 0))}</strong>
+                  <p>充值金额将存入您的余额账户，可用于调用 API 服务抵扣费用。</p>
                 </div>
               </div>
             </aside>
           </div>
         ) : (
-          <div className="section-body">
-            <div className="flex flex-col gap-4 border-b border-[#edf0ee] pb-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="section-body billing-subscription-body">
+            <div className="billing-subscription-heading">
               <div className="min-w-0">
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-bold text-[#087443]"><Crown size={14} />订阅额度</span>
                 <strong className="mt-1.5 block text-base">选择适合调用周期的套餐</strong>
                 <p className="mt-1 max-w-xl text-[11px] leading-5 text-zinc-500">订阅有效期内优先使用套餐额度，额度用完后继续使用账户余额。</p>
               </div>
-              <dl className="grid min-w-0 grid-cols-3 overflow-hidden rounded-md border border-[#dce4df] bg-[#fafbf9] lg:min-w-[520px]" aria-label="当前计费状态">
+              <dl className="billing-subscription-summary" aria-label="当前计费状态">
                 <div className="min-w-0 px-3 py-2.5">
                   <dt className="text-[10px] text-zinc-400">当前方案</dt>
                   <dd className={`mt-1 truncate text-xs font-bold ${subscriptionActive ? 'text-amber-700' : 'text-[#59645d]'}`}>{subscriptionActive ? subscription?.planName || '已订阅' : '暂未订阅'}</dd>
@@ -458,7 +447,7 @@ export default function BillingPage() {
             ) : plans.length === 0 ? (
               <div className="empty-row">暂无可购买的订阅套餐</div>
             ) : (
-              <div className="mt-5 grid items-stretch gap-4 md:grid-cols-2">
+              <div className="billing-plan-grid">
                 {plans.map((plan) => {
                   const currentPlan = subscriptionActive && subscription?.planId === plan.id;
                   const recommendedPlan = plan.id === recommendedPlanId;
@@ -469,20 +458,20 @@ export default function BillingPage() {
                   return (
                     <article
                       key={plan.id}
-                      className={`relative flex h-full min-w-0 flex-col overflow-hidden rounded-[7px] border p-5 transition-colors ${currentPlan ? 'border-amber-300 bg-amber-50/40' : recommendedPlan ? 'border-[#86efac] bg-white' : 'border-[#dce4df] bg-white hover:border-[#a7dabb]'}`}
+                      className={`billing-plan-card ${currentPlan ? 'is-current' : recommendedPlan ? 'is-recommended' : ''}`}
                       aria-current={currentPlan ? 'true' : undefined}
                     >
-                      {recommendedPlan && !currentPlan && <span className="absolute inset-x-0 top-0 h-1 bg-[#3f9274]" aria-hidden="true" />}
+                      {recommendedPlan && !currentPlan && <span className="billing-plan-accent" aria-hidden="true" />}
                       <div className="flex items-start justify-between gap-4">
-                        <div className="flex min-w-0 items-center gap-3">
-                          <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-md ${currentPlan ? 'bg-amber-100 text-amber-700' : 'bg-[#eaf8ef] text-[#087443]'}`}><Crown size={17} /></span>
+                        <div className="billing-plan-identity">
+                          <span className={`billing-plan-icon ${currentPlan ? 'is-current' : ''}`}><Crown size={17} /></span>
                           <div className="min-w-0">
                             <strong className="block truncate text-[15px]">{plan.name}</strong>
                             <span className="mt-0.5 block text-[10px] text-zinc-400">{durationDays} 天订阅周期</span>
                           </div>
                         </div>
                         {currentPlan ? (
-                          <span className="status-pill paid shrink-0">当前订阅</span>
+                          <span className="status-pill paid">当前订阅</span>
                         ) : recommendedPlan ? (
                           <span className="status-pill active shrink-0">推荐</span>
                         ) : plan.badge ? (
@@ -490,31 +479,31 @@ export default function BillingPage() {
                         ) : null}
                       </div>
 
-                      <p className="mt-3 min-h-10 text-[11px] leading-5 text-zinc-500">{plan.description || '按周期提供稳定的 API 调用额度。'}</p>
+                      <p className="billing-plan-description">{plan.description || '按周期提供稳定的 API 调用额度。'}</p>
 
-                      <div className="mt-4 flex flex-wrap items-end justify-between gap-3 border-b border-[#edf0ee] pb-4">
+                      <div className="billing-plan-price-row">
                         <div>
                           <span className="block text-[10px] text-zinc-400">订阅价格</span>
-                          <div className="mt-1 flex items-end gap-1"><strong className="text-[28px] leading-none">{formatCNY(Number(plan.amount || 0))}</strong><small className="pb-0.5 text-[10px] text-zinc-400">/ {durationDays} 天</small></div>
+                          <div className="billing-plan-price"><strong>{formatCNY(Number(plan.amount || 0))}</strong><small>/ {durationDays} 天</small></div>
                         </div>
-                        <div className="rounded-md bg-[#f6f8f6] px-3 py-2 text-right">
+                        <div className="billing-plan-daily">
                           <span className="block text-[9px] text-zinc-400">日均价格</span>
                           <strong className="mono mt-0.5 block text-[11px] text-[#526059]">{formatCNY(dailyAmount)}</strong>
                         </div>
                       </div>
 
-                      <div className="py-4">
-                        <div className="flex items-end justify-between gap-3">
-                          <span className="text-[11px] text-zinc-500">套餐总额度</span>
-                          <strong className="mono text-xl text-[#17201b]">{quotaImages.toLocaleString()} <small className="font-sans text-[10px] font-semibold text-zinc-400">张</small></strong>
+                      <div className="billing-plan-quota">
+                        <div>
+                          <span>套餐总额度</span>
+                          <strong>{quotaImages.toLocaleString()} <small>张</small></strong>
                         </div>
-                        <div className="mt-3 grid grid-cols-2 gap-2 text-[11px]">
-                          <span className="flex items-center gap-2 rounded-md bg-[#fafbf9] px-3 py-2 text-[#59645d]"><CalendarDays size={13} className="shrink-0 text-[#087443]" />有效 {durationDays} 天</span>
-                          <span className="flex items-center gap-2 rounded-md bg-[#fafbf9] px-3 py-2 text-[#59645d]"><WalletCards size={13} className="shrink-0 text-blue-600" />日均约 {dailyQuota.toLocaleString()} 张</span>
+                        <div className="billing-plan-meta">
+                          <span><CalendarDays size={13} />有效 {durationDays} 天</span>
+                          <span><WalletCards size={13} />日均约 {dailyQuota.toLocaleString()} 张</span>
                         </div>
                       </div>
 
-                      <button className={`btn mt-auto w-full ${currentPlan ? '' : 'primary'}`} type="button" onClick={() => startPlanPayment(plan)} disabled={Boolean(payingFor)}>
+                      <button className={`btn billing-plan-button ${currentPlan ? '' : 'primary'}`} type="button" onClick={() => startPlanPayment(plan)} disabled={Boolean(payingFor)}>
                         {payingFor === `plan-${plan.id}` && <LoaderCircle size={14} className="animate-spin" />}
                         {currentPlan ? '续订当前套餐' : `订阅 ${plan.name}`}
                       </button>
@@ -524,25 +513,25 @@ export default function BillingPage() {
               </div>
             )}
 
-            <div className="mt-5 grid gap-3 border-t border-[#edf0ee] pt-4 sm:grid-cols-3" aria-label="订阅计费说明">
-              <div className="flex min-w-0 items-start gap-2.5"><BadgeCheck size={15} className="mt-0.5 shrink-0 text-[#087443]" /><div><strong className="block text-[11px]">支付后自动生效</strong><small className="mt-0.5 block text-[10px] leading-4 text-zinc-500">支付完成后自动同步套餐状态</small></div></div>
-              <div className="flex min-w-0 items-start gap-2.5"><WalletCards size={15} className="mt-0.5 shrink-0 text-blue-600" /><div><strong className="block text-[11px]">订阅额度优先</strong><small className="mt-0.5 block text-[10px] leading-4 text-zinc-500">有效期内请求优先扣套餐额度</small></div></div>
-              <div className="flex min-w-0 items-start gap-2.5"><ShieldCheck size={15} className="mt-0.5 shrink-0 text-amber-600" /><div><strong className="block text-[11px]">余额自动衔接</strong><small className="mt-0.5 block text-[10px] leading-4 text-zinc-500">套餐不足时继续按量扣除余额</small></div></div>
+            <div className="billing-subscription-notes" aria-label="订阅计费说明">
+              <div><BadgeCheck /><span><strong>支付后自动生效</strong><small>支付完成后自动同步套餐状态</small></span></div>
+              <div><WalletCards /><span><strong>订阅额度优先</strong><small>有效期内请求优先扣套餐额度</small></span></div>
+              <div><ShieldCheck /><span><strong>余额自动衔接</strong><small>套餐不足时继续按量扣除余额</small></span></div>
             </div>
           </div>
         )}
       </div>
 
-      <section aria-labelledby="billing-history-title">
-        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex min-w-0 items-center gap-2.5">
+      <section className="billing-history-section" aria-labelledby="billing-history-title">
+        <div className="billing-history-header">
+          <div className="billing-history-title">
             <span className="billing-icon"><ReceiptText size={16} /></span>
             <div className="min-w-0">
               <strong id="billing-history-title" className="block text-sm">{subscriptionEnabled ? '充值与订阅记录' : '充值记录'}</strong>
               <small className="mt-0.5 block text-[11px] text-zinc-500">{subscriptionEnabled ? '余额充值与订阅订单' : '余额充值订单'}，共 {historyTotal.toLocaleString()} 条</small>
             </div>
           </div>
-          <button className="btn self-start sm:self-auto" type="button" onClick={() => void loadOrderHistory(historyPage)} disabled={historyLoading}>
+          <button className="btn billing-history-refresh" type="button" onClick={() => void loadOrderHistory(historyPage)} disabled={historyLoading}>
             <RefreshCw size={14} className={historyLoading ? 'animate-spin' : ''} />刷新记录
           </button>
         </div>
@@ -555,11 +544,13 @@ export default function BillingPage() {
             <button className="btn shrink-0" type="button" onClick={() => void loadOrderHistory(historyPage)}>重新加载</button>
           </div>
         ) : (
-          <DataTable
+          <div className="billing-history-table">
+            <DataTable
             headers={historyHeaders}
             data={orderHistory}
             currentPage={historyPage}
             totalPages={historyTotalPages}
+            totalItems={historyTotal}
             onPageChange={(page) => void loadOrderHistory(page)}
             renderRow={(order) => {
               const status = orderStatus(order.status);
@@ -623,13 +614,14 @@ export default function BillingPage() {
               );
             }}
             emptyState={<EmptyState title="暂无订单记录" description={subscriptionEnabled ? '完成余额充值或购买订阅后，订单会显示在这里。' : '完成余额充值后，订单会显示在这里。'} icon={ReceiptText} />}
-          />
+            />
+          </div>
         )}
       </section>
 
       {paymentOpen && paymentOrder && (
-        <div className="modal-backdrop" role="presentation">
-          <section className="modal-panel max-w-[430px]" role="dialog" aria-modal="true" aria-labelledby="payment-title">
+        <div className="modal-backdrop billing-payment-backdrop" role="presentation">
+          <section className="modal-panel billing-payment-modal max-w-[430px]" role="dialog" aria-modal="true" aria-labelledby="payment-title">
             <div className="modal-title">
               <strong id="payment-title">{paymentTitle}</strong>
               <button type="button" onClick={() => setPaymentOpen(false)} title="关闭" aria-label="关闭"><X size={17} /></button>

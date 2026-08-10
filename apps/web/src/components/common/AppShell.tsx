@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
-  Activity, BadgeDollarSign, BookOpen, ChevronRight, HeartPulse, KeyRound, LayoutDashboard,
-  BellRing, Gift, Images, LoaderCircle, LogOut, MailWarning, Megaphone, Menu, Send, Settings, WalletCards, X,
+  Activity, BadgeDollarSign, Bell, BellRing, BookOpen, ChevronRight, Gift, HeartPulse, Images, KeyRound,
+  LayoutDashboard, LoaderCircle, LogOut, MailWarning, Menu, Megaphone, Search, Send, Settings, UserRound, WalletCards, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BillingRail } from './BillingRail';
@@ -51,10 +51,10 @@ function Navigation({ items, pathname, mobile = false, onNavigate }: { items: Na
       {items.map(({ label, href, icon: Icon }) => {
         const active = pathname === href;
         return (
-          <Link key={href} href={href} onClick={onNavigate} className={`nav-item ${active ? 'is-active' : ''}`}>
+          <Link key={`${label}-${href}`} href={href} onClick={onNavigate} className={`nav-item ${active ? 'is-active' : ''}`}>
             <Icon size={16} />
             <span>{label}</span>
-            {!mobile && <ChevronRight size={13} className="nav-arrow" />}
+            {!mobile && <ChevronRight size={13} className="nav-arrow" aria-hidden="true" />}
           </Link>
         );
       })}
@@ -66,10 +66,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<PortalUser | null>(() => getSession());
-  const [subscriptionEnabled, setSubscriptionEnabled] = useState(false);
-  const [subscriptionAccessForUserId, setSubscriptionAccessForUserId] = useState('');
   const [ready, setReady] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [topSearch, setTopSearch] = useState('');
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [verificationSending, setVerificationSending] = useState(false);
   const [verificationCooldown, setVerificationCooldown] = useState(0);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
@@ -95,24 +96,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     }).finally(() => active && setReady(true));
     return () => { active = false; };
   }, [pathname, router]);
-
-  useEffect(() => {
-    let active = true;
-    const current = getSession();
-    if (!current) return () => { active = false; };
-    void portalApi.subscription(current)
-      .then(() => {
-        if (!active) return;
-        setSubscriptionEnabled(true);
-        setSubscriptionAccessForUserId(current.id);
-      })
-      .catch(() => {
-        if (!active) return;
-        setSubscriptionEnabled(false);
-        setSubscriptionAccessForUserId(current.id);
-      });
-    return () => { active = false; };
-  }, [userId, userToken]);
 
   useEffect(() => {
     if (verificationCooldown < 1) return;
@@ -261,6 +244,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const mobileNav = USER_NAV_ITEMS.filter((item) => (
     ['/dashboard', '/playground', '/usage', '/prices', '/billing'].includes(item.href)
   ));
+  const currentNav = USER_NAV_ITEMS.find((item) => item.href === pathname);
+  const pageTitle = pathname === '/usage' ? '用量' : currentNav?.label || '首页';
   const logout = () => {
     clearSession();
     router.replace('/login');
@@ -282,6 +267,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const bannerAnnouncements = announcements.filter((item) => item.displayMode === 'banner');
   const popupAnnouncements = announcements.filter((item) => item.displayMode === 'popup');
   const activePopup = popupAnnouncements[0] || null;
+  const notificationAnnouncement = activePopup || bannerAnnouncements[0] || null;
   const openAIAlert: OpenAIAlertBanner | null = (() => {
     if (!openAIStatus) return null;
     const status = String(openAIStatus.status || '').toLowerCase();
@@ -299,12 +285,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
   })();
   const signAnnouncement = async () => {
-    if (!activePopup || signingAnnouncementId) return;
-    setSigningAnnouncementId(activePopup.id);
+    if (!notificationAnnouncement || signingAnnouncementId) return;
+    setSigningAnnouncementId(notificationAnnouncement.id);
     try {
-      await portalApi.signAnnouncement(user, activePopup.id);
-      setAnnouncements((current) => current.filter((item) => item.id !== activePopup.id));
+      await portalApi.signAnnouncement(user, notificationAnnouncement.id);
+      setAnnouncements((current) => current.filter((item) => item.id !== notificationAnnouncement.id));
     } catch (requestError) {
+      if (requestError instanceof APIError && (requestError.status === 404 || requestError.status === 409)) {
+        setAnnouncements((current) => current.filter((item) => item.id !== notificationAnnouncement.id));
+        setAnnouncementOpen(false);
+        return;
+      }
       toast.error(requestError instanceof Error ? requestError.message : '公告确认失败');
     } finally {
       setSigningAnnouncementId('');
@@ -341,41 +332,74 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   };
 
   const handlePopupAction = async () => {
-    if (!activePopup) return;
-    if (activePopup.rewardCredits > 0) {
-      await claimAnnouncementReward(activePopup, true);
+    if (!notificationAnnouncement) return;
+    if (notificationAnnouncement.rewardCredits > 0) {
+      await claimAnnouncementReward(notificationAnnouncement, true);
       return;
     }
     await signAnnouncement();
   };
 
   return (
-    <div className="app-frame">
+    <div className={`app-frame ${pathname === '/docs' ? 'docs-frame' : ''}`}>
       <aside className="app-sidebar">
         <Link href="/dashboard" className="brand-lockup">
-          <span className="brand-mark">AI</span>
-          <span><strong>AI-PAI</strong><small title={`Commit ${WEB_BUILD_COMMIT}`}>API 中转站 · {WEB_BUILD_VERSION}</small></span>
+          <span className="brand-mark">AIπ</span>
+          <span><strong>图片中转站</strong><small title={`Commit ${WEB_BUILD_COMMIT}`}>Image Relay Console</small></span>
         </Link>
-        <BillingRail user={user} subscriptionEnabled={subscriptionEnabled && subscriptionAccessForUserId === user.id} />
+        <BillingRail user={user} />
         <div className="sidebar-section-label">开发者工作台</div>
         <div className="sidebar-scroll"><Navigation items={USER_NAV_ITEMS} pathname={pathname} onNavigate={() => setMobileOpen(false)} /></div>
         <div className="sidebar-account">
           <span className="account-avatar">{user.email.slice(0, 1).toUpperCase()}</span>
           <span className="account-copy"><strong>{user.email}</strong><small>API 客户</small></span>
-          <button type="button" onClick={logout} title="退出登录"><LogOut size={16} /></button>
+          <button type="button" onClick={logout} title="退出登录" aria-label="退出登录"><LogOut size={16} /></button>
         </div>
       </aside>
 
-      <header className="mobile-header">
-        <Link href="/dashboard" className="brand-lockup compact">
-          <span className="brand-mark">AI</span><strong>AI-PAI</strong>
-        </Link>
-        <button type="button" onClick={() => setMobileOpen(!mobileOpen)} aria-label="打开导航">{mobileOpen ? <X /> : <Menu />}</button>
-      </header>
-      {mobileOpen && <div className="mobile-drawer"><Navigation items={USER_NAV_ITEMS} pathname={pathname} mobile onNavigate={() => setMobileOpen(false)} /><button className="mobile-logout" onClick={logout}><LogOut size={16} />退出登录</button></div>}
+      <div className="app-workspace">
+        <header className="app-topbar">
+          <div className="topbar-heading">
+            <strong>{pageTitle}</strong>
+            <span className="topbar-status"><i aria-hidden="true" />中转服务正常</span>
+          </div>
+          <div className="topbar-actions">
+            <label className="topbar-search">
+              <Search size={15} aria-hidden="true" />
+              <input value={topSearch} onChange={(event) => setTopSearch(event.target.value)} placeholder="搜索图片地址 / 请求ID" aria-label="搜索图片地址或请求ID" />
+            </label>
+            <button
+              type="button"
+              className={`topbar-icon-button ${notificationAnnouncement ? 'has-announcement' : ''}`}
+              aria-label={notificationAnnouncement ? '打开公告通知' : '暂无公告通知'}
+              onClick={() => notificationAnnouncement ? setAnnouncementOpen(true) : toast.info('暂无新公告')}
+            ><Bell size={18} /></button>
+            <div className="topbar-account-wrap">
+              <button type="button" className="topbar-account" aria-expanded={accountMenuOpen} onClick={() => setAccountMenuOpen((current) => !current)}>
+                <span className="topbar-avatar"><UserRound size={19} strokeWidth={1.8} aria-hidden="true" /></span>
+                <span className="topbar-account-chevron" aria-hidden="true">⌄</span>
+              </button>
+              {accountMenuOpen && (
+                <div className="topbar-account-menu" role="menu">
+                  <div className="topbar-account-meta"><strong>{user.email}</strong><small>图片中转站用户</small></div>
+                  <Link href="/settings" onClick={() => setAccountMenuOpen(false)}><Settings size={14} />账户设置</Link>
+                  <button type="button" onClick={logout}><LogOut size={14} />退出登录</button>
+                </div>
+              )}
+            </div>
+          </div>
+        </header>
 
-      <main className="app-main">
-        {(openAIAlert || bannerAnnouncements.length > 0) && (
+        <header className="mobile-header">
+          <Link href="/dashboard" className="brand-lockup compact">
+            <span className="brand-mark">AIπ</span><strong>图片中转站</strong>
+          </Link>
+          <button type="button" onClick={() => setMobileOpen(!mobileOpen)} aria-label="打开导航">{mobileOpen ? <X /> : <Menu />}</button>
+        </header>
+        {mobileOpen && <div className="mobile-drawer"><Navigation items={USER_NAV_ITEMS} pathname={pathname} mobile onNavigate={() => setMobileOpen(false)} /><button className="mobile-logout" onClick={logout}><LogOut size={16} />退出登录</button></div>}
+
+        <main className={`app-main ${pathname === '/dashboard' ? 'dashboard-main' : ''}`}>
+        {pathname !== '/dashboard' && pathname !== '/usage' && pathname !== '/billing' && pathname !== '/docs' && (openAIAlert || bannerAnnouncements.length > 0) && (
           <div className="mb-4 space-y-2" aria-label="站内公告">
             {openAIAlert && (
               <section
@@ -430,7 +454,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             ))}
           </div>
         )}
-        {!user.emailVerifiedAt && (
+        {pathname !== '/dashboard' && !user.emailVerifiedAt && (
           <section className="mb-4 flex flex-col gap-3 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900 sm:flex-row sm:items-center" aria-label="邮箱验证提醒">
             <MailWarning size={18} className="shrink-0 text-amber-700" />
             <div className="min-w-0 flex-1"><strong className="block text-xs">邮箱尚未验证</strong><p className="mt-0.5 break-words text-[11px] text-amber-800">验证邮件将发送至 {user.email}，完成验证后即可创建 API Key。</p></div>
@@ -441,27 +465,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </section>
         )}
         {children}
-      </main>
+          </main>
+      </div>
       <nav className="bottom-nav">
-        {mobileNav.map(({ label, href, icon: Icon }) => <Link key={href} href={href} className={pathname === href ? 'is-active' : ''}><Icon size={18} /><span>{label}</span></Link>)}
+        {mobileNav.map(({ label, href, icon: Icon }) => <Link key={`${label}-${href}`} href={href} className={pathname === href ? 'is-active' : ''}><Icon size={18} /><span>{label}</span></Link>)}
       </nav>
-      {activePopup && (
+      {(announcementOpen || Boolean(activePopup)) && notificationAnnouncement && (
         <div className="modal-backdrop" role="presentation">
           <section className="modal-panel max-w-[460px] overflow-hidden" role="dialog" aria-modal="true" aria-labelledby="announcement-dialog-title" aria-describedby="announcement-dialog-content">
             <div className="border-b border-[#EDF0EE] bg-[#FAFBFA] px-5 py-4">
               <div className="flex items-center gap-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-md bg-amber-50 text-amber-700"><BellRing size={18} /></span>
-                <div className="min-w-0"><small className="block text-[10px] font-semibold text-amber-700">站内公告{popupAnnouncements.length > 1 ? ` · 1/${popupAnnouncements.length}` : ''}</small><strong id="announcement-dialog-title" className="mt-0.5 block break-words text-sm">{activePopup.title}</strong>{activePopup.rewardCredits > 0 && <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800"><Gift size={12} />可领取 +{announcementRewardLabel(activePopup.rewardCredits)} 余额</span>}</div>
+                <div className="min-w-0"><small className="block text-[10px] font-semibold text-amber-700">站内公告{popupAnnouncements.length > 1 ? ` · 1/${popupAnnouncements.length}` : ''}</small><strong id="announcement-dialog-title" className="mt-0.5 block break-words text-sm">{notificationAnnouncement.title}</strong>{notificationAnnouncement.rewardCredits > 0 && <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800"><Gift size={12} />可领取 +{announcementRewardLabel(notificationAnnouncement.rewardCredits)} 余额</span>}</div>
               </div>
             </div>
             <div className="px-5 py-5">
-              <p id="announcement-dialog-content" className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-6 text-zinc-700">{activePopup.content}</p>
+              <p id="announcement-dialog-content" className="max-h-[46vh] overflow-y-auto whitespace-pre-wrap break-words text-xs leading-6 text-zinc-700">{notificationAnnouncement.content}</p>
             </div>
             <div className="flex items-center justify-between gap-3 border-t border-[#EDF0EE] bg-[#FAFBFA] px-5 py-3">
-              <small className="text-[10px] text-zinc-400">{activePopup.rewardCredits > 0 ? '领取后奖励立即到账，每个账号限领一次' : '确认后不再重复显示'}</small>
+              <small className="text-[10px] text-zinc-400">{notificationAnnouncement.rewardCredits > 0 ? '领取后奖励立即到账，每个账号限领一次' : '确认后不再重复显示'}</small>
               <button type="button" onClick={() => void handlePopupAction()} disabled={Boolean(signingAnnouncementId || claimingAnnouncementId)} className="btn primary min-w-24 justify-center disabled:opacity-60">
                 {(signingAnnouncementId || claimingAnnouncementId) && <LoaderCircle size={14} className="animate-spin" />}
-                {claimingAnnouncementId ? '领取中' : signingAnnouncementId ? '确认中' : activePopup.rewardCredits > 0 ? '领取奖励' : '我知道了'}
+                {claimingAnnouncementId ? '领取中' : signingAnnouncementId ? '确认中' : notificationAnnouncement.rewardCredits > 0 ? '领取奖励' : '我知道了'}
               </button>
             </div>
           </section>

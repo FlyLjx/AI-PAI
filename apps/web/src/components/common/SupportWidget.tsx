@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   Check,
   Copy,
@@ -33,6 +33,25 @@ type SupportItem = {
   href?: string;
 };
 
+type FloatingPosition = {
+  left: number;
+  top: number;
+};
+
+type DragState = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startLeft: number;
+  startTop: number;
+  width: number;
+  height: number;
+  moved: boolean;
+  nextPosition: FloatingPosition;
+};
+
+const SUPPORT_POSITION_KEY = 'aipi-support-widget-position';
+
 function text(value: unknown): string {
   return String(value || '').trim();
 }
@@ -54,6 +73,78 @@ export function SupportWidget() {
   const [settings, setSettings] = useState<SupportSettings>({});
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState('');
+  const [floatingPosition, setFloatingPosition] = useState<FloatingPosition | null>(null);
+  const supportButtonRef = useRef<HTMLButtonElement | null>(null);
+  const dragRef = useRef<DragState | null>(null);
+  const suppressClickRef = useRef(false);
+
+  const clampPosition = (left: number, top: number, width: number, height: number): FloatingPosition => {
+    const maxLeft = Math.max(8, window.innerWidth - width - 8);
+    const maxTop = Math.max(8, window.innerHeight - height - 8);
+    return {
+      left: Math.min(Math.max(8, left), maxLeft),
+      top: Math.min(Math.max(8, top), maxTop),
+    };
+  };
+
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(SUPPORT_POSITION_KEY) || 'null') as Partial<FloatingPosition> | null;
+      if (stored && Number.isFinite(stored.left) && Number.isFinite(stored.top)) {
+        const button = supportButtonRef.current;
+        setFloatingPosition(clampPosition(stored.left as number, stored.top as number, button?.offsetWidth || 142, button?.offsetHeight || 40));
+      }
+    } catch {
+      // Ignore unavailable storage in embedded/private browsing contexts.
+    }
+  }, []);
+
+  useEffect(() => {
+    const handlePointerMove = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      const deltaX = event.clientX - drag.startX;
+      const deltaY = event.clientY - drag.startY;
+      if (Math.abs(deltaX) > 4 || Math.abs(deltaY) > 4) drag.moved = true;
+      if (!drag.moved) return;
+      event.preventDefault();
+      drag.nextPosition = clampPosition(drag.startLeft + deltaX, drag.startTop + deltaY, drag.width, drag.height);
+      setFloatingPosition(drag.nextPosition);
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || event.pointerId !== drag.pointerId) return;
+      if (drag.moved) {
+        suppressClickRef.current = true;
+        try {
+          window.localStorage.setItem(SUPPORT_POSITION_KEY, JSON.stringify(drag.nextPosition));
+        } catch {
+          // Ignore unavailable storage in embedded/private browsing contexts.
+        }
+      }
+      dragRef.current = null;
+    };
+
+    const handleResize = () => {
+      setFloatingPosition((current) => {
+        if (!current) return current;
+        const button = supportButtonRef.current;
+        return clampPosition(current.left, current.top, button?.offsetWidth || 142, button?.offsetHeight || 40);
+      });
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: false });
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -94,13 +185,42 @@ export function SupportWidget() {
     }
   };
 
+  const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      startLeft: rect.left,
+      startTop: rect.top,
+      width: rect.width,
+      height: rect.height,
+      moved: false,
+      nextPosition: { left: rect.left, top: rect.top },
+    };
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  };
+
+  const handleSupportClick = () => {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    setOpen(true);
+  };
+
   return (
     <>
       <button
+        ref={supportButtonRef}
         type="button"
         aria-label="联系客服"
-        onClick={() => setOpen(true)}
-        className="fixed bottom-20 right-4 z-40 inline-flex min-h-10 items-center gap-2 rounded-md border border-[#cce8d6] bg-white px-3 text-xs font-bold text-[#087443] shadow-[0_10px_26px_rgba(15,60,32,.14)] transition hover:border-[#86efac] hover:bg-[#f0fdf4] sm:bottom-6 sm:right-6"
+        onPointerDown={handlePointerDown}
+        onClick={handleSupportClick}
+        style={floatingPosition ? { left: floatingPosition.left, top: floatingPosition.top, right: 'auto', bottom: 'auto' } : undefined}
+        className="fixed bottom-20 right-4 z-40 inline-flex min-h-10 touch-none select-none cursor-grab items-center gap-2 rounded-md border border-[#cce8d6] bg-white px-3 text-xs font-bold text-[#087443] shadow-[0_10px_26px_rgba(15,60,32,.14)] transition hover:border-[#86efac] hover:bg-[#f0fdf4] active:cursor-grabbing sm:bottom-6 sm:right-6"
       >
         <Headset size={16} />
         <span>联系客服</span>

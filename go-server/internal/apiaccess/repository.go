@@ -1018,6 +1018,91 @@ func (r *Repository) DailyUsageTrend(ctx context.Context, userID string, startAt
 	return items, rows.Err()
 }
 
+func (r *Repository) UsageAnalytics(ctx context.Context, userID string, startAt time.Time, endAt time.Time) (UsageAnalytics, error) {
+	result := UsageAnalytics{
+		Models: []UsageModelStat{},
+		Hourly: make([]UsageHourlyPoint, 24),
+	}
+	for hour := range result.Hourly {
+		result.Hourly[hour].Hour = hour
+	}
+
+	modelRows, err := r.db.QueryContext(ctx, `
+		SELECT
+			COALESCE(model, ''),
+			COALESCE(size, ''),
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
+				AND (response_status_code IS NULL OR response_status_code NOT IN (429, 502))
+				THEN 1 ELSE 0 END), 0) AS failed
+		FROM api_access_logs
+		WHERE user_id = ? AND created_at >= ? AND created_at < ?
+		GROUP BY model, size
+		ORDER BY total DESC, model ASC, size ASC
+	`, strings.TrimSpace(userID), startAt, endAt)
+	if err != nil {
+		return result, err
+	}
+	for modelRows.Next() {
+		var item UsageModelStat
+		if err := modelRows.Scan(&item.Model, &item.Size, &item.Total, &item.Success, &item.Failed); err != nil {
+			modelRows.Close()
+			return result, err
+		}
+		counted := item.Success + item.Failed
+		if counted > 0 {
+			item.SuccessRate = float64(item.Success) / float64(counted) * 100
+		}
+		result.Models = append(result.Models, item)
+	}
+	if err := modelRows.Close(); err != nil {
+		return result, err
+	}
+	if err := modelRows.Err(); err != nil {
+		return result, err
+	}
+
+	hourExpression := "HOUR(created_at)"
+	if database.CurrentDialect() == database.DialectPostgres {
+		hourExpression = "EXTRACT(HOUR FROM created_at)"
+	}
+	hourRows, err := r.db.QueryContext(ctx, `
+		SELECT `+hourExpression+` AS usage_hour,
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
+				AND (response_status_code IS NULL OR response_status_code NOT IN (429, 502))
+				THEN 1 ELSE 0 END), 0) AS failed
+		FROM api_access_logs
+		WHERE user_id = ? AND created_at >= ? AND created_at < ?
+		GROUP BY `+hourExpression+`
+		ORDER BY `+hourExpression+` ASC
+	`, strings.TrimSpace(userID), startAt, endAt)
+	if err != nil {
+		return result, err
+	}
+	for hourRows.Next() {
+		var hour int
+		var point UsageHourlyPoint
+		if err := hourRows.Scan(&hour, &point.Total, &point.Success, &point.Failed); err != nil {
+			hourRows.Close()
+			return result, err
+		}
+		if hour >= 0 && hour < len(result.Hourly) {
+			point.Hour = hour
+			result.Hourly[hour] = point
+		}
+	}
+	if err := hourRows.Close(); err != nil {
+		return result, err
+	}
+	if err := hourRows.Err(); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
 func usageLogSelect() string {
 	return `
 		SELECT
@@ -1072,6 +1157,14 @@ func buildLogWhere(input ListLogsInput) (string, []any) {
 	if strings.TrimSpace(input.APIKeyID) != "" {
 		conditions = append(conditions, "api_access_logs.api_key_id = ?")
 		args = append(args, strings.TrimSpace(input.APIKeyID))
+	}
+	if input.StartAt != nil && !input.StartAt.IsZero() {
+		conditions = append(conditions, "api_access_logs.created_at >= ?")
+		args = append(args, *input.StartAt)
+	}
+	if input.EndAt != nil && !input.EndAt.IsZero() {
+		conditions = append(conditions, "api_access_logs.created_at < ?")
+		args = append(args, *input.EndAt)
 	}
 	status := strings.ToLower(strings.TrimSpace(input.Status))
 	switch status {
