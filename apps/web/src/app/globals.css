@@ -1753,8 +1753,9 @@ body {
 
 .brand-lockup {
   height: 78px;
-  gap: 8px;
-  padding: 0 30px;
+  justify-content: center;
+  gap: 9px;
+  padding: 0 17px;
   border-bottom-color: var(--relay-border-soft);
 }
 
@@ -1766,19 +1767,27 @@ body {
   background: transparent;
   color: var(--relay-green);
   font-family: 'Manrope', 'Noto Sans SC', sans-serif;
-  font-size: 19px;
+  font-size: 22px;
   font-weight: 850;
-  letter-spacing: -.04em !important;
+  letter-spacing: 0 !important;
+}
+
+.brand-lockup > span:last-child {
+  gap: 2px;
 }
 
 .brand-lockup strong {
   color: var(--relay-ink);
-  font-size: 15px;
+  font-size: 16px;
+  line-height: 1;
   font-weight: 800;
 }
 
 .brand-lockup small {
-  display: none;
+  display: block;
+  margin-top: 0;
+  color: #7b8780;
+  font-size: 10px;
 }
 
 .sidebar-scroll {
@@ -2146,11 +2155,10 @@ body {
 }
 
 /* 20260809: desktop fidelity pass against home-image-relay-v2. */
-.brand-mark { color: var(--relay-ink); }
 @media (min-width: 761px) {
   .app-frame { grid-template-columns: 252px minmax(0, 1fr); }
-  .brand-lockup { height: 74px; padding: 0 35px; }
-  .brand-mark { color: var(--relay-ink); font-size: 20px; }
+  .brand-lockup { height: 74px; padding: 0 17px; }
+  .brand-mark { color: var(--relay-green); font-size: 22px; }
   .sidebar-scroll { padding: 20px 10px 12px; }
   .sidebar-bottom { display: none; }
   .app-topbar { min-height: 74px; padding: 0 30px; }

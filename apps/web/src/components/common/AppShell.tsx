@@ -345,7 +345,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <aside className="app-sidebar">
         <Link href="/dashboard" className="brand-lockup">
           <span className="brand-mark">AIπ</span>
-          <span><strong>图片中转站</strong><small title={`Commit ${WEB_BUILD_COMMIT}`}>Image Relay Console</small></span>
+          <span><strong>图片中转站</strong><small title={`Commit ${WEB_BUILD_COMMIT}`}>开发者控制台</small></span>
         </Link>
         <BillingRail user={user} />
         <div className="sidebar-section-label">开发者工作台</div>
@@ -392,7 +392,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
         <header className="mobile-header">
           <Link href="/dashboard" className="brand-lockup compact">
-            <span className="brand-mark">AIπ</span><strong>图片中转站</strong>
+            <span className="brand-mark">AIπ</span>
+            <span><strong>图片中转站</strong><small>开发者控制台</small></span>
           </Link>
           <button type="button" onClick={() => setMobileOpen(!mobileOpen)} aria-label="打开导航">{mobileOpen ? <X /> : <Menu />}</button>
         </header>
