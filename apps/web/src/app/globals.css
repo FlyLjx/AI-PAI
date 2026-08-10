@@ -2187,6 +2187,36 @@ body {
   .recent-table th { padding-right: 24px; padding-left: 24px; }
 }
 
+/* Keep the console brand identical to the centered auth lockup. */
+.app-sidebar > .brand-lockup {
+  justify-content: center !important;
+}
+.app-sidebar > .brand-lockup .brand-mark {
+  width: auto !important;
+  height: auto !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: #18b969 !important;
+  font-size: 22px !important;
+  font-weight: 850 !important;
+  letter-spacing: 0 !important;
+}
+.app-sidebar > .brand-lockup > span:last-child {
+  display: grid !important;
+  gap: 2px !important;
+}
+.app-sidebar > .brand-lockup strong {
+  color: #18231d !important;
+  font-size: 16px !important;
+  line-height: 1 !important;
+}
+.app-sidebar > .brand-lockup small {
+  display: block !important;
+  margin-top: 0 !important;
+  color: #7b8780 !important;
+  font-size: 10px !important;
+}
+
 @media (min-width: 761px) and (max-width: 1180px) {
   .app-frame { grid-template-columns: 236px minmax(0, 1fr); }
   .app-main { padding-right: 30px; }
