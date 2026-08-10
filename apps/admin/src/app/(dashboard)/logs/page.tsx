@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarClock, ChevronLeft, ChevronRight, Clipboard, Database, FileText, Loader2, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { Activity, AlertTriangle, CalendarClock, Clipboard, Database, FileText, HardDrive, Loader2, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { EmptyState } from '@/components/common/EmptyState';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { PageHeader } from '@/components/common/PageHeader';
 import { type SystemLogDetail, type SystemLogFile, portalApi } from '@/lib/admin-api';
 import { formatDate } from '@/lib/common/utils';
@@ -17,8 +18,6 @@ const CATEGORY_OPTIONS = [
   { value: 'generation', label: '调用' },
   { value: 'error', label: '错误' },
 ] as const;
-
-const PAGE_SIZE = 15;
 
 function bytes(value: number) {
   const size = Number(value || 0);
@@ -52,7 +51,6 @@ export default function AdminLogsPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [categoryFilter, setCategoryFilter] = useState('all');
-  const [page, setPage] = useState(1);
   const [deleteCandidate, setDeleteCandidate] = useState<SystemLogFile | null>(null);
   const [cleanupEnabled, setCleanupEnabled] = useState(false);
   const [retentionDays, setRetentionDays] = useState(30);
@@ -136,12 +134,6 @@ export default function AdminLogsPage() {
     });
   }, [categoryFilter, files, search]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const visibleFiles = useMemo(
-    () => filtered.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE),
-    [currentPage, filtered],
-  );
 
   const summary = useMemo(() => ({
     count: files.length,
@@ -208,11 +200,11 @@ export default function AdminLogsPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          ['日志文件', summary.count, '当前可读取'],
-          ['占用空间', bytes(summary.totalSize), '日志目录合计'],
-          ['错误日志', summary.errors, '错误分类文件'],
-          ['API / 调用', summary.api, '中转请求日志'],
-        ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
+          { title: '日志文件', value: summary.count, note: '当前可读取', icon: FileText, tone: 'blue' as const },
+          { title: '占用空间', value: bytes(summary.totalSize), note: '日志目录合计', icon: HardDrive, tone: 'neutral' as const },
+          { title: '错误日志', value: summary.errors, note: '错误分类文件', icon: AlertTriangle, tone: 'red' as const },
+          { title: 'API / 调用', value: summary.api, note: '中转请求日志', icon: Activity, tone: 'green' as const },
+        ].map((metric) => <AdminMetricCard key={metric.title} title={metric.title} value={metric.value} note={metric.note} icon={metric.icon} tone={metric.tone} />)}
       </div>
 
       <section aria-label="日志自动清理" className="flex flex-col gap-3 border-y border-[#DCE4DF] bg-white px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
@@ -238,11 +230,11 @@ export default function AdminLogsPage() {
         <div className="grid min-h-[560px] grid-cols-1 overflow-hidden rounded-md border border-[#DCE4DF] bg-white lg:grid-cols-[280px_minmax(0,1fr)]">
           <aside className="border-b border-[#DCE4DF] bg-[#FAFBFA] lg:border-b-0 lg:border-r">
             <div className="space-y-2 border-b border-[#DCE4DF] p-3">
-              <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索日志文件" className="h-8 w-full rounded-md border border-[#DCE4DF] bg-white px-3 text-xs outline-none focus:border-[#12B76A]" />
-              <AppSelect value={categoryFilter} options={CATEGORY_OPTIONS} onValueChange={(value) => { setCategoryFilter(value); setPage(1); }} compact className="w-full" ariaLabel="筛选日志分类" />
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索日志文件" className="h-8 w-full rounded-md border border-[#DCE4DF] bg-white px-3 text-xs outline-none focus:border-[#12B76A]" />
+              <AppSelect value={categoryFilter} options={CATEGORY_OPTIONS} onValueChange={setCategoryFilter} compact className="w-full" ariaLabel="筛选日志分类" />
             </div>
             <div className="max-h-[360px] space-y-1 overflow-y-auto p-2 lg:max-h-[500px]">
-              {visibleFiles.map((file) => { const category = categoryView(file.category); const selected = file.name === selectedName; return (
+              {filtered.map((file) => { const category = categoryView(file.category); const selected = file.name === selectedName; return (
                 <button key={file.name} type="button" onClick={() => void loadDetail(file.name)} className={`w-full rounded-md border px-3 py-2.5 text-left transition-colors ${selected ? 'border-[#86EFAC] bg-[#F0FDF4]' : 'border-transparent hover:border-[#DCE4DF] hover:bg-white'}`}>
                   <span className="flex items-start justify-between gap-2"><span className="min-w-0"><strong className={`block truncate font-mono text-[11px] ${file.category === 'error' ? 'text-red-700' : 'text-[#17201B]'}`}>{file.name}</strong><small className="mt-1 block text-[10px] text-zinc-400">{formatDate(file.updatedAt)}</small></span><span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${category.className}`}>{category.label}</span></span>
                   <span className="mt-1.5 block text-[10px] text-zinc-400">{bytes(file.size)}</span>
@@ -250,16 +242,6 @@ export default function AdminLogsPage() {
               ); })}
               {!filtered.length && <p className="py-8 text-center text-[11px] text-zinc-400">无匹配日志</p>}
             </div>
-            {totalPages > 1 && (
-              <div className="flex items-center justify-between border-t border-[#DCE4DF] bg-white px-3 py-2">
-                <span className="text-[10px] text-zinc-400">第 {currentPage} / {totalPages} 页</span>
-                <div className="flex items-center gap-1.5">
-                  <AppSelect compact value={String(currentPage)} options={Array.from({ length: totalPages }, (_, index) => ({ value: String(index + 1), label: `第 ${index + 1} 页` }))} onValueChange={(value) => setPage(Number(value))} ariaLabel="选择系统日志页码" />
-                  <button type="button" onClick={() => setPage(currentPage - 1)} disabled={currentPage === 1} title="上一页" className="grid h-7 w-7 place-items-center rounded-md border border-[#DCE4DF] bg-white text-zinc-600 disabled:opacity-40"><ChevronLeft className="h-3.5 w-3.5" /></button>
-                  <button type="button" onClick={() => setPage(currentPage + 1)} disabled={currentPage === totalPages} title="下一页" className="grid h-7 w-7 place-items-center rounded-md border border-[#DCE4DF] bg-white text-zinc-600 disabled:opacity-40"><ChevronRight className="h-3.5 w-3.5" /></button>
-                </div>
-              </div>
-            )}
           </aside>
 
           <section className="flex min-w-0 flex-col">

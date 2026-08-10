@@ -131,8 +131,7 @@ function wantsBase64Response(format?: string | null): boolean {
 
 function isCountedFailure(log: UsageLog): boolean {
   const status = log.status.toLowerCase();
-  return ['failed', 'canceled', 'cancelled'].includes(status)
-    && ![429, 502].includes(Number(log.responseStatusCode || 0));
+  return ['failed', 'canceled', 'cancelled'].includes(status);
 }
 
 function responseParameters(log: UsageLog): Record<string, unknown> {

@@ -333,46 +333,14 @@ func (r *Repository) dashboardFast(ctx context.Context) (map[string]any, error) 
 			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR) AND status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS recent_total,
 			COALESCE(SUM(CASE WHEN status IN ('queued', 'pending', 'processing') THEN 1 ELSE 0 END), 0) AS running_total,
 			COALESCE(SUM(CASE WHEN status = 'success' AND display_enabled = FALSE THEN 1 ELSE 0 END), 0) AS private_total,
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-				AND NOT EXISTS (
-					SELECT 1 FROM api_access_logs
-					WHERE api_access_logs.task_id = generation_tasks.id
-						AND api_access_logs.response_status_code IN (429, 502)
-				) THEN 1 ELSE 0 END), 0) AS counted_failure_total,
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-				AND EXISTS (
-					SELECT 1 FROM api_access_logs
-					WHERE api_access_logs.task_id = generation_tasks.id
-						AND api_access_logs.response_status_code IN (429, 502)
-				) THEN 1 ELSE 0 END), 0) AS excluded_total,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS counted_failure_total,
+			0 AS excluded_total,
 			COALESCE(SUM(CASE WHEN created_at >= CURDATE()
-				AND status IN ('failed', 'canceled', 'cancelled')
-				AND NOT EXISTS (
-					SELECT 1 FROM api_access_logs
-					WHERE api_access_logs.task_id = generation_tasks.id
-						AND api_access_logs.response_status_code IN (429, 502)
-				) THEN 1 ELSE 0 END), 0) AS today_counted_failure,
+				AND status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS today_counted_failure,
 			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE()
-				AND status IN ('failed', 'canceled', 'cancelled')
-				AND NOT EXISTS (
-					SELECT 1 FROM api_access_logs
-					WHERE api_access_logs.task_id = generation_tasks.id
-						AND api_access_logs.response_status_code IN (429, 502)
-				) THEN 1 ELSE 0 END), 0) AS yesterday_counted_failure,
-			COALESCE(SUM(CASE WHEN created_at >= CURDATE()
-				AND status IN ('failed', 'canceled', 'cancelled')
-				AND EXISTS (
-					SELECT 1 FROM api_access_logs
-					WHERE api_access_logs.task_id = generation_tasks.id
-						AND api_access_logs.response_status_code IN (429, 502)
-				) THEN 1 ELSE 0 END), 0) AS today_excluded,
-			COALESCE(SUM(CASE WHEN created_at >= DATE_SUB(CURDATE(), INTERVAL 1 DAY) AND created_at < CURDATE()
-				AND status IN ('failed', 'canceled', 'cancelled')
-				AND EXISTS (
-					SELECT 1 FROM api_access_logs
-					WHERE api_access_logs.task_id = generation_tasks.id
-						AND api_access_logs.response_status_code IN (429, 502)
-				) THEN 1 ELSE 0 END), 0) AS yesterday_excluded,
+				AND status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS yesterday_counted_failure,
+			0 AS today_excluded,
+			0 AS yesterday_excluded,
 			MAX(created_at) AS last_created_at
 		FROM generation_tasks
 		GROUP BY status
@@ -543,18 +511,8 @@ func (r *Repository) DashboardTaskTrend(ctx context.Context, days int) ([]Dashbo
 			COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) AS success,
 			COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) AS failed,
 			COALESCE(SUM(CASE WHEN status='canceled' THEN 1 ELSE 0 END), 0) AS canceled,
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-				AND NOT EXISTS (
-					SELECT 1 FROM api_access_logs
-					WHERE api_access_logs.task_id = generation_tasks.id
-						AND api_access_logs.response_status_code IN (429, 502)
-				) THEN 1 ELSE 0 END), 0) AS counted_failed,
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-				AND EXISTS (
-					SELECT 1 FROM api_access_logs
-					WHERE api_access_logs.task_id = generation_tasks.id
-						AND api_access_logs.response_status_code IN (429, 502)
-				) THEN 1 ELSE 0 END), 0) AS excluded
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS counted_failed,
+			0 AS excluded
 		FROM generation_tasks
 		WHERE created_at >= ? AND created_at < ?
 		GROUP BY %s

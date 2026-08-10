@@ -3,12 +3,15 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Activity,
   ChartNoAxesCombined,
   ChevronDown,
   ChevronRight,
+  ListChecks,
   Loader2,
   Radio,
   RefreshCw,
+  Timer,
   TriangleAlert,
   Users,
 } from 'lucide-react';
@@ -21,6 +24,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
 import {
@@ -35,6 +39,15 @@ import {
   type StabilitySnapshot,
 } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
+import {
+  ADMIN_CHART_ACTIVE_DOT,
+  ADMIN_CHART_AXIS,
+  ADMIN_CHART_BORDER,
+  ADMIN_CHART_COLORS,
+  ADMIN_CHART_GRID,
+  ADMIN_CHART_MARGIN,
+  ADMIN_CHART_DOT,
+} from '@/lib/chart-theme';
 
 const METRIC_OPTIONS = [
   { value: 'credits', label: '按余额消费' },
@@ -400,12 +413,12 @@ export default function AdminAPIOperationsPage() {
   const trendExcluded = Math.max(0, trendSummary.total - trendCounted);
 
   const summaryItems = [
-    { label: '调用用户', value: live.activeUsers.toLocaleString('zh-CN'), note: '当前有任务', tone: 'bg-blue-500' },
-    { label: '处理中', value: live.processingRequests.toLocaleString('zh-CN'), note: `${live.activeRequests} 个活动任务`, tone: 'bg-emerald-500' },
-    { label: '排队任务', value: live.queuedRequests.toLocaleString('zh-CN'), note: '等待并发执行', tone: live.queuedRequests ? 'bg-amber-500' : 'bg-zinc-300' },
-    { label: '平均已用时间', value: durationLabel(live.averageElapsedSeconds), note: '当前任务均值', tone: 'bg-zinc-400' },
-    { label: '慢任务', value: live.slowRequests.toLocaleString('zh-CN'), note: '超过 120 秒', tone: live.slowRequests ? 'bg-red-500' : 'bg-zinc-300' },
-    { label: '上游状态', value: stabilityLoading && !stability ? '同步中' : upstreamHealthy ? '正常' : stability ? '异常' : '待同步', note: stability ? `${upstreamCode || '-'} · ${Number(stability.stability_percent || 0).toFixed(1)}%` : '等待状态数据', tone: upstreamHealthy ? 'bg-emerald-500' : stability ? 'bg-red-500' : 'bg-zinc-300' },
+    { label: '调用用户', value: live.activeUsers.toLocaleString('zh-CN'), note: '当前有任务', icon: Users, tone: 'blue' as const },
+    { label: '处理中', value: live.processingRequests.toLocaleString('zh-CN'), note: `${live.activeRequests} 个活动任务`, icon: Activity, tone: 'green' as const },
+    { label: '排队任务', value: live.queuedRequests.toLocaleString('zh-CN'), note: '等待并发执行', icon: ListChecks, tone: live.queuedRequests ? 'amber' as const : 'neutral' as const },
+    { label: '平均已用时间', value: durationLabel(live.averageElapsedSeconds), note: '当前任务均值', icon: Timer, tone: 'neutral' as const },
+    { label: '慢任务', value: live.slowRequests.toLocaleString('zh-CN'), note: '超过 120 秒', icon: TriangleAlert, tone: live.slowRequests ? 'red' as const : 'neutral' as const },
+    { label: '上游状态', value: stabilityLoading && !stability ? '同步中' : upstreamHealthy ? '正常' : stability ? '异常' : '待同步', note: stability ? `${upstreamCode || '-'} · ${Number(stability.stability_percent || 0).toFixed(1)}%` : '等待状态数据', icon: Radio, tone: upstreamHealthy ? 'green' as const : stability ? 'red' as const : 'neutral' as const },
   ];
 
   const refreshing = liveLoading || rankingLoading || trendLoading || stabilityLoading;
@@ -425,30 +438,24 @@ export default function AdminAPIOperationsPage() {
         </div>
       )}
 
-      <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="operation-summary-title">
+      <section className="overflow-hidden rounded-[10px] border border-[#DCE4DF] bg-white" aria-labelledby="operation-summary-title">
         <header className="flex items-center justify-between gap-3 border-b border-[#EDF0EE] px-4 py-2.5">
           <div><h2 id="operation-summary-title" className="text-xs font-semibold text-[#17201B]">当前运行概览</h2><p className="mt-0.5 text-[10px] text-zinc-400">实时任务与上游可用状态</p></div>
           {liveLoading && !live.generatedAt && <Loader2 className="h-4 w-4 animate-spin text-[#12B76A]" aria-label="实时数据加载中" />}
         </header>
-        <div className="grid grid-cols-3 gap-px bg-[#EDF0EE] lg:grid-cols-6">
-          {summaryItems.map((item) => (
-            <div key={item.label} className="min-w-0 bg-white px-3 py-3 sm:px-4">
-              <span className="flex items-center gap-1.5 text-[10px] font-semibold text-zinc-500"><i className={`h-1.5 w-1.5 shrink-0 rounded-full ${item.tone}`} />{item.label}</span>
-              <strong className="mt-1 block truncate font-mono text-base text-[#17201B]">{item.value}</strong>
-              <small className="mt-0.5 block truncate text-[9px] text-zinc-400">{item.note}</small>
-            </div>
-          ))}
+        <div className="grid grid-cols-1 gap-3 border-t border-[#EDF0EE] bg-[#F8FAF8] p-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+          {summaryItems.map((item) => <AdminMetricCard key={item.label} title={item.label} value={item.value} note={item.note} icon={item.icon} tone={item.tone} className="rounded-[8px] shadow-none" />)}
         </div>
       </section>
 
       <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="operation-trend-title">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EDF0EE] px-4 py-3">
-          <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-md bg-blue-50 text-blue-700"><ChartNoAxesCombined className="h-4 w-4" /></span><div><h2 id="operation-trend-title" className="text-xs font-semibold text-[#17201B]">近 60 分钟调用趋势</h2><p className="mt-0.5 text-[10px] text-zinc-400">按分钟统计请求完成情况 · 成功率不含429/502</p></div></div>
+          <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-md bg-blue-50 text-blue-700"><ChartNoAxesCombined className="h-4 w-4" /></span><div><h2 id="operation-trend-title" className="text-xs font-semibold text-[#17201B]">近 60 分钟调用趋势</h2><p className="mt-0.5 text-[10px] text-zinc-400">按分钟统计所有已完成请求</p></div></div>
           <div className="flex items-center gap-3 text-[10px] text-zinc-500">
-            <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#1E5F91]" />调用（全部）</span>
-            <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#087A55]" />成功</span>
-            <span className="inline-flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-[#C43D3D]" />失败（计入统计）</span>
-            <span className="font-semibold text-[#087A55]">成功率 {trendSuccessRate}</span>
+            <span className="inline-flex items-center gap-1.5"><i className="inline-block h-px w-5" style={{ backgroundColor: ADMIN_CHART_COLORS.total }} />调用（全部）</span>
+            <span className="inline-flex items-center gap-1.5"><i className="inline-block h-px w-5" style={{ backgroundColor: ADMIN_CHART_COLORS.success }} />成功</span>
+            <span className="inline-flex items-center gap-1.5"><i className="inline-block h-px w-5 border-t border-dashed" style={{ borderColor: ADMIN_CHART_COLORS.failed }} />失败</span>
+            <span className="font-semibold" style={{ color: ADMIN_CHART_COLORS.success }}>成功率 {trendSuccessRate}</span>
             {trendExcluded > 0 && <span className="text-zinc-400">未纳入 {trendExcluded}</span>}
           </div>
         </header>
@@ -457,14 +464,14 @@ export default function AdminAPIOperationsPage() {
             <div className="grid h-full place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[#12B76A]" /></div>
           ) : trendHasData ? (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart accessibilityLayer data={trend.points} margin={{ top: 4, right: 14, bottom: 0, left: -10 }}>
-                <CartesianGrid stroke="#EDF0EE" vertical={false} />
-                <XAxis dataKey="timestamp" tickFormatter={(value) => shortClock(String(value))} tick={{ fontSize: 10, fill: '#8A938E' }} tickLine={false} axisLine={false} minTickGap={30} />
-                <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: '#8A938E' }} tickLine={false} axisLine={false} />
-                <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), ({ total: '调用（全部）', success: '成功', failed: '失败（计入统计）' } as Record<string, string>)[String(name)] || String(name)]} labelFormatter={(label) => formatDate(String(label))} contentStyle={{ border: '1px solid #DCE4DF', borderRadius: 7, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 10 }} />
-                <Line type="linear" dataKey="total" stroke="#1E5F91" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
-                <Line type="linear" dataKey="success" stroke="#087A55" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
-                <Line type="linear" dataKey="failed" stroke="#C43D3D" strokeWidth={2} dot={false} activeDot={{ r: 3 }} isAnimationActive={false} />
+              <LineChart accessibilityLayer data={trend.points} margin={ADMIN_CHART_MARGIN}>
+                <CartesianGrid stroke={ADMIN_CHART_GRID} vertical />
+                <XAxis dataKey="timestamp" tickFormatter={(value) => shortClock(String(value))} tick={{ fontSize: 10, fill: ADMIN_CHART_AXIS }} tickLine={false} axisLine={{ stroke: ADMIN_CHART_BORDER }} minTickGap={30} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: ADMIN_CHART_AXIS }} tickLine={false} axisLine={false} width={42} />
+                <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), ({ total: '调用（全部）', success: '成功', failed: '失败' } as Record<string, string>)[String(name)] || String(name)]} labelFormatter={(label) => `时间 ${formatDate(String(label))}`} contentStyle={{ border: `1px solid ${ADMIN_CHART_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
+                <Line type="monotone" dataKey="total" name="调用（全部）" stroke={ADMIN_CHART_COLORS.total} strokeWidth={2} dot={ADMIN_CHART_DOT} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
+                <Line type="monotone" dataKey="success" name="成功" stroke={ADMIN_CHART_COLORS.success} strokeWidth={2} dot={{ ...ADMIN_CHART_DOT, fill: ADMIN_CHART_COLORS.success, strokeWidth: 0 }} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
+                <Line type="monotone" dataKey="failed" name="失败" stroke={ADMIN_CHART_COLORS.failed} strokeWidth={1.8} strokeDasharray="5 4" dot={{ ...ADMIN_CHART_DOT, fill: ADMIN_CHART_COLORS.failed, strokeWidth: 0 }} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
           ) : (

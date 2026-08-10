@@ -400,7 +400,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {mobileOpen && <div className="mobile-drawer"><Navigation items={USER_NAV_ITEMS} pathname={pathname} mobile onNavigate={() => setMobileOpen(false)} /><button className="mobile-logout" onClick={logout}><LogOut size={16} />退出登录</button></div>}
 
         <main className={`app-main ${pathname === '/dashboard' ? 'dashboard-main' : ''}`}>
-        {pathname !== '/dashboard' && pathname !== '/usage' && pathname !== '/billing' && pathname !== '/docs' && (openAIAlert || bannerAnnouncements.length > 0) && (
+        {(openAIAlert || bannerAnnouncements.length > 0) && (
           <div className="mb-4 space-y-2" aria-label="站内公告">
             {openAIAlert && (
               <section

@@ -551,6 +551,7 @@ export const portalApi = {
   signAnnouncement: (user: PortalUser, id: string) => api<{ signed: boolean }>(`/api/announcements/${encodeURIComponent(id)}/sign`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }, user.token),
   claimAnnouncementReward: (user: PortalUser, id: string) => api<{ rewardCredits: number; granted: boolean; balanceAfter: number }>(`/api/announcements/${encodeURIComponent(id)}/claim-reward`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }, user.token),
   listKeys: (user: PortalUser) => api<APIKey[]>(`/api/api-access/keys${query({ userId: user.id })}`, {}, user.token),
+  listKeysPage: (user: PortalUser, page = 1, pageSize = 8) => api<APIKey[]>(`/api/api-access/keys${query({ userId: user.id, page, pageSize })}`, {}, user.token),
   createKey: (user: PortalUser, name: string, billingMode: SelectableAPIKeyBillingMode) => api<APIKey>('/api/api-access/keys', { method: 'POST', body: JSON.stringify({ userId: user.id, name, billingMode }) }, user.token),
   revealKey: (user: PortalUser, id: string) => api<{ key: string }>(`/api/api-access/keys/${encodeURIComponent(id)}/reveal`, { method: 'POST' }, user.token),
   updateKey: (user: PortalUser, id: string, status: string) => api<APIKey>(`/api/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ userId: user.id, status }) }, user.token),

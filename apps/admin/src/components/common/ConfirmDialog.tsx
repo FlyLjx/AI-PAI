@@ -47,7 +47,7 @@ export function ConfirmDialog({
           icon: Info,
           iconColor: 'text-blue-600',
           iconBg: 'bg-blue-50',
-          btnBg: 'bg-zinc-900 hover:bg-zinc-800 text-white',
+          btnBg: 'bg-[#18B969] hover:bg-[#12A960] text-white',
           border: 'border-l-4 border-l-blue-600'
         };
     }

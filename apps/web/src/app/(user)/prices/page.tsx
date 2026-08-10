@@ -14,7 +14,6 @@ import { APIError, portalApi, type PricingModel } from '@/lib/portal-api';
 type SizeTier = '1k' | '2k' | '4k';
 
 const SIZE_TIERS: SizeTier[] = ['1k', '2k', '4k'];
-const MODEL_PRICE_PAGE_SIZE = 6;
 const SIZE_META: Record<SizeTier, { label: string; resolution: string }> = {
   '1k': { label: '1K', resolution: '1024×1024' },
   '2k': { label: '2K', resolution: '2048×2048' },
@@ -67,7 +66,6 @@ export default function ModelPricesPage() {
   const [models, setModels] = useState<PricingModel[]>([]);
   const [creditName, setCreditName] = useState('余额');
   const [search, setSearch] = useState('');
-  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -127,9 +125,6 @@ export default function ModelPricesPage() {
     return rows.filter((row) => `${row.model} ${row.type} ${row.resolution} ${row.tier || ''}`.toLowerCase().includes(keyword));
   }, [rows, search]);
 
-  const totalPages = Math.max(1, Math.ceil(filteredRows.length / MODEL_PRICE_PAGE_SIZE));
-  const visiblePage = Math.min(page, totalPages);
-  const visibleRows = filteredRows.slice((visiblePage - 1) * MODEL_PRICE_PAGE_SIZE, visiblePage * MODEL_PRICE_PAGE_SIZE);
 
   return (
     <div className="model-pricing-page page-stack">
@@ -137,7 +132,7 @@ export default function ModelPricesPage() {
         <div className="model-pricing-head-actions">
           <label className="model-pricing-search">
             <Search size={14} aria-hidden="true" />
-            <input value={search} onChange={(event) => { setSearch(event.target.value); setPage(1); }} placeholder="搜索模型" aria-label="搜索模型" />
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="搜索模型" aria-label="搜索模型" />
           </label>
           <button className="model-pricing-refresh" type="button" onClick={() => void load()} disabled={loading} title="刷新价格" aria-label="刷新模型价格">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -160,11 +155,7 @@ export default function ModelPricesPage() {
           embedded
           className="model-pricing-data-table"
           headers={MODEL_PRICE_HEADERS}
-          data={loading ? [] : visibleRows}
-          currentPage={visiblePage}
-          totalPages={totalPages}
-          totalItems={filteredRows.length}
-          onPageChange={setPage}
+          data={loading ? [] : filteredRows}
           paginationDisabled={loading}
           loading={loading}
           loadingState={<div className="model-pricing-empty"><LoaderCircle size={20} className="animate-spin" /><span>正在读取模型价格...</span></div>}

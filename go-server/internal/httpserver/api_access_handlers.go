@@ -63,7 +63,7 @@ func (r *Router) userAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
 	defer cancel()
 	input := apiaccess.ListLogsInput{
 		UserID:    userID,
@@ -86,19 +86,14 @@ func (r *Router) userAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 		input.EndAt = &endExclusive
 	}
 	service := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db))
-	items, total, err := service.ListLogs(ctx, input)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	stats, err := service.ListLogStats(ctx, input)
+	items, stats, err := service.ListLogsWithStats(ctx, input)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data":       items,
-		"pagination": map[string]any{"total": total, "page": input.Page, "pageSize": input.PageSize},
+		"pagination": map[string]any{"total": stats.Total, "page": input.Page, "pageSize": input.PageSize},
 		"summary":    stats,
 	})
 }
@@ -209,14 +204,16 @@ func (r *Router) listUserAPIAccessKeys(w http.ResponseWriter, req *http.Request)
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	config := r.dynamicConcurrencyConfig(ctx)
-	items, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).
+	page := queryInt(req, "page", 1)
+	pageSize := queryInt(req, "pageSize", 20)
+	items, total, err := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db)).
 		WithDynamicConcurrencyConfig(config).
-		ListUserKeys(ctx, userID)
+		ListUserKeysPage(ctx, userID, page, pageSize)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": items})
+	writeJSON(w, http.StatusOK, map[string]any{"data": items, "pagination": map[string]any{"total": total, "page": page, "pageSize": pageSize}})
 }
 
 func (r *Router) createUserAPIAccessKey(w http.ResponseWriter, req *http.Request) {
@@ -435,7 +432,7 @@ func (r *Router) adminAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
 	defer cancel()
 	page := queryInt(req, "page", 1)
 	if page < 1 {
@@ -468,19 +465,14 @@ func (r *Router) adminAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 	input.UserIDs = targets.UserIDs
 	input.APIKeyIDs = targets.APIKeyIDs
 	service := apiaccess.NewService(repo, users.NewRepository(r.db))
-	items, total, err := service.ListAdminLogs(ctx, input)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	stats, err := service.ListLogStats(ctx, input)
+	items, stats, err := service.ListAdminLogsWithStats(ctx, input)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data":       items,
-		"pagination": map[string]any{"total": total, "page": page, "pageSize": pageSize},
+		"pagination": map[string]any{"total": stats.Total, "page": page, "pageSize": pageSize},
 		"summary":    stats,
 	})
 }

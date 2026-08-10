@@ -32,6 +32,15 @@ import {
   type RequestMonitorSnapshot,
 } from '@/lib/admin-api';
 import { formatDate } from '@/lib/common/utils';
+import {
+  ADMIN_CHART_ACTIVE_DOT,
+  ADMIN_CHART_AXIS,
+  ADMIN_CHART_BORDER,
+  ADMIN_CHART_COLORS,
+  ADMIN_CHART_DOT,
+  ADMIN_CHART_GRID,
+  ADMIN_CHART_MARGIN,
+} from '@/lib/chart-theme';
 
 const EMPTY_SNAPSHOT: RequestMonitorSnapshot = {
   range: '24h',
@@ -182,14 +191,14 @@ export default function RequestMonitorPage() {
         </header>
         <div className="h-[260px] p-4 pl-1">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={snapshot.trend} margin={{ top: 4, right: 12, bottom: 0, left: -10 }}>
-              <CartesianGrid stroke="#EDF0EE" vertical={false} />
-              <XAxis dataKey="time" tickFormatter={(value) => { const date = new Date(String(value)); return range === '30d' || range === '7d' ? `${date.getMonth() + 1}/${date.getDate()}` : `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`; }} tick={{ fontSize: 10, fill: '#8A938E' }} tickLine={false} axisLine={false} minTickGap={24} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: '#8A938E' }} tickLine={false} axisLine={false} />
-              <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), ({ total: '请求量', successful: '正常', errors: '错误' } as Record<string, string>)[String(name)] || String(name)]} labelFormatter={(label) => formatDate(String(label))} contentStyle={{ border: '1px solid #DCE4DF', borderRadius: 7, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 10 }} />
-              <Line type="monotone" dataKey="total" stroke="#587FA3" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
-              <Line type="monotone" dataKey="successful" stroke="#3F9274" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
-              <Line type="monotone" dataKey="errors" stroke="#D06F69" strokeWidth={2} dot={false} activeDot={{ r: 3 }} />
+            <LineChart accessibilityLayer data={snapshot.trend} margin={ADMIN_CHART_MARGIN}>
+              <CartesianGrid stroke={ADMIN_CHART_GRID} vertical />
+              <XAxis dataKey="time" tickFormatter={(value) => { const date = new Date(String(value)); return range === '30d' || range === '7d' ? `${date.getMonth() + 1}/${date.getDate()}` : `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`; }} tick={{ fontSize: 10, fill: ADMIN_CHART_AXIS }} tickLine={false} axisLine={{ stroke: ADMIN_CHART_BORDER }} minTickGap={24} />
+              <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: ADMIN_CHART_AXIS }} tickLine={false} axisLine={false} width={42} />
+              <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), ({ total: '请求量', successful: '正常', errors: '错误' } as Record<string, string>)[String(name)] || String(name)]} labelFormatter={(label) => `时间 ${formatDate(String(label))}`} contentStyle={{ border: `1px solid ${ADMIN_CHART_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
+              <Line type="monotone" dataKey="total" name="请求量" stroke={ADMIN_CHART_COLORS.total} strokeWidth={2} dot={ADMIN_CHART_DOT} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
+              <Line type="monotone" dataKey="successful" name="正常" stroke={ADMIN_CHART_COLORS.success} strokeWidth={2} dot={{ ...ADMIN_CHART_DOT, fill: ADMIN_CHART_COLORS.success, strokeWidth: 0 }} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
+              <Line type="monotone" dataKey="errors" name="错误" stroke={ADMIN_CHART_COLORS.failed} strokeWidth={1.8} strokeDasharray="5 4" dot={{ ...ADMIN_CHART_DOT, fill: ADMIN_CHART_COLORS.failed, strokeWidth: 0 }} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -219,6 +228,7 @@ export default function RequestMonitorPage() {
           filterControls={<><AppSelect compact value={method} options={METHOD_OPTIONS} onValueChange={(value) => { setMethod(value); setPage(1); }} ariaLabel="请求方法" /><AppSelect compact value={status} options={STATUS_OPTIONS} onValueChange={(value) => { setStatus(value); setPage(1); }} ariaLabel="响应状态" /></>}
           currentPage={page}
           totalPages={totalPages}
+          totalItems={total}
           onPageChange={setPage}
           sortKey={sort.key}
           sortDirection={sort.direction}

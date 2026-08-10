@@ -2,7 +2,6 @@
 
 import React from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, Search } from 'lucide-react';
-import { AppSelect } from './AppSelect';
 
 type PaginationItem = number | 'ellipsis-left' | 'ellipsis-right';
 
@@ -57,6 +56,7 @@ interface DataTableProps<T> {
   // Pagination
   currentPage?: number;
   totalPages?: number;
+  totalItems?: number;
   onPageChange?: (page: number) => void;
   pageSize?: number;
   clientSidePagination?: boolean;
@@ -163,6 +163,7 @@ export function DataTable<T>({
   filterControls,
   currentPage,
   totalPages,
+  totalItems,
   onPageChange,
   pageSize,
   clientSidePagination = false,
@@ -192,10 +193,8 @@ export function DataTable<T>({
   };
 
   const showPagination = !!(currentPage && totalPages && totalPages > 1);
-  const pageOptions = showPagination && totalPages
-    ? Array.from({ length: totalPages }, (_, index) => ({ value: String(index + 1), label: `第 ${index + 1} 页` }))
-    : [];
   const visiblePages = showPagination && currentPage && totalPages ? paginationItems(currentPage, totalPages) : [];
+  const resolvedTotalItems = typeof totalItems === 'number' ? totalItems : data.length;
 
   return (
     <div className="space-y-4">
@@ -261,57 +260,48 @@ export function DataTable<T>({
 
       {/* Pagination Footer */}
       {showPagination && currentPage && totalPages && onPageChange && (
-        <div className="flex flex-col gap-3 bg-white px-4 py-3 border border-[#DCE4DF] rounded-md text-xs shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          <div className="text-[#17201B]/60 font-sans">
-            第 <span className="font-mono font-semibold text-[#17201B]">{currentPage}</span> 页，共{' '}
-            <span className="font-mono font-semibold text-[#17201B]">{totalPages}</span> 页
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <AppSelect
-              compact
-              value={String(currentPage)}
-              options={pageOptions}
-              onValueChange={(value) => onPageChange(Number(value))}
-              ariaLabel="选择页码"
-            />
+        <footer className="table-pagination" aria-label="分页">
+          <span className="table-pagination-summary">
+            第 <strong>{currentPage}</strong> / <strong>{totalPages}</strong> 页 · 共 {resolvedTotalItems.toLocaleString('zh-CN')} 条
+          </span>
+          <div className="table-pagination-controls">
             <button
               type="button"
-              title="上一页"
-              aria-label="上一页"
-              onClick={() => onPageChange(currentPage - 1)}
+              className="table-pagination-button"
+              onClick={() => onPageChange(Math.max(1, currentPage - 1))}
               disabled={currentPage === 1}
-              className="grid h-8 w-8 place-items-center border border-[#DCE4DF] rounded-md bg-white text-[#17201B] hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              aria-label="上一页"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft size={14} />
             </button>
-            <div className="hidden items-center gap-1 sm:flex" aria-label="分页页码">
+            <div className="table-pagination-pages" aria-label="页码">
               {visiblePages.map((item) => typeof item === 'number' ? (
                 <button
                   key={item}
                   type="button"
                   onClick={() => onPageChange(item)}
-                  aria-label={`第 ${item} 页`}
+                  className={`table-pagination-page ${item === currentPage ? 'is-active' : ''}`}
+                  disabled={false}
                   aria-current={item === currentPage ? 'page' : undefined}
-                  className={`grid h-8 min-w-8 place-items-center rounded-md border px-2 font-mono text-[11px] font-semibold transition-colors ${item === currentPage ? 'border-[#12B76A] bg-[#F0FDF4] text-[#047857]' : 'border-[#DCE4DF] bg-white text-zinc-600 hover:border-[#86EFAC] hover:text-[#047857]'}`}
+                  aria-label={`第 ${item} 页`}
                 >
                   {item}
                 </button>
               ) : (
-                <span key={item} className="grid h-8 w-5 place-items-center text-zinc-400" aria-hidden="true">...</span>
+                <span key={item} className="ellipsis" aria-hidden="true">…</span>
               ))}
             </div>
             <button
               type="button"
-              title="下一页"
-              aria-label="下一页"
-              onClick={() => onPageChange(currentPage + 1)}
+              className="table-pagination-button"
+              onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
               disabled={currentPage === totalPages}
-              className="grid h-8 w-8 place-items-center border border-[#DCE4DF] rounded-md bg-white text-[#17201B] hover:bg-zinc-50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              aria-label="下一页"
             >
-              <ChevronRight className="w-4 h-4" />
+              <ChevronRight size={14} />
             </button>
           </div>
-        </div>
+        </footer>
       )}
     </div>
   );

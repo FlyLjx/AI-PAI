@@ -1,13 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Calculator, CircleDollarSign, EyeOff, Loader2, Pencil, Plus, RefreshCw, Trash2, UserRound, X } from 'lucide-react';
+import { Calculator, CheckCircle2, CircleDollarSign, EyeOff, Loader2, Pencil, Plus, RefreshCw, Server, Trash2, TrendingUp, UserRound, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable, SortableHeader, sortItems, type SortState, type TableHeader } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { portalApi, type PortalUser, type ProviderModel, type UserModelPriceOverride } from '@/lib/admin-api';
 import { formatDate } from '@/lib/common/utils';
@@ -72,7 +73,6 @@ const emptyDraft: ModelDraft = {
   status: 'active',
 };
 
-const PAGE_SIZE = 15;
 const MIN_OVERRIDE_PRICE = 0.001;
 const MAX_OVERRIDE_PRICE = 99999999.9999;
 
@@ -111,7 +111,6 @@ export default function AdminPricesPage() {
   const [search, setSearch] = useState('');
   const [providerFilter, setProviderFilter] = useState('all');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [page, setPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Model | null>(null);
   const [draft, setDraft] = useState<ModelDraft>(emptyDraft);
@@ -140,7 +139,7 @@ export default function AdminPricesPage() {
       const [modelResponse, providerResponse, userResponse, overrideResponse] = await Promise.all([
         portalApi.models(),
         portalApi.providers(),
-        portalApi.users(),
+        portalApi.userOptions(),
         portalApi.userModelPriceOverrides(),
       ]);
       setModels(modelResponse.data as unknown as Model[]);
@@ -230,8 +229,6 @@ export default function AdminPricesPage() {
     }).sort((a, b) => Number(a.sortOrder || 100) - Number(b.sortOrder || 100));
   }, [models, providerFilter, search, statusFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
   const summary = useMemo(() => ({
     total: filtered.length,
     active: filtered.filter((model) => model.status === 'active').length,
@@ -420,11 +417,11 @@ export default function AdminPricesPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          ['模型总数', summary.total, '全部价格配置'],
-          ['启用模型', summary.active, '对外可调用'],
-          ['已接入上游', summary.providers, '模型来源'],
-          ['平均加价率', `${summary.avgMarkup.toFixed(1)}%`, '成本到售价'],
-        ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
+          { title: '模型总数', value: summary.total, note: '全部价格配置', icon: Calculator, tone: 'blue' as const },
+          { title: '启用模型', value: summary.active, note: '对外可调用', icon: CheckCircle2, tone: 'green' as const },
+          { title: '已接入上游', value: summary.providers, note: '模型来源', icon: Server, tone: 'amber' as const },
+          { title: '平均加价率', value: `${summary.avgMarkup.toFixed(1)}%`, note: '成本到售价', icon: TrendingUp, tone: 'neutral' as const },
+        ].map((metric) => <AdminMetricCard key={metric.title} title={metric.title} value={metric.value} note={metric.note} icon={metric.icon} tone={metric.tone} />)}
       </div>
 
       <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white">
@@ -483,21 +480,16 @@ export default function AdminPricesPage() {
             { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
           data={filtered}
-          pageSize={PAGE_SIZE}
-          clientSidePagination
           searchPlaceholder="搜索模型、展示名或上游"
           searchValue={search}
-          onSearchChange={(value) => { setSearch(value); setPage(1); }}
+          onSearchChange={setSearch}
           filterControls={(
             <>
-              <AppSelect compact value={providerFilter} onValueChange={(value) => { setProviderFilter(value); setPage(1); }} ariaLabel="筛选上游接口" className="max-w-[180px]" options={[{ value: 'all', label: '全部上游' }, ...providers.map((provider) => ({ value: provider.id, label: provider.name }))]} />
-              <AppSelect compact value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }} ariaLabel="筛选模型状态" options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已启用' }, { value: 'disabled', label: '已停用' }]} />
+              <AppSelect compact value={providerFilter} onValueChange={setProviderFilter} ariaLabel="筛选上游接口" className="max-w-[180px]" options={[{ value: 'all', label: '全部上游' }, ...providers.map((provider) => ({ value: provider.id, label: provider.name }))]} />
+              <AppSelect compact value={statusFilter} onValueChange={setStatusFilter} ariaLabel="筛选模型状态" options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已启用' }, { value: 'disabled', label: '已停用' }]} />
               <span className="text-[11px] text-zinc-400">{filtered.length} 条</span>
             </>
           )}
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={setPage}
           emptyState={<EmptyState title="暂无模型价格" description="先添加上游接口，再创建可对外调用的模型。" icon={CircleDollarSign} />}
           renderRow={(model) => (
             <tr key={model.id} className="hover:bg-[#FAFBFA]">

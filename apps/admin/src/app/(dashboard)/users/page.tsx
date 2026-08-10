@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
+  Check,
   ChevronLeft,
   ChevronRight,
   CircleDollarSign,
   CreditCard,
+  Eye,
   Gauge,
   Loader2,
   MailCheck,
@@ -15,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   ReceiptText,
+  Search,
   Trophy,
   ShieldCheck,
   Trash2,
@@ -44,6 +47,15 @@ type CreditLogFilter = 'all' | 'deduct' | 'recharge' | 'manual_adjust' | 'invite
 const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active' };
 const pageSize = 12;
 const creditLogPageSize = 10;
+
+function normalizeUserIDs(value: unknown): string[] {
+  const values = Array.isArray(value) ? value : String(value || '').split(/[;,\n\r]/);
+  return Array.from(new Set(values.map((item) => String(item).trim()).filter(Boolean)));
+}
+
+function sameUserIDs(left: string[], right: string[]) {
+  return [...new Set(left)].sort().join(',') === [...new Set(right)].sort().join(',');
+}
 const consumptionHeaders: TableHeader<ConsumptionRank>[] = [
   { key: 'user', label: '客户', sortValue: (item) => item.userEmail || item.userId },
   { key: 'creditsSpent', label: '消费金额', sortValue: (item) => Number(item.creditsSpent || 0) },
@@ -96,21 +108,21 @@ function BillingSummary({ user }: { user: PortalUser }) {
         ? '订阅已取消'
         : '未开通订阅';
     return (
-      <span className="inline-flex flex-col items-start gap-0.5">
-        <span className="text-[11px] font-semibold text-zinc-700">余额计费</span>
-        <small className={`text-[10px] ${status === 'expired' ? 'text-amber-700' : status === 'canceled' || status === 'cancelled' ? 'text-red-600' : 'text-zinc-400'}`}>{statusLabel}</small>
+      <span className="inline-flex min-w-[150px] flex-col items-start gap-0.5 leading-tight">
+        <span className="whitespace-nowrap text-[11px] font-semibold text-zinc-700">余额计费</span>
+        <small className={`whitespace-nowrap text-[10px] ${status === 'expired' ? 'text-amber-700' : status === 'canceled' || status === 'cancelled' ? 'text-red-600' : 'text-zinc-400'}`}>{statusLabel}</small>
       </span>
     );
   }
   const remaining = Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0);
   const limit = Number(user.subscription?.quotaLimit ?? user.subscription?.quotaImages ?? 0);
   return (
-    <span className="inline-flex min-w-0 flex-col items-start gap-0.5">
+    <span className="inline-flex min-w-[150px] flex-col items-start gap-0.5 leading-tight">
       <span className="inline-flex max-w-[220px] items-center gap-1.5 text-[11px] font-semibold text-zinc-800">
         <i className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
         <span className="truncate">{subscriptionName(user)}</span>
       </span>
-      <small className="max-w-[240px] truncate font-mono text-[10px] text-zinc-400">
+      <small className="max-w-[240px] truncate whitespace-nowrap font-mono text-[10px] text-zinc-400">
         剩余 {remaining.toLocaleString('zh-CN')} / {limit.toLocaleString('zh-CN')} · 至 {formatDate(user.subscription?.expiresAt || '', false)}
       </small>
     </span>
@@ -134,6 +146,8 @@ export default function AdminUsersPage() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [billingFilter, setBillingFilter] = useState('all');
   const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [summaryStats, setSummaryStats] = useState({ total: 0, active: 0, verified: 0, subscribed: 0 });
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<PortalUser | null>(null);
   const [draft, setDraft] = useState<UserDraft>(emptyDraft);
@@ -160,6 +174,13 @@ export default function AdminUsersPage() {
   const [consumptionSort, setConsumptionSort] = useState<SortState>({ key: 'creditsSpent', direction: 'desc' });
   const [rankingOpen, setRankingOpen] = useState(false);
   const rankingTriggerRef = useRef<HTMLButtonElement>(null);
+  const [subscriptionVisibilityOpen, setSubscriptionVisibilityOpen] = useState(false);
+  const [subscriptionVisibilityUsers, setSubscriptionVisibilityUsers] = useState<PortalUser[]>([]);
+  const [subscriptionAccessUserIds, setSubscriptionAccessUserIds] = useState<string[]>([]);
+  const [savedSubscriptionAccessUserIds, setSavedSubscriptionAccessUserIds] = useState<string[]>([]);
+  const [subscriptionVisibilitySearch, setSubscriptionVisibilitySearch] = useState('');
+  const [subscriptionVisibilityLoading, setSubscriptionVisibilityLoading] = useState(false);
+  const [subscriptionVisibilitySaving, setSubscriptionVisibilitySaving] = useState(false);
   const [grantPlanId, setGrantPlanId] = useState('');
   const [grantMode, setGrantMode] = useState<GrantMode>('plan');
   const [customGrantName, setCustomGrantName] = useState('自定义订阅');
@@ -174,22 +195,84 @@ export default function AdminUsersPage() {
     window.setTimeout(() => rankingTriggerRef.current?.focus(), 0);
   }, []);
 
+  const openSubscriptionVisibility = useCallback(async () => {
+    setSubscriptionVisibilityOpen(true);
+    setSubscriptionVisibilityLoading(true);
+    setSubscriptionVisibilitySearch('');
+    try {
+      const [settingsResponse, usersResponse] = await Promise.all([
+        portalApi.settings(),
+        portalApi.userOptions({ limit: 1000 }),
+      ]);
+      const allUsers = (usersResponse.data || []).filter((user) => user.role === 'user');
+      const configuredUserIds = normalizeUserIDs(settingsResponse.data.subscriptionAccessUserIds || settingsResponse.data.subscriptionAccessUserId);
+      const subscribedUserIds = allUsers.filter((user) => user.subscription?.isPaid === true).map((user) => user.id);
+      const initialized = Boolean(settingsResponse.data.subscriptionAccessInitialized);
+      const nextAccessUserIds = initialized ? configuredUserIds : Array.from(new Set([...configuredUserIds, ...subscribedUserIds]));
+      setSubscriptionVisibilityUsers(allUsers);
+      setSubscriptionAccessUserIds(nextAccessUserIds);
+      setSavedSubscriptionAccessUserIds(nextAccessUserIds);
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '订阅可见账号加载失败');
+      setSubscriptionVisibilityOpen(false);
+    } finally {
+      setSubscriptionVisibilityLoading(false);
+    }
+  }, []);
+
+  const closeSubscriptionVisibility = useCallback(() => {
+    if (subscriptionVisibilitySaving) return;
+    setSubscriptionVisibilityOpen(false);
+  }, [subscriptionVisibilitySaving]);
+
+  const toggleSubscriptionVisibilityUser = (userId: string) => {
+    setSubscriptionAccessUserIds((current) => current.includes(userId)
+      ? current.filter((id) => id !== userId)
+      : [...current, userId]);
+  };
+
+  const saveSubscriptionVisibility = async () => {
+    setSubscriptionVisibilitySaving(true);
+    try {
+      await portalApi.updateSettings({
+        subscriptionAccessUserIds: subscriptionAccessUserIds.join(','),
+        subscriptionAccessUserId: subscriptionAccessUserIds[0] || '',
+        subscriptionAccessInitialized: true,
+      });
+      setSavedSubscriptionAccessUserIds(subscriptionAccessUserIds);
+      toast.success(subscriptionAccessUserIds.length ? `已开放给 ${subscriptionAccessUserIds.length} 个账号` : '订阅入口已关闭');
+      setSubscriptionVisibilityOpen(false);
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '订阅可见性保存失败');
+    } finally {
+      setSubscriptionVisibilitySaving(false);
+    }
+  };
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
       const [userResponse, planResponse] = await Promise.all([
-        portalApi.users(),
+        portalApi.adminUsers({
+          page,
+          pageSize,
+          keyword: search.trim() || undefined,
+          status: statusFilter === 'all' ? undefined : statusFilter,
+          billing: billingFilter === 'all' ? undefined : billingFilter,
+        }),
         portalApi.adminPlans(),
       ]);
       setUsers(userResponse.data);
+      setTotal(Number(userResponse.pagination?.total || 0));
+      setSummaryStats(userResponse.summary || { total: 0, active: 0, verified: 0, subscribed: 0 });
       setPlans(planResponse.data);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '用户列表加载失败');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [billingFilter, page, search, statusFilter]);
 
   const loadConsumptionRanking = useCallback(async () => {
     setConsumptionLoading(true);
@@ -260,18 +343,7 @@ export default function AdminUsersPage() {
     };
   }, [creditLogFilter, creditLogPage, creditLogRefresh, creditLogSort.direction, creditLogSort.key, creditLogUser]);
 
-  const filtered = useMemo(() => {
-    const keyword = search.trim().toLowerCase();
-    return users.filter((user) => {
-      const keywordMatch = !keyword || user.email.toLowerCase().includes(keyword) || user.id.toLowerCase().includes(keyword);
-      const statusMatch = statusFilter === 'all' || user.status === statusFilter;
-      const isSubscription = subscriptionActive(user);
-      const billingMatch = billingFilter === 'all' || (billingFilter === 'subscription' ? isSubscription : !isSubscription);
-      return keywordMatch && statusMatch && billingMatch;
-    });
-  }, [billingFilter, search, statusFilter, users]);
-
-  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const creditLogTotalPages = Math.max(1, Math.ceil(creditLogTotal / creditLogPageSize));
   const activePlans = plans.filter((plan) => plan.status === 'active');
   const currentBalance = Number(balanceUser?.credits || 0);
@@ -282,12 +354,16 @@ export default function AdminUsersPage() {
   const currentQuotaRemaining = Number(quotaUser?.subscription?.effectiveQuotaRemaining ?? quotaUser?.subscription?.quotaRemaining ?? 0);
   const nextQuotaRemaining = Number(quotaValue);
 
-  const summary = useMemo(() => ({
-    total: users.length,
-    active: users.filter((user) => user.status === 'active').length,
-    verified: users.filter((user) => Boolean(user.emailVerifiedAt)).length,
-    subscribed: users.filter(subscriptionActive).length,
-  }), [users]);
+  const summary = summaryStats;
+  const subscriptionAccessDirty = !sameUserIDs(subscriptionAccessUserIds, savedSubscriptionAccessUserIds);
+  const selectedSubscriptionUserCount = subscriptionAccessUserIds.length;
+  const filteredSubscriptionVisibilityUsers = useMemo(() => {
+    const keyword = subscriptionVisibilitySearch.trim().toLocaleLowerCase();
+    return subscriptionVisibilityUsers
+      .filter((user) => user.status === 'active' || subscriptionAccessUserIds.includes(user.id))
+      .filter((user) => !keyword || `${user.email} ${user.id}`.toLocaleLowerCase().includes(keyword))
+      .sort((left, right) => left.email.localeCompare(right.email));
+  }, [subscriptionAccessUserIds, subscriptionVisibilitySearch, subscriptionVisibilityUsers]);
   const consumptionWindowLabel = consumptionDays === 0 ? '全部时间' : `近 ${consumptionDays} 天`;
   const sortedConsumptionRanking = useMemo(() => {
     const header = consumptionHeaders.find((item) => item.key === consumptionSort.key) || consumptionHeaders[1];
@@ -542,10 +618,61 @@ export default function AdminUsersPage() {
             </span>
           )}
       >
+        <button type="button" onClick={() => void openSubscriptionVisibility()} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-zinc-700 hover:border-[#86EFAC] hover:text-[#047857]"><Eye className="h-3.5 w-3.5" />可见订阅</button>
         <button ref={rankingTriggerRef} type="button" onClick={() => { setConsumptionLoading(true); setRankingOpen(true); }} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-zinc-700 hover:border-[#86EFAC] hover:text-[#047857]"><Trophy className="h-3.5 w-3.5" />消费排行</button>
         <button type="button" onClick={() => void load()} disabled={loading} title="刷新数据" aria-label="刷新用户数据" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
         <button type="button" onClick={openCreate} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#047857] px-3 text-xs font-semibold text-white hover:bg-[#036b4f]"><Plus className="h-4 w-4" />新增用户</button>
       </PageHeader>
+
+      {subscriptionVisibilityOpen && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeSubscriptionVisibility(); }}>
+          <section className="flex max-h-[calc(100vh-2rem)] w-full max-w-xl flex-col overflow-hidden rounded-md border border-[#DCE4DF] bg-white shadow-xl" role="dialog" aria-modal="true" aria-labelledby="subscription-visibility-title" onKeyDown={(event) => { trapDialogFocus(event); if (event.key === 'Escape') closeSubscriptionVisibility(); }}>
+            <header className="flex items-center justify-between gap-3 border-b border-[#DCE4DF] px-5 py-3.5">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-emerald-50 text-[#047857]"><Eye className="h-4 w-4" /></span>
+                <div className="min-w-0"><h2 id="subscription-visibility-title" className="text-sm font-semibold">可见订阅</h2><p className="mt-0.5 truncate text-[11px] text-zinc-500">选择可以看到套餐、订阅入口和订阅订单的用户</p></div>
+              </div>
+              <button type="button" onClick={closeSubscriptionVisibility} title="关闭" aria-label="关闭可见订阅" className="grid h-8 w-8 shrink-0 place-items-center rounded-md text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button>
+            </header>
+
+            <div className="min-h-0 flex-1 overflow-y-auto p-5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[11px] text-zinc-500">已选择 <strong className="font-mono text-[#047857]">{selectedSubscriptionUserCount}</strong> 个账号</span>
+                <div className="flex items-center gap-2 text-[10px] font-semibold"><button type="button" onClick={() => setSubscriptionAccessUserIds(subscriptionVisibilityUsers.filter((user) => user.status === 'active').map((user) => user.id))} className="text-[#047857] hover:underline">全选启用账号</button><span className="text-zinc-300">/</span><button type="button" onClick={() => setSubscriptionAccessUserIds([])} className="text-zinc-500 hover:text-[#047857]">关闭订阅入口</button></div>
+              </div>
+
+              <label className="relative mt-3 block">
+                <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+                <input value={subscriptionVisibilitySearch} onChange={(event) => setSubscriptionVisibilitySearch(event.target.value)} placeholder="搜索邮箱或用户 ID" className="h-9 w-full rounded-md border border-[#DCE4DF] bg-white pl-9 pr-3 text-xs outline-none focus:border-[#12B76A]" />
+              </label>
+
+              <div className="mt-3 overflow-hidden rounded-md border border-[#DCE4DF] bg-[#FAFBFA]">
+                {subscriptionVisibilityLoading ? (
+                  <div className="grid min-h-44 place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[#12B76A]" /></div>
+                ) : (
+                  <div className="max-h-72 overflow-y-auto p-1">
+                    <button type="button" onClick={() => setSubscriptionAccessUserIds([])} className={`flex w-full items-center gap-2 rounded px-2.5 py-2 text-left text-[11px] hover:bg-[#F0FDF4] ${selectedSubscriptionUserCount === 0 ? 'bg-emerald-50 text-emerald-800' : 'text-zinc-600'}`}>
+                      <span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${selectedSubscriptionUserCount === 0 ? 'border-emerald-500 bg-emerald-600 text-white' : 'border-[#CBD5CF] bg-white'}`}>{selectedSubscriptionUserCount === 0 && <Check className="h-3 w-3" />}</span>
+                      暂不开放（默认）
+                    </button>
+                    {filteredSubscriptionVisibilityUsers.map((user) => {
+                      const selected = subscriptionAccessUserIds.includes(user.id);
+                      return <button key={user.id} type="button" role="option" aria-selected={selected} onClick={() => toggleSubscriptionVisibilityUser(user.id)} className={`flex w-full items-center gap-2 rounded px-2.5 py-2 text-left hover:bg-[#F0FDF4] ${selected ? 'bg-emerald-50' : ''}`}><span className={`grid h-4 w-4 shrink-0 place-items-center rounded border ${selected ? 'border-emerald-500 bg-emerald-600 text-white' : 'border-[#CBD5CF] bg-white'}`}>{selected && <Check className="h-3 w-3" />}</span><span className="min-w-0"><strong className="block truncate text-[11px] font-medium">{user.email}</strong><small className="block truncate font-mono text-[9px] text-zinc-400">{user.status === 'active' ? '启用账号' : '已停用 · 已开放'}</small></span></button>;
+                    })}
+                    {!filteredSubscriptionVisibilityUsers.length && <p className="py-8 text-center text-[11px] text-zinc-400">没有匹配的用户</p>}
+                  </div>
+                )}
+              </div>
+              <p className="mt-2 text-[10px] leading-5 text-zinc-400">未选择账号时，用户端不显示订阅相关入口；已有有效订阅的账号会在首次初始化时自动保留。</p>
+            </div>
+
+            <footer className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3">
+              <button type="button" onClick={closeSubscriptionVisibility} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button>
+              <button type="button" onClick={() => void saveSubscriptionVisibility()} disabled={subscriptionVisibilityLoading || subscriptionVisibilitySaving || !subscriptionAccessDirty} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{subscriptionVisibilitySaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}保存设置</button>
+            </footer>
+          </section>
+        </div>
+      )}
 
       {rankingOpen && (
         <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget) closeRanking(); }}>
@@ -657,14 +784,13 @@ export default function AdminUsersPage() {
         <DataTable
           headers={[
             { key: 'account', label: '用户', sortValue: (item) => item.email },
-            { key: 'billing', label: '计费与订阅', sortValue: (item) => subscriptionActive(item) ? item.subscription?.planName || item.subscription?.tier || '订阅' : '余额计费' },
-            { key: 'balance', label: '余额', className: 'text-right', sortValue: (item) => Number(item.credits || 0) },
+            { key: 'billing', label: '计费与订阅', className: 'min-w-[180px]', sortValue: (item) => subscriptionActive(item) ? item.subscription?.planName || item.subscription?.tier || '订阅' : '余额计费' },
+            { key: 'balance', label: '余额', className: 'min-w-[150px] text-right', sortValue: (item) => Number(item.credits || 0) },
             { key: 'created', label: '注册时间', sortValue: (item) => Date.parse(item.createdAt || '') || 0 },
             { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={filtered}
+          data={users}
           pageSize={pageSize}
-          clientSidePagination
           searchPlaceholder="搜索邮箱或用户 ID"
           searchValue={search}
           onSearchChange={(value) => { setSearch(value); resetPage(); }}
@@ -692,12 +818,13 @@ export default function AdminUsersPage() {
                   { value: 'disabled', label: '已停用' },
                 ]}
               />
-              <span className="text-[11px] text-zinc-400">{filtered.length} 条</span>
+              <span className="text-[11px] text-zinc-400">共 {total.toLocaleString('zh-CN')} 条</span>
             </>
           )}
           currentPage={Math.min(page, totalPages)}
           totalPages={totalPages}
-          onPageChange={setPage}
+          totalItems={total}
+          onPageChange={(nextPage) => setPage(nextPage)}
           emptyState={<EmptyState title="暂无用户" description="调整筛选条件或创建一个 API 客户。" icon={UserRoundCog} />}
           renderRow={(user) => (
             <tr key={user.id} className="hover:bg-[#FAFBFA]">
@@ -712,9 +839,9 @@ export default function AdminUsersPage() {
                   <span className={user.emailVerifiedAt ? 'text-zinc-500' : 'text-amber-700'} title={user.emailVerifiedAt ? `验证时间：${formatDate(user.emailVerifiedAt)}` : undefined}>{user.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证'}</span>
                 </div>
               </td>
-              <td className="px-4 py-3.5"><BillingSummary user={user} /></td>
-              <td className="px-4 py-3.5 text-right">
-                <button type="button" onClick={() => openBalance(user)} className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-[#047857] hover:underline" title={`修改 ${user.email} 的余额`} aria-label={`修改 ${user.email} 的余额`}>
+              <td className="px-4 py-3.5 align-middle"><BillingSummary user={user} /></td>
+              <td className="px-4 py-3.5 text-right align-middle">
+                <button type="button" onClick={() => openBalance(user)} className="inline-flex items-center gap-1 whitespace-nowrap font-mono text-[11px] font-semibold text-[#047857] hover:underline" title={`修改 ${user.email} 的余额`} aria-label={`修改 ${user.email} 的余额`}>
                   <span>{formatCNY(Number(user.credits || 0))}</span><Pencil className="h-3 w-3" /><span className="font-sans text-[10px]">修改</span>
                 </button>
               </td>

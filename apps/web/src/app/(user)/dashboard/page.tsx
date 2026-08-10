@@ -419,7 +419,7 @@ export default function DashboardPage() {
           embedded
           className="dashboard-recent-data-table"
           headers={RECENT_REQUEST_HEADERS}
-          data={logs.slice(0, 5)}
+          data={logs}
           loading={loading}
           loadingState={<div className="dashboard-empty-row">正在读取图片请求...</div>}
           emptyState={<div className="dashboard-empty-row">暂无图片请求记录</div>}

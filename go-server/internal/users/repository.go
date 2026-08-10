@@ -53,6 +53,142 @@ func (r *Repository) FindAll(ctx context.Context) ([]User, error) {
 	return items, rows.Err()
 }
 
+func (r *Repository) FindOptions(ctx context.Context, keyword string, status string, limit int) ([]User, error) {
+	if limit < 1 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	conditions := []string{}
+	args := []any{}
+	if keyword = strings.ToLower(strings.TrimSpace(keyword)); keyword != "" {
+		like := "%" + keyword + "%"
+		conditions = append(conditions, "(LOWER(email) LIKE ? OR LOWER(id) LIKE ?)")
+		args = append(args, like, like)
+	}
+	if status = strings.ToLower(strings.TrimSpace(status)); status != "" && status != "all" {
+		conditions = append(conditions, "status = ?")
+		args = append(args, status)
+	}
+	where := ""
+	if len(conditions) > 0 {
+		where = "WHERE " + strings.Join(conditions, " AND ")
+	}
+	args = append(args, limit)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT `+userSelectColumns+`
+		FROM users
+		`+where+`
+		ORDER BY email ASC, id ASC
+		LIMIT ?
+	`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		item, err := scanUser(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, *item)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) FindAdminPage(ctx context.Context, input AdminUserPageInput) ([]User, int, AdminUserPageStats, error) {
+	page := input.Page
+	if page < 1 {
+		page = 1
+	}
+	pageSize := input.PageSize
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+	conditions := []string{}
+	args := []any{}
+	keyword := strings.ToLower(strings.TrimSpace(input.Keyword))
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		conditions = append(conditions, "(LOWER(users.email) LIKE ? OR LOWER(users.id) LIKE ?)")
+		args = append(args, like, like)
+	}
+	status := strings.ToLower(strings.TrimSpace(input.Status))
+	if status != "" && status != "all" {
+		conditions = append(conditions, "users.status = ?")
+		args = append(args, status)
+	}
+	switch strings.ToLower(strings.TrimSpace(input.Billing)) {
+	case "subscription":
+		conditions = append(conditions, `EXISTS (
+			SELECT 1 FROM user_subscriptions active_subscription
+			WHERE active_subscription.user_id = users.id
+			  AND active_subscription.status = 'active'
+			  AND active_subscription.expires_at > CURRENT_TIMESTAMP
+		)`)
+	case "payg":
+		conditions = append(conditions, `NOT EXISTS (
+			SELECT 1 FROM user_subscriptions active_subscription
+			WHERE active_subscription.user_id = users.id
+			  AND active_subscription.status = 'active'
+			  AND active_subscription.expires_at > CURRENT_TIMESTAMP
+		)`)
+	}
+	where := ""
+	if len(conditions) > 0 {
+		where = "WHERE " + strings.Join(conditions, " AND ")
+	}
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users `+where, args...).Scan(&total); err != nil {
+		return nil, 0, AdminUserPageStats{}, err
+	}
+	var stats AdminUserPageStats
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status = 'active' THEN 1 ELSE 0 END), 0) AS active,
+			COALESCE(SUM(CASE WHEN email_verified_at IS NOT NULL THEN 1 ELSE 0 END), 0) AS verified,
+			COALESCE(SUM(CASE WHEN EXISTS (
+				SELECT 1 FROM user_subscriptions active_subscription
+				WHERE active_subscription.user_id = users.id
+				  AND active_subscription.status = 'active'
+				  AND active_subscription.expires_at > CURRENT_TIMESTAMP
+			) THEN 1 ELSE 0 END), 0) AS subscribed
+		FROM users
+	`).Scan(&stats.Total, &stats.Active, &stats.Verified, &stats.Subscribed); err != nil {
+		return nil, 0, AdminUserPageStats{}, err
+	}
+	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT `+userSelectColumns+`
+		FROM users
+		`+where+`
+		ORDER BY created_at DESC, id DESC
+		LIMIT ? OFFSET ?
+	`, queryArgs...)
+	if err != nil {
+		return nil, 0, AdminUserPageStats{}, err
+	}
+	defer rows.Close()
+	items := []User{}
+	for rows.Next() {
+		item, err := scanUser(rows)
+		if err != nil {
+			return nil, 0, AdminUserPageStats{}, err
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, AdminUserPageStats{}, err
+	}
+	return items, total, stats, nil
+}
+
 func (r *Repository) ListCreditLogs(ctx context.Context, userID string, logType string, page int, pageSize int, sort ...string) ([]CreditLog, int, error) {
 	if page < 1 {
 		page = 1

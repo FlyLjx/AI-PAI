@@ -219,6 +219,31 @@ func (r *Repository) ListKeys(ctx context.Context, userID string) ([]AccessKey, 
 	return scanAccessKeys(rows)
 }
 
+// ListKeysPage bounds the user-facing key list at the database layer.
+func (r *Repository) ListKeysPage(ctx context.Context, userID string, page int, pageSize int) ([]AccessKey, int, error) {
+	if page < 1 { page = 1 }
+	if pageSize < 1 { pageSize = 20 }
+	if pageSize > 100 { pageSize = 100 }
+	userID = strings.TrimSpace(userID)
+	var total int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_access_keys WHERE user_id = ? AND deleted_at IS NULL`, userID).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+	rows, err := r.db.QueryContext(ctx, keyListSelect()+`
+		WHERE api_access_keys.user_id = ? AND api_access_keys.deleted_at IS NULL
+		GROUP BY api_access_keys.id, api_access_keys.user_id, users.email, api_access_keys.name,
+			api_access_keys.key_prefix, api_access_keys.key_hash, api_access_keys.key_plain, api_access_keys.status,
+			api_access_keys.concurrency_limit, api_access_keys.billing_mode, api_access_keys.last_used_at, api_access_keys.deleted_at,
+			api_access_keys.created_at, api_access_keys.updated_at
+		ORDER BY api_access_keys.created_at DESC, api_access_keys.id DESC
+		LIMIT ? OFFSET ?
+	`, userID, pageSize, (page-1)*pageSize)
+	if err != nil { return nil, 0, err }
+	defer rows.Close()
+	items, err := scanAccessKeys(rows)
+	return items, total, err
+}
+
 // ListAdminKeys filters and pages API Keys before loading their usage totals.
 // This keeps the management screen bounded even when api_access_logs is large.
 func (r *Repository) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]AccessKey, int, error) {
@@ -258,9 +283,7 @@ func (r *Repository) ListAdminKeys(ctx context.Context, input ListKeysInput) ([]
 				api_key_id,
 				COUNT(*) AS request_count,
 				COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
-				COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-					AND (response_status_code IS NULL OR response_status_code NOT IN (429, 502))
-					THEN 1 ELSE 0 END), 0) AS failed_count,
+				COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed_count,
 				COALESCE(SUM(CASE WHEN status = 'success' THEN image_count ELSE 0 END), 0) AS image_count,
 				MAX(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN error_message ELSE NULL END) AS last_error
 			FROM api_access_logs
@@ -435,9 +458,7 @@ func (r *Repository) attachKeyUsageStats(ctx context.Context, keys []AccessKey) 
 			api_key_id,
 			COUNT(*) AS request_count,
 			COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-				AND (response_status_code IS NULL OR response_status_code NOT IN (429, 502))
-				THEN 1 ELSE 0 END), 0) AS failed_count,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed_count,
 			COALESCE(SUM(CASE WHEN status = 'success' THEN image_count ELSE 0 END), 0) AS image_count,
 			MAX(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN error_message ELSE NULL END) AS last_error
 		FROM api_access_logs
@@ -502,9 +523,7 @@ func keyListSelect() string {
 			api_access_keys.updated_at,
 			COUNT(api_access_logs.id) AS request_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status = 'success' THEN 1 ELSE 0 END), 0) AS success_count,
-			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled')
-				AND (api_access_logs.response_status_code IS NULL OR api_access_logs.response_status_code NOT IN (429, 502))
-				THEN 1 ELSE 0 END), 0) AS failed_count,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status = 'success' THEN api_access_logs.image_count ELSE 0 END), 0) AS image_count,
 			MAX(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled') THEN api_access_logs.error_message ELSE NULL END) AS last_error
 		FROM api_access_keys
@@ -877,17 +896,44 @@ func (r *Repository) FindLogByID(ctx context.Context, id string) (*UsageLog, err
 }
 
 func (r *Repository) ListLogs(ctx context.Context, input ListLogsInput) ([]UsageLog, int, error) {
+	items, stats, err := r.ListLogsWithStats(ctx, input)
+	return items, stats.Total, err
+}
+
+// ListLogsWithStats loads the current page and the aggregate values for the
+// same filter set. Keeping the aggregate query here means callers do not need
+// to run a separate COUNT(*) scan followed by a second full statistics scan.
+func (r *Repository) ListLogsWithStats(ctx context.Context, input ListLogsInput) ([]UsageLog, UsageStats, error) {
 	page, pageSize, offset := normalizePage(input.Page, input.PageSize)
 	_ = page
 	where, args := buildLogWhere(input)
 	orderBy := adminLogOrder(input.SortBy, input.SortOrder)
 	countFrom := logCountFrom(input)
-	var total int
+	var stats UsageStats
 	if err := r.db.QueryRowContext(ctx, `
-		SELECT COUNT(*)
+		SELECT
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed,
+			COALESCE(SUM(CASE
+				WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1
+				WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled') THEN 1
+				ELSE 0
+			END), 0) AS counted,
+			COALESCE(SUM(api_access_logs.image_count), 0) AS image_count,
+			COALESCE(SUM(api_access_logs.charged_credits), 0) AS charged_credits,
+			COALESCE(SUM(api_access_logs.model_cost_credits), 0) AS model_cost_credits
 		`+countFrom+`
-		`+where, args...).Scan(&total); err != nil {
-		return nil, 0, err
+		`+where, args...).Scan(
+		&stats.Total,
+		&stats.Success,
+		&stats.Failed,
+		&stats.Counted,
+		&stats.ImageCount,
+		&stats.ChargedCredits,
+		&stats.ModelCostCredits,
+	); err != nil {
+		return nil, UsageStats{}, err
 	}
 	queryArgs := append(append([]any{}, args...), pageSize, offset)
 	rows, err := r.db.QueryContext(ctx, usageLogSelect()+` `+where+`
@@ -895,18 +941,21 @@ func (r *Repository) ListLogs(ctx context.Context, input ListLogsInput) ([]Usage
 		LIMIT ? OFFSET ?
 	`, queryArgs...)
 	if err != nil {
-		return nil, 0, err
+		return nil, UsageStats{}, err
 	}
 	defer rows.Close()
 	items := []UsageLog{}
 	for rows.Next() {
 		item, err := scanUsageLog(rows)
 		if err != nil {
-			return nil, 0, err
+			return nil, UsageStats{}, err
 		}
 		items = append(items, *item)
 	}
-	return items, total, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, UsageStats{}, err
+	}
+	return items, stats, nil
 }
 
 func adminLogOrder(sortBy string, sortOrder string) string {
@@ -948,13 +997,10 @@ func (r *Repository) LogStats(ctx context.Context, input ListLogsInput) (UsageSt
 		SELECT
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
-			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled')
-				AND (api_access_logs.response_status_code IS NULL OR api_access_logs.response_status_code NOT IN (429, 502))
-				THEN 1 ELSE 0 END), 0) AS failed,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed,
 			COALESCE(SUM(CASE
 				WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1
-				WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled')
-					AND (api_access_logs.response_status_code IS NULL OR api_access_logs.response_status_code NOT IN (429, 502)) THEN 1
+				WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled') THEN 1
 				ELSE 0
 			END), 0) AS counted,
 			COALESCE(SUM(api_access_logs.image_count), 0) AS image_count,
@@ -992,9 +1038,7 @@ func (r *Repository) DailyUsageTrend(ctx context.Context, userID string, startAt
 			DATE(created_at) AS usage_date,
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-				AND (response_status_code IS NULL OR response_status_code NOT IN (429, 502))
-				THEN 1 ELSE 0 END), 0) AS failed
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed
 		FROM api_access_logs
 		WHERE user_id = ? AND created_at >= ? AND created_at < ?
 		GROUP BY DATE(created_at)
@@ -1033,9 +1077,7 @@ func (r *Repository) UsageAnalytics(ctx context.Context, userID string, startAt 
 			COALESCE(size, ''),
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-				AND (response_status_code IS NULL OR response_status_code NOT IN (429, 502))
-				THEN 1 ELSE 0 END), 0) AS failed
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed
 		FROM api_access_logs
 		WHERE user_id = ? AND created_at >= ? AND created_at < ?
 		GROUP BY model, size
@@ -1071,9 +1113,7 @@ func (r *Repository) UsageAnalytics(ctx context.Context, userID string, startAt 
 		SELECT `+hourExpression+` AS usage_hour,
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-				AND (response_status_code IS NULL OR response_status_code NOT IN (429, 502))
-				THEN 1 ELSE 0 END), 0) AS failed
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed
 		FROM api_access_logs
 		WHERE user_id = ? AND created_at >= ? AND created_at < ?
 		GROUP BY `+hourExpression+`
@@ -1279,9 +1319,7 @@ func (r *Repository) AdminOperationsRanking(ctx context.Context, startAt time.Ti
 			END AS billing_mode,
 			COUNT(*) AS request_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success_count,
-			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled')
-				AND (api_access_logs.response_status_code IS NULL OR api_access_logs.response_status_code NOT IN (429, 502))
-				THEN 1 ELSE 0 END), 0) AS failed_count,
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN api_access_logs.image_count ELSE 0 END), 0) AS image_count,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN api_access_logs.charged_credits ELSE 0 END), 0) AS credits_spent,
 			COALESCE(AVG(CASE
@@ -1495,9 +1533,7 @@ func (r *Repository) AdminOperationsTrend(ctx context.Context, now time.Time, mi
 			`+bucketExpression+` AS minute_bucket,
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
-			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled')
-				AND (api_access_logs.response_status_code IS NULL OR api_access_logs.response_status_code NOT IN (429, 502))
-				THEN 1 ELSE 0 END), 0) AS failed
+			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS failed
 		FROM api_access_logs
 		WHERE api_access_logs.created_at >= ?
 			AND api_access_logs.created_at < ?
@@ -1564,9 +1600,7 @@ func (r *Repository) AdminStats(ctx context.Context) (AdminStats, error) {
 		SELECT
 			COUNT(*) AS today_requests,
 			COALESCE(SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END), 0) AS today_success,
-			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled')
-				AND (response_status_code IS NULL OR response_status_code NOT IN (429, 502))
-				THEN 1 ELSE 0 END), 0) AS today_failed,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS today_failed,
 			COALESCE(SUM(CASE WHEN status = 'success' THEN image_count ELSE 0 END), 0) AS today_image_count
 		FROM api_access_logs
 		WHERE created_at >= CURRENT_DATE

@@ -6,6 +6,7 @@ import {
   Search, Trash2, Users, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable } from '@/components/common/DataTable';
@@ -39,8 +40,6 @@ const MODE_OPTIONS = [
   { value: 'banner', label: '页面横幅' },
 ];
 
-const PAGE_SIZE = 15;
-
 function toDraft(item: Announcement): AnnouncementDraft {
   return {
     title: item.title,
@@ -72,7 +71,6 @@ export default function AnnouncementsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [modeFilter, setModeFilter] = useState('all');
-  const [page, setPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Announcement | null>(null);
   const [deleteCandidate, setDeleteCandidate] = useState<Announcement | null>(null);
@@ -87,7 +85,7 @@ export default function AnnouncementsPage() {
     try {
       const [announcementResponse, userResponse] = await Promise.all([
         portalApi.announcements(),
-        portalApi.users(),
+        portalApi.userOptions(),
       ]);
       setItems(announcementResponse.data || []);
       setUsers((userResponse.data || []).filter((user) => user.role === 'user'));
@@ -112,8 +110,6 @@ export default function AnnouncementsPage() {
     });
   }, [items, modeFilter, search, statusFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
   const visibleUsers = useMemo(() => {
     const keyword = userSearch.trim().toLowerCase();
     return users.filter((user) => !keyword || `${user.email} ${user.id}`.toLowerCase().includes(keyword));
@@ -234,13 +230,12 @@ export default function AnnouncementsPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          { label: '公告总数', value: summary.total, note: '历史公告', icon: Megaphone, tone: 'bg-zinc-100 text-zinc-600' },
-          { label: '展示中', value: summary.active, note: '用户当前可见', icon: Eye, tone: 'bg-emerald-50 text-emerald-700' },
-          { label: '确认弹窗', value: summary.popup, note: '确认后不再弹出', icon: BellRing, tone: 'bg-amber-50 text-amber-700' },
-          { label: '页面横幅', value: summary.banner, note: '持续展示', icon: Megaphone, tone: 'bg-blue-50 text-blue-700' },
+          { label: '公告总数', value: summary.total, note: '历史公告', icon: Megaphone, tone: 'neutral' as const },
+          { label: '展示中', value: summary.active, note: '用户当前可见', icon: Eye, tone: 'green' as const },
+          { label: '确认弹窗', value: summary.popup, note: '确认后不再弹出', icon: BellRing, tone: 'amber' as const },
+          { label: '页面横幅', value: summary.banner, note: '持续展示', icon: Megaphone, tone: 'blue' as const },
         ].map((metric) => {
-          const Icon = metric.icon;
-          return <div key={metric.label} className="flex items-center gap-3 rounded-md border border-[#DCE4DF] bg-white p-4"><span className={`grid h-9 w-9 place-items-center rounded-md ${metric.tone}`}><Icon className="h-4 w-4" /></span><span><small className="block text-[10px] text-zinc-400">{metric.label}</small><strong className="mt-0.5 block font-mono text-lg">{metric.value}</strong><small className="block text-[9px] text-zinc-400">{metric.note}</small></span></div>;
+          return <AdminMetricCard key={metric.label} title={metric.label} value={metric.value} note={metric.note} icon={metric.icon} tone={metric.tone} />;
         })}
       </div>
 
@@ -260,15 +255,10 @@ export default function AnnouncementsPage() {
             { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
           data={filtered}
-          pageSize={PAGE_SIZE}
-          clientSidePagination
           searchPlaceholder="搜索公告标题或内容"
           searchValue={search}
-          onSearchChange={(value) => { setSearch(value); setPage(1); }}
-          filterControls={<><AppSelect compact value={modeFilter} onValueChange={(value) => { setModeFilter(value); setPage(1); }} ariaLabel="筛选展示方式" options={MODE_OPTIONS} /><AppSelect compact value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }} ariaLabel="筛选公告状态" options={STATUS_OPTIONS} /><span className="text-[11px] text-zinc-400">{filtered.length} 条</span></>}
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={setPage}
+          onSearchChange={setSearch}
+          filterControls={<><AppSelect compact value={modeFilter} onValueChange={setModeFilter} ariaLabel="筛选展示方式" options={MODE_OPTIONS} /><AppSelect compact value={statusFilter} onValueChange={setStatusFilter} ariaLabel="筛选公告状态" options={STATUS_OPTIONS} /><span className="text-[11px] text-zinc-400">{filtered.length} 条</span></>}
           emptyState={<EmptyState title="暂无公告" description="创建公告后，可通过横幅或弹窗通知用户。" icon={Megaphone} />}
           renderRow={(item) => (
             <tr key={item.id} className="hover:bg-[#FAFBFA]">

@@ -41,7 +41,7 @@ func (repository *Repository) Snapshot(ctx context.Context, filters Filters) (Sn
 			COALESCE(SUM(CASE WHEN status_code < 400 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status_code >= 400 AND status_code < 500 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status_code >= 500 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status_code < 400 OR (status_code >= 400 AND status_code NOT IN (429, 502)) THEN 1 ELSE 0 END), 0),
+			COUNT(*),
 			COALESCE(AVG(duration_ms), 0),
 			COUNT(DISTINCT CASE WHEN source_ip <> '' THEN source_ip ELSE NULL END)
 		FROM http_request_logs `+where, args...).Scan(

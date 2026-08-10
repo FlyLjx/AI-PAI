@@ -146,9 +146,10 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 	var responseJSON any
 	_ = json.Unmarshal(responseBytes, &responseJSON)
 	errorDetails := parseUpstreamError(resp.StatusCode, responseJSON, responseBytes)
+	structuredError := hasStructuredUpstreamError(responseJSON)
 	loggedErrorMessage := ""
 	loggedErrorCode := ""
-	if apierrors.IsCountedFailureStatus(resp.StatusCode) {
+	if !apierrors.IsSuccessStatus(resp.StatusCode) || structuredError {
 		loggedErrorMessage = errorDetails.Message
 		loggedErrorCode = errorDetails.Code
 	}
@@ -180,6 +181,15 @@ func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, att
 		return nil, imageUpstreamHTTPError{status: resp.StatusCode, message: message, details: errorDetails}
 	}
 	if len(ExtractImages(responseJSON)) == 0 {
+		if structuredError {
+			status := http.StatusBadGateway
+			if mappedStatus, ok := apierrors.StatusForCode(errorDetails.Code); ok {
+				status = mappedStatus
+			}
+			errorDetails.StatusCode = status
+			apierrors.Normalize(&errorDetails)
+			return nil, imageUpstreamHTTPError{status: status, message: errorDetails.Message, details: errorDetails}
+		}
 		message := errorDetails.Message
 		if message != "" {
 			return nil, errors.New("上游接口未返回图片结果：" + message)
@@ -312,7 +322,7 @@ func htmlImageUpstreamError(status int) error {
 func isRetryableImageUpstreamError(err error) bool {
 	var upstreamErr imageUpstreamHTTPError
 	if errors.As(err, &upstreamErr) {
-		if upstreamErr.details.StatusCode == http.StatusTooManyRequests {
+		if upstreamErr.details.RetryableSet {
 			return upstreamErr.details.Retryable
 		}
 		status := upstreamErr.status

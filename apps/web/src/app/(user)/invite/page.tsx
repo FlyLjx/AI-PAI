@@ -28,9 +28,6 @@ import {
   type InviteSummary,
 } from '@/lib/portal-api';
 
-const INVITE_PAGE_SIZE = 6;
-const REBATE_PAGE_SIZE = 6;
-
 const INVITE_TABLE_HEADERS = [
   { key: 'invitee', label: '好友账号' },
   { key: 'registered', label: '注册时间', className: 'is-centered' },
@@ -124,8 +121,6 @@ export default function InvitePage() {
   const [recordQuery, setRecordQuery] = useState('');
   const [inviteStatusFilter, setInviteStatusFilter] = useState('');
   const [rebateTypeFilter, setRebateTypeFilter] = useState('');
-  const [invitePage, setInvitePage] = useState(1);
-  const [rebatePage, setRebatePage] = useState(1);
 
   const load = useCallback(async () => {
     if (!user) {
@@ -170,18 +165,6 @@ export default function InvitePage() {
     return matchesQuery && matchesType;
   }), [normalizedQuery, rebateRecords, rebateTypeFilter]);
 
-  const inviteTotalPages = Math.max(1, Math.ceil(filteredInviteRecords.length / INVITE_PAGE_SIZE));
-  const rebateTotalPages = Math.max(1, Math.ceil(filteredRebateRecords.length / REBATE_PAGE_SIZE));
-  const safeInvitePage = Math.min(invitePage, inviteTotalPages);
-  const safeRebatePage = Math.min(rebatePage, rebateTotalPages);
-  const visibleInviteRecords = useMemo(
-    () => filteredInviteRecords.slice((safeInvitePage - 1) * INVITE_PAGE_SIZE, safeInvitePage * INVITE_PAGE_SIZE),
-    [filteredInviteRecords, safeInvitePage],
-  );
-  const visibleRebateRecords = useMemo(
-    () => filteredRebateRecords.slice((safeRebatePage - 1) * REBATE_PAGE_SIZE, safeRebatePage * REBATE_PAGE_SIZE),
-    [filteredRebateRecords, safeRebatePage],
-  );
   const showRebateTab = Boolean(summary?.rechargeRebateEnabled || rebateRecords.length > 0);
   const activeTab: RecordTab = recordTab === 'rebates' && showRebateTab ? 'rebates' : 'invites';
 
@@ -205,8 +188,6 @@ export default function InvitePage() {
 
   const updateQuery = (value: string) => {
     setRecordQuery(value);
-    setInvitePage(1);
-    setRebatePage(1);
   };
 
   const selectTab = (tab: RecordTab) => {
@@ -291,10 +272,8 @@ export default function InvitePage() {
                   onValueChange={(value) => {
                     if (activeTab === 'invites') {
                       setInviteStatusFilter(value);
-                      setInvitePage(1);
                     } else {
                       setRebateTypeFilter(value);
-                      setRebatePage(1);
                     }
                   }}
                 />
@@ -306,12 +285,7 @@ export default function InvitePage() {
                 embedded
                 className="invite-data-table"
                 headers={INVITE_TABLE_HEADERS}
-                data={visibleInviteRecords}
-                currentPage={safeInvitePage}
-                totalPages={inviteTotalPages}
-                totalItems={filteredInviteRecords.length}
-                onPageChange={setInvitePage}
-                paginationDisabled={loading}
+                data={filteredInviteRecords}
                 loading={loading}
                 emptyState={<div className="invite-table-empty"><UserPlus size={20} /><strong>{recordQuery || inviteStatusFilter ? '没有匹配的邀请记录' : '还没有邀请记录'}</strong></div>}
                 tableWrapClassName="invite-record-table-wrap"
@@ -353,12 +327,7 @@ export default function InvitePage() {
                 embedded
                 className="invite-data-table"
                 headers={REBATE_TABLE_HEADERS}
-                data={visibleRebateRecords}
-                currentPage={safeRebatePage}
-                totalPages={rebateTotalPages}
-                totalItems={filteredRebateRecords.length}
-                onPageChange={setRebatePage}
-                paginationDisabled={loading}
+                data={filteredRebateRecords}
                 loading={loading}
                 emptyState={<div className="invite-table-empty"><ReceiptText size={20} /><strong>{recordQuery || rebateTypeFilter ? '没有匹配的返利记录' : '还没有充值返利记录'}</strong></div>}
                 tableWrapClassName="invite-record-table-wrap"

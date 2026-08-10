@@ -16,6 +16,7 @@ import {
   XCircle,
 } from 'lucide-react';
 import { AppSelect } from '@/components/common/AppSelect';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { SortableHeader, type SortState } from '@/components/common/DataTable';
 import { PageHeader } from '@/components/common/PageHeader';
 import { formatCNY, formatDate } from '@/lib/common/utils';
@@ -149,11 +150,11 @@ export default function AdminInvitesPage() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const metrics = [
-    { label: '全部记录', value: summary.total, icon: Gift, tone: 'bg-zinc-100 text-zinc-600' },
-    { label: '已发放', value: summary.rewarded, icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
-    { label: '待人工审核', value: summary.review, icon: ShieldAlert, tone: 'bg-amber-50 text-amber-800' },
-    { label: '待验证', value: summary.pending, icon: Clock3, tone: 'bg-amber-50 text-amber-700' },
-    { label: '已拦截', value: summary.blocked, icon: ShieldAlert, tone: 'bg-red-50 text-red-700' },
+    { label: '全部记录', value: summary.total, icon: Gift, tone: 'neutral' as const },
+    { label: '已发放', value: summary.rewarded, icon: CheckCircle2, tone: 'green' as const },
+    { label: '待人工审核', value: summary.review, icon: ShieldAlert, tone: 'amber' as const },
+    { label: '待验证', value: summary.pending, icon: Clock3, tone: 'amber' as const },
+    { label: '已拦截', value: summary.blocked, icon: ShieldAlert, tone: 'red' as const },
   ];
 
   return (
@@ -165,15 +166,7 @@ export default function AdminInvitesPage() {
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        {metrics.map((metric) => {
-          const Icon = metric.icon;
-          return (
-            <div key={metric.label} className="flex items-center gap-3 rounded-md border border-[#DCE4DF] bg-white p-4">
-              <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-md ${metric.tone}`}><Icon className="h-4 w-4" /></span>
-              <span><small className="block text-[10px] text-zinc-400">{metric.label}</small><strong className="mt-0.5 block font-mono text-lg">{metric.value.toLocaleString()}</strong></span>
-            </div>
-          );
-        })}
+        {metrics.map((metric) => <AdminMetricCard key={metric.label} title={metric.label} value={metric.value.toLocaleString()} icon={metric.icon} tone={metric.tone} />)}
       </div>
 
       {error && <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">{error}</div>}

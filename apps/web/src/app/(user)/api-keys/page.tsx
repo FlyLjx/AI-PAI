@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Check,
   Copy,
@@ -110,6 +110,7 @@ export default function ApiKeysPage() {
   const [error, setError] = useState('');
   const [pendingId, setPendingId] = useState('');
   const [keyPage, setKeyPage] = useState(1);
+  const [keyTotal, setKeyTotal] = useState(0);
 
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newKeyName, setNewKeyName] = useState('');
@@ -125,7 +126,7 @@ export default function ApiKeysPage() {
   const [keyToDelete, setKeyToDelete] = useState<APIKey | null>(null);
   const canCreateKey = Boolean(user?.emailVerifiedAt);
 
-  const loadKeys = useCallback(async () => {
+  const loadKeys = useCallback(async (targetPage = keyPage) => {
     const current = getSession();
     if (!current) {
       setError('登录状态已失效，请重新登录');
@@ -138,11 +139,11 @@ export default function ApiKeysPage() {
     setError('');
     try {
       const [response, subscriptionResponse] = await Promise.all([
-        portalApi.listKeys(current),
+        portalApi.listKeysPage(current, targetPage, API_KEY_PAGE_SIZE),
         portalApi.subscription(current).catch(() => null),
       ]);
       setApiKeys((response.data || []).map(scrubKey));
-      setKeyPage(1);
+      setKeyTotal(response.pagination?.total || response.data?.length || 0);
       const hasSubscriptionAccess = subscriptionResponse !== null;
       setSubscriptionEnabled(hasSubscriptionAccess);
       if (!hasSubscriptionAccess) setNewBillingMode('balance');
@@ -151,12 +152,12 @@ export default function ApiKeysPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [keyPage]);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => void loadKeys(), 0);
+    const timer = window.setTimeout(() => void loadKeys(keyPage), 0);
     return () => window.clearTimeout(timer);
-  }, [loadKeys]);
+  }, [loadKeys, keyPage]);
 
   const closeCreateModal = () => {
     setShowCreateModal(false);
@@ -194,10 +195,6 @@ export default function ApiKeysPage() {
       const secret = String(created.key || created.keyPlain || '');
       if (!secret) throw new Error('API Key 已创建，但服务端未返回明文凭证');
 
-      setApiKeys((items) => [
-        scrubKey(created),
-        ...items.filter((item) => item.id !== created.id),
-      ]);
       setKeyPage(1);
       setCreatedCredential({ id: created.id, name: created.name, secret, billingMode: newBillingMode });
       setNewKeyName('');
@@ -258,9 +255,7 @@ export default function ApiKeysPage() {
     setPendingId(key.id);
     try {
       const response = await portalApi.updateKey(user, key.id, nextStatus);
-      setApiKeys((items) => items.map((item) => (
-        item.id === key.id ? scrubKey(response.data) : item
-      )));
+      setApiKeys((items) => items.map((item) => item.id === key.id ? scrubKey(response.data) : item));
       toast.success(nextStatus === 'active' ? 'API Key 已启用' : 'API Key 已停用');
     } catch (toggleError) {
       toast.error(errorMessage(toggleError));
@@ -275,7 +270,7 @@ export default function ApiKeysPage() {
     setPendingId(id);
     try {
       await portalApi.deleteKey(user, id);
-      setApiKeys((items) => items.filter((item) => item.id !== id));
+      setKeyTotal((value) => Math.max(0, value - 1));
       setKeyToDelete(null);
       toast.success('API Key 已删除');
     } catch (deleteError) {
@@ -329,12 +324,7 @@ export default function ApiKeysPage() {
 
   const activeKeyCount = apiKeys.filter((key) => key.status === 'active').length;
   const disabledKeyCount = apiKeys.filter((key) => key.status !== 'active').length;
-  const keyTotalPages = Math.max(1, Math.ceil(apiKeys.length / API_KEY_PAGE_SIZE));
-  const safeKeyPage = Math.min(keyPage, keyTotalPages);
-  const visibleKeys = useMemo(
-    () => apiKeys.slice((safeKeyPage - 1) * API_KEY_PAGE_SIZE, safeKeyPage * API_KEY_PAGE_SIZE),
-    [apiKeys, safeKeyPage],
-  );
+  const keyTotalPages = Math.max(1, Math.ceil(keyTotal / API_KEY_PAGE_SIZE));
 
   return (
     <div className="page-stack api-key-page">
@@ -377,7 +367,7 @@ export default function ApiKeysPage() {
             </div>
           </div>
           <div className="api-key-summary" aria-label="API Key 数量统计">
-            <span>全部 <strong>{loading && apiKeys.length === 0 ? '--' : apiKeys.length}</strong></span>
+            <span>全部 <strong>{loading && keyTotal === 0 ? '--' : keyTotal}</strong></span>
             <i aria-hidden="true" />
             <span>启用 <strong>{loading && apiKeys.length === 0 ? '--' : activeKeyCount}</strong></span>
             {(!loading || apiKeys.length > 0) && disabledKeyCount > 0 && <span className="api-key-summary-muted">停用 {disabledKeyCount}</span>}
@@ -388,10 +378,10 @@ export default function ApiKeysPage() {
           embedded
           className="api-key-data-table"
           headers={API_KEY_TABLE_HEADERS}
-          data={visibleKeys}
-          currentPage={safeKeyPage}
+          data={apiKeys}
+          currentPage={keyPage}
           totalPages={keyTotalPages}
-          totalItems={apiKeys.length}
+          totalItems={keyTotal}
           onPageChange={setKeyPage}
           paginationDisabled={loading}
           loading={loading}

@@ -21,6 +21,32 @@ func parseUpstreamError(status int, payload any, body []byte) apierrors.Details 
 	return apierrors.Parse(status, payload, body)
 }
 
+func hasStructuredUpstreamError(value any) bool {
+	payload, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	if nested, exists := payload["error"]; exists {
+		switch typed := nested.(type) {
+		case map[string]any:
+			return len(typed) > 0
+		case string:
+			return strings.TrimSpace(typed) != ""
+		}
+	}
+	status, _ := payload["status"].(string)
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "canceled", "cancelled":
+		return true
+	}
+	for _, key := range []string{"task", "data"} {
+		if hasStructuredUpstreamError(payload[key]) {
+			return true
+		}
+	}
+	return false
+}
+
 func extractErrorMessage(value any) string {
 	if value == nil {
 		return ""

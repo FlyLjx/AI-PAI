@@ -28,24 +28,17 @@ func TestAdminAPIAccessLogsReturnsFilteredFullSummary(t *testing.T) {
 
 	now := time.Now().UTC()
 	expectAdminBalanceUser(mock, "admin-1", "admin@example.com", 0, "admin", now)
-	mock.ExpectQuery(`(?s)SELECT\s+api_access_logs\.id,\s+generation_tasks\.status.*LIMIT \?`).
-		WithArgs(200).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "status", "quantity", "error_message"}))
-
 	filterArgs := []driver.Value{"user-1", "key-1"}
 	for range 15 {
 		filterArgs = append(filterArgs, "%needle%")
 	}
-	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\).*FROM api_access_logs.*api_access_logs\.user_id = \?.*api_access_logs\.api_key_id = \?.*status IN \('success', 'succeeded'\).*users\.email`).
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\) AS total,.*FROM api_access_logs.*api_access_logs\.user_id = \?.*api_access_logs\.api_key_id = \?.*status IN \('success', 'succeeded'\).*users\.email`).
 		WithArgs(filterArgs...).
-		WillReturnRows(sqlmock.NewRows([]string{"total"}).AddRow(37))
+		WillReturnRows(sqlmock.NewRows([]string{"total", "success", "failed", "counted", "image_count", "charged_credits", "model_cost_credits"}).AddRow(37, 31, 6, 37, 52, 18.75, 9.25))
 	listArgs := append(append([]driver.Value{}, filterArgs...), 100, 0)
 	mock.ExpectQuery(`(?s)SELECT\s+api_access_logs\.id,.*FROM api_access_logs.*status IN \('success', 'succeeded'\).*ORDER BY.*LIMIT \? OFFSET \?`).
 		WithArgs(listArgs...).
 		WillReturnRows(sqlmock.NewRows([]string{"id"}))
-	mock.ExpectQuery(`(?s)SELECT\s+COUNT\(\*\) AS total,.*FROM api_access_logs.*api_access_logs\.user_id = \?.*api_access_logs\.api_key_id = \?.*status IN \('success', 'succeeded'\).*users\.email`).
-		WithArgs(filterArgs...).
-		WillReturnRows(sqlmock.NewRows([]string{"total", "success", "failed", "counted", "image_count", "charged_credits", "model_cost_credits"}).AddRow(37, 31, 6, 37, 52, 18.75, 9.25))
 
 	router := &Router{db: database.Wrap(rawDB), tokens: auth.NewTokenManager(config.DatabaseConfig{})}
 	token, err := router.tokens.CreateAdminToken("admin-1")

@@ -142,80 +142,47 @@ export function StatBlock({ title, value, subtext, trend, icon: Icon, color = 'n
     switch (color) {
       case 'green':
         return {
-          iconBg: 'bg-[#12B76A]/8 text-[#12B76A]',
-          accentBar: 'bg-[#12B76A]',
-          hoverBorder: 'hover:border-[#12B76A]'
+          iconBg: 'bg-[#EAF8F0] text-[#12B76A]',
         };
       case 'cyan':
         return {
-          iconBg: 'bg-[#0891B2]/8 text-[#0891B2]',
-          accentBar: 'bg-[#0891B2]',
-          hoverBorder: 'hover:border-[#0891B2]'
+          iconBg: 'bg-[#EDF6FF] text-[#2B82CF]',
         };
       case 'amber':
         return {
-          iconBg: 'bg-[#D97706]/8 text-[#D97706]',
-          accentBar: 'bg-[#D97706]',
-          hoverBorder: 'hover:border-[#D97706]'
+          iconBg: 'bg-[#FFF6E7] text-[#D99217]',
         };
       default:
         return {
-          iconBg: 'bg-[#17201B]/5 text-[#17201B]/60',
-          accentBar: 'bg-[#DCE4DF]',
-          hoverBorder: 'hover:border-[#12B76A]'
+          iconBg: 'bg-[#F0F3F1] text-[#68756D]',
         };
     }
   };
 
-  const { iconBg, accentBar, hoverBorder } = getColorClasses();
+  const { iconBg } = getColorClasses();
   const TrendIcon = trend?.type === 'positive' ? ArrowUpRight : trend?.type === 'negative' ? ArrowDownRight : Minus;
   const pulseToken = useUpdatePulse(`${String(value)}|${subtext || ''}|${trend?.value || ''}|${trend?.type || ''}`);
 
   return (
-    <div className={`stat-block-card group bg-white border border-[#DCE4DF] rounded-md overflow-hidden flex flex-col justify-between shadow-sm hover:shadow-md ${hoverBorder} transition-all duration-300 relative`}>
+    <div className="stat-block-card group relative flex min-h-[108px] min-w-0 items-center gap-3 overflow-hidden rounded-[10px] border border-[#DCE4DF] bg-white px-4 py-3.5 shadow-[0_1px_2px_rgba(23,32,27,0.025)] transition-colors hover:border-[#B7D5C2]">
       {pulseToken > 0 && <span key={pulseToken} className="stat-block-update-glow" aria-hidden="true" />}
-      {/* Subtle top accent bar */}
-      <div className={`h-[3px] w-full ${accentBar}`} />
-
-      <div className="p-4 flex flex-col justify-between flex-1">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-[11px] font-bold text-[#17201B]/50 uppercase tracking-wider">
-            {title}
-          </span>
-          {Icon && (
-            <div className={`p-1.5 rounded-md ${iconBg} transition-transform duration-300 group-hover:scale-105`}>
-              <Icon className="w-3.5 h-3.5" />
-            </div>
-          )}
-        </div>
-
-        <div className="mt-3 flex items-baseline gap-2">
-          <span className="stat-block-value font-sans text-2xl font-bold tracking-tight text-[#17201B] leading-none tabular-nums" aria-label={String(value)}>
+      <span className={`grid h-12 w-12 shrink-0 place-items-center rounded-[10px] ${iconBg}`}>
+        {Icon ? <Icon className="h-5 w-5" strokeWidth={1.8} aria-hidden="true" /> : <span className="h-2 w-2 rounded-full bg-current" aria-hidden="true" />}
+      </span>
+      <div className="min-w-0 flex-1">
+        <span className="block truncate text-[11px] font-semibold leading-[1.25] text-[#58655D]">{title}</span>
+        <span className="stat-block-value mt-1.5 block truncate font-sans text-[23px] font-extrabold leading-none tracking-[-0.03em] text-[#17201B] tabular-nums" aria-label={String(value)}>
             <AnimatedStatValue value={value} pulseToken={pulseToken} />
-          </span>
-        </div>
-
+        </span>
         {(subtext || trend) && (
-          <div className="mt-3 min-h-[54px] border-t border-[#F0F3F1] pt-2.5 text-[11px]">
+          <div className="mt-2.5 flex min-w-0 items-center gap-1.5 truncate text-[9px] leading-none">
             {trend && (
-              <div className="flex items-center justify-between gap-2" aria-label={`${trend.label || '较昨日'} ${trend.value}`}>
-                <span className="text-zinc-400">{trend.label || '较昨日'}</span>
-                <span className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 font-mono font-bold ${
-                  trend.type === 'positive' ? 'bg-[#12B76A]/8 text-[#079455]' :
-                  trend.type === 'negative' ? 'bg-[#DC2626]/8 text-[#DC2626]' : 'bg-zinc-100 text-zinc-500'
-                }`}>
+              <span className={`inline-flex shrink-0 items-center gap-0.5 font-mono font-bold ${trend.type === 'positive' ? 'text-[#079455]' : trend.type === 'negative' ? 'text-[#D92D3F]' : 'text-[#68756D]'}`} aria-label={`${trend.label || '较昨日'} ${trend.value}`}>
                   <TrendIcon className="h-3 w-3" aria-hidden="true" />
                   {trend.value}
-                </span>
-              </div>
+              </span>
             )}
-            {subtext && (
-              <div className={`${trend ? 'mt-2 border-t border-[#F6F8F6] pt-2' : ''} flex items-center justify-between gap-2`}>
-                <span className="min-w-0 truncate font-medium text-zinc-500">
-                  {subtext}
-                </span>
-              </div>
-            )}
+            <span className="min-w-0 truncate text-[#8A948D]">{trend?.label || subtext}</span>
           </div>
         )}
       </div>

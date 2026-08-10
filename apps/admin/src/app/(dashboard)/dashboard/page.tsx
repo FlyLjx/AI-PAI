@@ -3,14 +3,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
-  ArrowDownRight,
-  ArrowUpRight,
   Cable,
   ChartNoAxesCombined,
   CircleDollarSign,
   HeartPulse,
   Loader2,
-  Minus,
   RefreshCw,
   Server,
   TriangleAlert,
@@ -28,9 +25,19 @@ import {
 } from 'recharts';
 import { toast } from 'sonner';
 import { PageHeader } from '@/components/common/PageHeader';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { SortableHeader, sortItems, type SortState, type TableHeader } from '@/components/common/DataTable';
 import { portalApi, type OpenAIImageStatusSnapshot, type StabilitySnapshot } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
+import {
+  ADMIN_CHART_ACTIVE_DOT,
+  ADMIN_CHART_AXIS,
+  ADMIN_CHART_BORDER,
+  ADMIN_CHART_COLORS,
+  ADMIN_CHART_DOT,
+  ADMIN_CHART_GRID,
+  ADMIN_CHART_MARGIN,
+} from '@/lib/chart-theme';
 
 type RechargeRow = {
   id: string;
@@ -140,13 +147,14 @@ type DashboardData = {
 };
 
 const TASK_TREND_COLORS = {
-  total: '#1E5F91',
-  success: '#087A55',
-  failed: '#C43D3D',
-  running: '#B86B0B',
-  canceled: '#6652A3',
-  excluded: '#8A938E',
+  ...ADMIN_CHART_COLORS,
 } as const;
+
+// Keep the admin runtime health colors aligned with the user status page:
+// error rate < 5% is healthy, 5%-<10% is a warning, and >= 10% is danger.
+const ERROR_RATE_WARNING_THRESHOLD = 5;
+const ERROR_RATE_DANGER_THRESHOLD = 10;
+type UpstreamStatusTone = 'healthy' | 'warning' | 'danger' | 'pending';
 
 function shortDate(value: string): string {
   const [, month = '', day = ''] = value.split('-');
@@ -271,12 +279,11 @@ export default function AdminDashboardPage() {
 
   const stats = data.taskStats || {};
   const successful = Number(stats.success || 0);
-  const countedFailed = Number(stats.countedFailed ?? (Number(stats.failed || 0) + Number(stats.canceled || 0)));
-  const completed = Number(stats.counted ?? (successful + countedFailed));
+  const failed = Number(stats.failed || 0) + Number(stats.canceled || 0);
+  const completed = successful + failed;
   const totalSuccessRate = completed ? Math.round((successful / completed) * 100) : null;
-  const todaySuccessRate = dailySuccessRate(data.today?.successfulTasks, data.today?.countedFailedTasks ?? data.today?.failedTasks);
-  const yesterdaySuccessRate = dailySuccessRate(data.yesterday?.successfulTasks, data.yesterday?.countedFailedTasks ?? data.yesterday?.failedTasks);
-  const totalExcluded = Number(stats.excluded || 0);
+  const todaySuccessRate = dailySuccessRate(data.today?.successfulTasks, data.today?.failedTasks);
+  const yesterdaySuccessRate = dailySuccessRate(data.yesterday?.successfulTasks, data.yesterday?.failedTasks);
   const revenueTrend = dayOverDayTrend(Number(data.today?.paidAmount || 0), Number(data.yesterday?.paidAmount || 0));
   const requestTrend = dayOverDayTrend(Number(data.today?.tasks || 0), Number(data.yesterday?.tasks || 0));
   const successRateTrend = dayOverDayTrend(todaySuccessRate, yesterdaySuccessRate);
@@ -300,18 +307,12 @@ export default function AdminDashboardPage() {
     failed: summary.failed + Number(point.failed || 0),
     running: summary.running + Number(point.running || 0),
     canceled: summary.canceled + Number(point.canceled || 0),
-    countedFailed: summary.countedFailed + Number(point.countedFailed ?? (Number(point.failed || 0) + Number(point.canceled || 0) - Number(point.excluded || 0))),
-    excluded: summary.excluded + Number(point.excluded || 0),
-  }), { total: 0, success: 0, failed: 0, running: 0, canceled: 0, countedFailed: 0, excluded: 0 }), [taskTrend]);
-  const taskTrendCompleted = taskTrendSummary.success + taskTrendSummary.countedFailed;
+  }), { total: 0, success: 0, failed: 0, running: 0, canceled: 0 }), [taskTrend]);
+  const taskTrendCompleted = taskTrendSummary.success + taskTrendSummary.failed + taskTrendSummary.canceled;
   const taskTrendSuccessRate = taskTrendCompleted > 0 ? (taskTrendSummary.success / taskTrendCompleted) * 100 : null;
   const taskTrendSeries = [
-    { key: 'total', label: '全部任务', value: taskTrendSummary.total, color: TASK_TREND_COLORS.total },
     { key: 'success', label: '成功', value: taskTrendSummary.success, color: TASK_TREND_COLORS.success },
-    { key: 'failed', label: '失败（全部）', value: taskTrendSummary.failed, color: TASK_TREND_COLORS.failed },
-    { key: 'running', label: '处理中', value: taskTrendSummary.running, color: TASK_TREND_COLORS.running },
-    { key: 'canceled', label: '已取消（全部）', value: taskTrendSummary.canceled, color: TASK_TREND_COLORS.canceled },
-    { key: 'excluded', label: '429/502（排除）', value: taskTrendSummary.excluded, color: TASK_TREND_COLORS.excluded },
+    { key: 'failed', label: '失败', value: taskTrendSummary.failed, color: TASK_TREND_COLORS.failed },
   ] as const;
 
   const upstreamCode = Number(stability?.upstream_status_code || 0);
@@ -319,16 +320,36 @@ export default function AdminDashboardPage() {
   const upstreamRuntime = stability?.runtime;
   const upstreamRecent = stability?.recent_60;
   const upstreamPending = stabilityLoading && !stability;
-  const upstreamDegraded = upstreamReachable && Number(upstreamRuntime?.error_rate || 0) > 0;
-  const upstreamLabel = upstreamReachable ? upstreamDegraded ? '运行波动' : '运行正常' : '连接异常';
-  const upstreamTone = upstreamReachable
-    ? upstreamDegraded
+  const upstreamErrorRate = Math.max(0, Number(upstreamRuntime?.error_rate || 0));
+  const upstreamStatusTone: UpstreamStatusTone = upstreamPending
+    ? 'pending'
+    : !upstreamReachable
+      ? 'danger'
+      : upstreamErrorRate >= ERROR_RATE_DANGER_THRESHOLD
+        ? 'danger'
+        : upstreamErrorRate >= ERROR_RATE_WARNING_THRESHOLD ? 'warning' : 'healthy';
+  const upstreamLabel = upstreamStatusTone === 'danger'
+    ? upstreamReachable ? '错误率较高' : '连接异常'
+    : upstreamStatusTone === 'warning' ? '运行波动' : upstreamStatusTone === 'pending' ? '检测中' : '运行正常';
+  const upstreamTone = upstreamStatusTone === 'healthy'
+    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+    : upstreamStatusTone === 'warning'
       ? 'border-amber-200 bg-amber-50 text-amber-700'
-      : 'border-emerald-200 bg-emerald-50 text-emerald-700'
-    : 'border-red-200 bg-red-50 text-red-700';
-  const upstreamIconTone = upstreamReachable
-    ? upstreamDegraded ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
-    : upstreamPending ? 'bg-zinc-100 text-zinc-500' : 'bg-red-50 text-red-700';
+      : upstreamStatusTone === 'pending'
+        ? 'border-zinc-200 bg-zinc-100 text-zinc-500'
+        : 'border-red-200 bg-red-50 text-red-700';
+  const upstreamIconTone = upstreamStatusTone === 'healthy'
+    ? 'bg-emerald-50 text-emerald-700'
+    : upstreamStatusTone === 'warning'
+      ? 'bg-amber-50 text-amber-700'
+      : upstreamStatusTone === 'pending'
+        ? 'bg-zinc-100 text-zinc-500'
+        : 'bg-red-50 text-red-700';
+  const upstreamSuccessRateTone = upstreamStatusTone === 'danger'
+    ? 'text-red-700'
+    : upstreamStatusTone === 'warning'
+      ? 'text-amber-700'
+      : upstreamStatusTone === 'healthy' ? 'text-emerald-700' : 'text-zinc-700';
   const openAISeverity = openAIStatus?.severity || 'ok';
   const openAITextTone = openAIStatusError
     ? 'text-red-700'
@@ -340,11 +361,11 @@ export default function AdminDashboardPage() {
   const openAIStatusDot = openAIStatusError || openAISeverity === 'critical' ? 'bg-red-500' : openAISeverity === 'warning' ? 'bg-amber-500' : 'bg-emerald-500';
 
   const summaryMetrics = [
-    { key: 'revenue', label: '今日实收', value: formatCNY(Number(data.today?.paidAmount || 0)), note: `累计 ${formatCNY(Number(data.revenue?.totalPaidAmount || 0))}`, trend: revenueTrend, icon: CircleDollarSign, tone: 'bg-emerald-50 text-emerald-700' },
-    { key: 'balance', label: '余额消耗', value: formatCNY(Number(data.today?.balanceConsumed || 0), 4), note: `总余额 ${formatCNY(Number(data.users?.totalBalance || 0), 4)}`, trend: balanceConsumptionTrend, icon: Wallet, tone: 'bg-amber-50 text-amber-700' },
-    { key: 'requests', label: 'API 请求', value: Number(data.today?.tasks || 0).toLocaleString('zh-CN'), note: `累计 ${Number(stats.total || 0).toLocaleString('zh-CN')} 次`, trend: requestTrend, icon: Activity, tone: 'bg-cyan-50 text-cyan-700' },
-    { key: 'success-rate', label: '请求成功率（不含429/502）', value: todaySuccessRate === null ? '--' : `${Math.round(todaySuccessRate)}%`, note: `累计 ${totalSuccessRate === null ? '--' : `${totalSuccessRate}%`} · ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张 · 排除 ${totalExcluded.toLocaleString('zh-CN')} 个`, trend: successRateTrend, icon: Cable, tone: todaySuccessRate !== null && todaySuccessRate < 95 ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700' },
-    { key: 'customers', label: '新增客户', value: Number(data.today?.users || 0).toLocaleString('zh-CN'), note: `累计 ${Number(data.users?.total || 0).toLocaleString('zh-CN')} · 启用 ${Number(data.users?.active || 0).toLocaleString('zh-CN')}`, trend: customerTrend, icon: Users, tone: 'bg-zinc-100 text-zinc-600' },
+    { key: 'revenue', label: '今日实收', value: formatCNY(Number(data.today?.paidAmount || 0)), note: `累计 ${formatCNY(Number(data.revenue?.totalPaidAmount || 0))}`, trend: revenueTrend, icon: CircleDollarSign, tone: 'green' as const },
+    { key: 'balance', label: '余额消耗', value: formatCNY(Number(data.today?.balanceConsumed || 0), 4), note: `总余额 ${formatCNY(Number(data.users?.totalBalance || 0), 4)}`, trend: balanceConsumptionTrend, icon: Wallet, tone: 'amber' as const },
+    { key: 'requests', label: 'API 请求', value: Number(data.today?.tasks || 0).toLocaleString('zh-CN'), note: `累计 ${Number(stats.total || 0).toLocaleString('zh-CN')} 次`, trend: requestTrend, icon: Activity, tone: 'blue' as const },
+    { key: 'success-rate', label: '请求成功率', value: todaySuccessRate === null ? '--' : `${Math.round(todaySuccessRate)}%`, note: `累计 ${totalSuccessRate === null ? '--' : `${totalSuccessRate}%`} · ${Number(stats.totalImages || 0).toLocaleString('zh-CN')} 张`, trend: successRateTrend, icon: Cable, tone: todaySuccessRate !== null && todaySuccessRate < 95 ? 'amber' as const : 'green' as const },
+    { key: 'customers', label: '新增客户', value: Number(data.today?.users || 0).toLocaleString('zh-CN'), note: `累计 ${Number(data.users?.total || 0).toLocaleString('zh-CN')} · 启用 ${Number(data.users?.active || 0).toLocaleString('zh-CN')}`, trend: customerTrend, icon: Users, tone: 'neutral' as const },
   ];
   const alertItems = useMemo(() => [
     { key: 'pending-orders', label: '待支付充值单', value: Number(data.pending?.pendingOrders || 0), dotTone: 'bg-amber-500', valueTone: 'text-amber-800' },
@@ -381,27 +402,8 @@ export default function AdminDashboardPage() {
         </div>
       ) : (
         <>
-          <section aria-label="今日经营摘要" className="overflow-hidden rounded-md border border-[#DCE4DF] bg-[#DCE4DF]">
-            <div className="grid grid-cols-2 gap-px md:grid-cols-3 xl:grid-cols-5">
-              {summaryMetrics.map((metric) => {
-                const Icon = metric.icon;
-                const TrendIcon = metric.trend.type === 'positive' ? ArrowUpRight : metric.trend.type === 'negative' ? ArrowDownRight : Minus;
-                const trendTone = metric.trend.type === 'positive' ? 'text-emerald-700' : metric.trend.type === 'negative' ? 'text-red-700' : 'text-zinc-500';
-                return (
-                  <div key={metric.key} className="min-w-0 bg-white px-4 py-3.5 last:col-span-2 md:last:col-span-1">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-[10px] font-semibold text-zinc-500">{metric.label}</span>
-                      <span className={`grid h-7 w-7 shrink-0 place-items-center rounded-md ${metric.tone}`}><Icon className="h-3.5 w-3.5" /></span>
-                    </div>
-                    <strong className="mt-2 block truncate text-xl text-[#17201B]">{metric.value}</strong>
-                    <div className="mt-2 flex min-w-0 items-center justify-between gap-2 border-t border-[#F0F3F1] pt-2">
-                      <small className="truncate text-[10px] text-zinc-400">{metric.note}</small>
-                      <span className={`inline-flex shrink-0 items-center gap-0.5 font-mono text-[10px] font-semibold ${trendTone}`} title={metric.trend.label}><TrendIcon className="h-3 w-3" />{metric.trend.value}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+          <section aria-label="今日经营摘要" className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
+            {summaryMetrics.map((metric) => <AdminMetricCard key={metric.key} title={metric.label} value={metric.value} note={metric.note} trend={metric.trend} icon={metric.icon} tone={metric.tone} />)}
           </section>
 
           {alertItems.length > 0 && (
@@ -431,31 +433,26 @@ export default function AdminDashboardPage() {
             </header>
             <div className="flex min-h-[38px] flex-wrap items-center gap-x-4 gap-y-1.5 border-b border-[#EDF0EE] px-4 py-2" aria-label="任务趋势图例">
               {taskTrendSeries.map((item) => (
-                <span key={item.key} className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500"><i className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: item.color }} aria-hidden="true" />{item.label}</span>
+                <span key={item.key} className="inline-flex items-center gap-1.5 text-[10px] text-zinc-500"><i className={`inline-block h-px w-5 ${item.key === 'failed' ? 'border-t border-dashed' : ''}`} style={item.key === 'failed' ? { borderColor: item.color } : { backgroundColor: item.color }} aria-hidden="true" />{item.label}</span>
               ))}
-              <span className="inline-flex items-center gap-1.5 text-[10px] font-semibold text-[#047857]">成功率 {taskTrendSuccessRate === null ? '--' : `${Math.round(taskTrendSuccessRate)}%`}</span>
             </div>
-            <p className="sr-only" id="task-trend-description">当前范围共 {taskTrendSummary.total} 个任务，成功 {taskTrendSummary.success} 个，失败 {taskTrendSummary.failed} 个，处理中 {taskTrendSummary.running} 个，已取消 {taskTrendSummary.canceled} 个。成功率为 {taskTrendSuccessRate === null ? '暂无数据' : `${Math.round(taskTrendSuccessRate)}%`}，按成功与未被429/502排除的失败计算，排除 {taskTrendSummary.excluded} 个。</p>
+            <p className="sr-only" id="task-trend-description">当前范围共 {taskTrendSummary.total} 个任务，成功 {taskTrendSummary.success} 个，失败 {taskTrendSummary.failed} 个，处理中 {taskTrendSummary.running} 个，已取消 {taskTrendSummary.canceled} 个。成功率按成功、失败与已取消的终态任务计算，为 {taskTrendSuccessRate === null ? '暂无数据' : `${Math.round(taskTrendSuccessRate)}%`}。</p>
             <div className="h-[220px] w-full px-1 pb-3 pt-3 sm:h-[260px] sm:px-3" aria-describedby="task-trend-description">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart accessibilityLayer data={taskTrend} margin={{ top: 6, right: 14, left: -8, bottom: 0 }}>
-                  <CartesianGrid stroke="#EDF0EE" strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: '#778079', fontSize: 9 }} tickLine={false} axisLine={{ stroke: '#DCE4DF' }} minTickGap={22} />
-                  <YAxis allowDecimals={false} tick={{ fill: '#778079', fontSize: 9 }} tickLine={false} axisLine={false} width={44} />
-                  <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `日期 ${String(label)}`} contentStyle={{ border: '1px solid #DCE4DF', borderRadius: 7, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 10 }} />
-                  <Line type="linear" dataKey="total" name="全部任务" stroke={TASK_TREND_COLORS.total} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-                  <Line type="linear" dataKey="success" name="成功" stroke={TASK_TREND_COLORS.success} strokeWidth={2.25} dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-                  <Line type="linear" dataKey="failed" name="失败（全部）" stroke={TASK_TREND_COLORS.failed} strokeWidth={2.25} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { r: 2.25, fill: '#fff', strokeWidth: 1.75 } : false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2.25 }} />
-                  <Line type="linear" dataKey="running" name="处理中" stroke={TASK_TREND_COLORS.running} strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
-                  <Line type="linear" dataKey="canceled" name="已取消" stroke={TASK_TREND_COLORS.canceled} strokeWidth={1.75} strokeDasharray="3 4" dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
-                  <Line type="linear" dataKey="excluded" name="429/502（不计成功率）" stroke={TASK_TREND_COLORS.excluded} strokeWidth={1.75} strokeDasharray="2 4" dot={false} activeDot={{ r: 4, fill: '#fff', strokeWidth: 2 }} />
+                <LineChart accessibilityLayer data={taskTrend} margin={ADMIN_CHART_MARGIN}>
+                  <CartesianGrid stroke={ADMIN_CHART_GRID} vertical />
+                  <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: ADMIN_CHART_AXIS, fontSize: 9 }} tickLine={false} axisLine={{ stroke: ADMIN_CHART_BORDER }} minTickGap={22} />
+                  <YAxis allowDecimals={false} tick={{ fill: ADMIN_CHART_AXIS, fontSize: 9 }} tickLine={false} axisLine={false} width={44} />
+                  <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `日期 ${String(label)}`} contentStyle={{ border: `1px solid ${ADMIN_CHART_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
+                  <Line type="monotone" dataKey="success" name="成功" stroke={TASK_TREND_COLORS.success} strokeWidth={2} dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.success, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="failed" name="失败" stroke={TASK_TREND_COLORS.failed} strokeWidth={1.8} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.failed, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </section>
 
           <section className="flex min-w-0 flex-col overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="upstream-status-title">
-            <div className={`h-1 w-full ${upstreamReachable ? upstreamDegraded ? 'bg-amber-500' : 'bg-[#3F9274]' : upstreamPending ? 'bg-zinc-300' : 'bg-[#D06F69]'}`} />
+            <div className={`h-1 w-full ${upstreamStatusTone === 'healthy' ? 'bg-[#3F9274]' : upstreamStatusTone === 'warning' ? 'bg-amber-500' : upstreamStatusTone === 'pending' ? 'bg-zinc-300' : 'bg-[#D06F69]'}`} />
             <header className="flex items-start justify-between gap-3 border-b border-[#EDF0EE] px-4 py-3">
               <div className="flex min-w-0 items-center gap-3">
                 <span className={`grid h-8 w-8 shrink-0 place-items-center rounded-md ${upstreamIconTone}`}>{upstreamReachable ? <HeartPulse className="h-4 w-4" /> : <Server className="h-4 w-4" />}</span>
@@ -475,7 +472,7 @@ export default function AdminDashboardPage() {
               ].map(([label, value, note]) => (
                 <div key={label} className="min-w-0 bg-white px-4 py-3">
                   <span className="block text-[10px] font-semibold text-zinc-500">{label}</span>
-                  <strong className="mt-1 block truncate text-base text-[#17201B]">{value}</strong>
+                  <strong className={`mt-1 block truncate text-base ${label === '近一小时成功率' ? upstreamSuccessRateTone : 'text-[#17201B]'}`}>{value}</strong>
                   <small className="mt-0.5 block truncate text-[10px] text-zinc-400">{note}</small>
                 </div>
               ))}

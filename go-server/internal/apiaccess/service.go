@@ -90,6 +90,14 @@ func (s Service) ListUserKeys(ctx context.Context, userID string) ([]PublicAcces
 	return publicKeys(keys, s.dynamicConcurrencyConfig), nil
 }
 
+func (s Service) ListUserKeysPage(ctx context.Context, userID string, page int, pageSize int) ([]PublicAccessKey, int, error) {
+	if _, err := s.users.FindByID(ctx, userID); err != nil { return nil, 0, err }
+	keys, total, err := s.keys.ListKeysPage(ctx, userID, page, pageSize)
+	if err != nil { return nil, 0, err }
+	if err := s.attachWindowRequestCounts(ctx, keys); err != nil { return nil, 0, err }
+	return publicKeys(keys, s.dynamicConcurrencyConfig), total, nil
+}
+
 func (s Service) ListAllKeys(ctx context.Context) ([]PublicAccessKey, error) {
 	_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
 	keys, err := s.keys.ListKeys(ctx, "")
@@ -239,33 +247,43 @@ func (s Service) DeleteKey(ctx context.Context, id string, userID string) error 
 }
 
 func (s Service) ListLogs(ctx context.Context, input ListLogsInput) ([]PublicUsageLog, int, error) {
-	_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
-	items, total, err := s.keys.ListLogs(ctx, input)
+	items, stats, err := s.ListLogsWithStats(ctx, input)
 	if err != nil {
 		return nil, 0, err
+	}
+	return items, stats.Total, nil
+}
+
+func (s Service) ListLogsWithStats(ctx context.Context, input ListLogsInput) ([]PublicUsageLog, UsageStats, error) {
+	items, stats, err := s.keys.ListLogsWithStats(ctx, input)
+	if err != nil {
+		return nil, UsageStats{}, err
 	}
 	result := make([]PublicUsageLog, 0, len(items))
 	for _, item := range items {
 		result = append(result, ToPublicLog(item))
 	}
-	return result, total, nil
+	return result, stats, nil
 }
 
 func (s Service) ListAdminLogs(ctx context.Context, input ListLogsInput) ([]AdminPublicUsageLog, int, error) {
-	// Search requests should not be coupled to terminal-task reconciliation;
-	// the task lifecycle normally persists the final log state already.
-	if !input.IdentityOnly {
-		_ = s.keys.SyncTerminalTaskLogs(ctx, 200)
-	}
-	items, total, err := s.keys.ListLogs(ctx, input)
+	items, stats, err := s.ListAdminLogsWithStats(ctx, input)
 	if err != nil {
 		return nil, 0, err
+	}
+	return items, stats.Total, nil
+}
+
+func (s Service) ListAdminLogsWithStats(ctx context.Context, input ListLogsInput) ([]AdminPublicUsageLog, UsageStats, error) {
+	items, stats, err := s.keys.ListLogsWithStats(ctx, input)
+	if err != nil {
+		return nil, UsageStats{}, err
 	}
 	result := make([]AdminPublicUsageLog, 0, len(items))
 	for _, item := range items {
 		result = append(result, ToAdminPublicLog(item))
 	}
-	return result, total, nil
+	return result, stats, nil
 }
 
 func (s Service) ListLogStats(ctx context.Context, input ListLogsInput) (UsageStats, error) {

@@ -9,6 +9,8 @@ const ADMIN_ROUTES: Rule[] = [
   { pattern: /^\/api\/upstream\/stability$/, methods: ['GET'] },
   { pattern: /^\/api\/upstream\/openai-status$/, methods: ['GET'] },
   { pattern: /^\/api\/users$/, methods: ['GET', 'POST'] },
+  { pattern: /^\/api\/users\/options$/, methods: ['GET'] },
+  { pattern: /^\/api\/admin\/users$/, methods: ['GET'] },
   { pattern: /^\/api\/users\/[^/]+$/, methods: ['PATCH', 'DELETE'] },
   { pattern: /^\/api\/users\/[^/]+\/balance$/, methods: ['PATCH'] },
   { pattern: /^\/api\/users\/[^/]+\/credit-logs$/, methods: ['GET'] },

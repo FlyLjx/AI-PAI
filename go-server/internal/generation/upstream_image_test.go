@@ -376,7 +376,7 @@ func TestCallImageJSONRetriesRetryable429(t *testing.T) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"error": map[string]any{
-					"code":      "upstream_rate_limited",
+					"code":      "service_rate_limited",
 					"message":   "上游请求频率受限",
 					"retryable": true,
 				},
@@ -425,6 +425,35 @@ func TestCallImageJSONDoesNotRetryNonRetryable429(t *testing.T) {
 	details, ok := UpstreamErrorDetails(err)
 	if !ok || details.Code != "client_quota_exhausted" || details.Retryable {
 		t.Fatalf("unexpected structured error: %+v, ok=%v", details, ok)
+	}
+}
+
+func TestCallImageJSONPreservesStructuredFailureFromSuccessfulResponse(t *testing.T) {
+	var requestCount int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		atomic.AddInt64(&requestCount, 1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": "failed",
+			"error": map[string]any{
+				"code":      "image_generation_failed",
+				"message":   "任务生成失败",
+				"retryable": false,
+			},
+		})
+	}))
+	defer server.Close()
+
+	service := &Service{logger: slog.Default()}
+	_, err := service.callImageJSON(context.Background(), testImageRequest(server.URL), 1)
+	if err == nil {
+		t.Fatal("expected structured task failure")
+	}
+	if requestCount != 1 {
+		t.Fatalf("expected explicit retryable=false to stop retries, got %d requests", requestCount)
+	}
+	details, ok := UpstreamErrorDetails(err)
+	if !ok || details.StatusCode != http.StatusBadGateway || details.Code != "image_generation_failed" || details.Message != "任务生成失败" {
+		t.Fatalf("unexpected structured task failure: %+v, ok=%v", details, ok)
 	}
 }
 

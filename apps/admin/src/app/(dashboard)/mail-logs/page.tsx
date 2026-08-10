@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AppSelect } from '@/components/common/AppSelect';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { SortableHeader, type SortState } from '@/components/common/DataTable';
 import { PageHeader } from '@/components/common/PageHeader';
 import { formatDate } from '@/lib/common/utils';
@@ -210,7 +211,7 @@ export default function AdminMailLogsPage() {
     if (users.length > 0) return;
     setUsersLoading(true);
     try {
-      const response = await portalApi.users();
+      const response = await portalApi.userOptions();
       setUsers((response.data || []).filter((user) => user.role === 'user'));
     } catch (loadError) {
       toast.error(loadError instanceof Error ? loadError.message : '用户列表加载失败');
@@ -270,10 +271,10 @@ export default function AdminMailLogsPage() {
   };
 
   const metrics = [
-    { label: '筛选结果', value: summary.total, note: '当前条件', icon: Mail, tone: 'bg-zinc-100 text-zinc-600' },
-    { label: '发送成功', value: summary.sent, note: '已投递', icon: CheckCircle2, tone: 'bg-emerald-50 text-emerald-700' },
-    { label: '发送失败', value: summary.failed, note: '需排查', icon: XCircle, tone: 'bg-red-50 text-red-700' },
-    { label: '今日邮件', value: summary.today, note: summary.sending ? `${summary.sending} 封发送中` : '今日触发', icon: CalendarClock, tone: 'bg-blue-50 text-blue-700' },
+    { label: '筛选结果', value: summary.total, note: '当前条件', icon: Mail, tone: 'neutral' as const },
+    { label: '发送成功', value: summary.sent, note: '已投递', icon: CheckCircle2, tone: 'green' as const },
+    { label: '发送失败', value: summary.failed, note: '需排查', icon: XCircle, tone: 'red' as const },
+    { label: '今日邮件', value: summary.today, note: summary.sending ? `${summary.sending} 封发送中` : '今日触发', icon: CalendarClock, tone: 'blue' as const },
   ];
 
   return (
@@ -286,15 +287,7 @@ export default function AdminMailLogsPage() {
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {metrics.map((metric) => {
-          const Icon = metric.icon;
-          return (
-            <div key={metric.label} className="flex items-center gap-3 rounded-md border border-[#DCE4DF] bg-white p-4">
-              <span className={`grid h-9 w-9 shrink-0 place-items-center rounded-md ${metric.tone}`}><Icon className="h-4 w-4" /></span>
-              <span className="min-w-0"><small className="block text-[10px] text-zinc-400">{metric.label}</small><strong className="mt-0.5 block font-mono text-lg">{metric.value.toLocaleString()}</strong><small className="block truncate text-[9px] text-zinc-400">{metric.note}</small></span>
-            </div>
-          );
-        })}
+        {metrics.map((metric) => <AdminMetricCard key={metric.label} title={metric.label} value={metric.value.toLocaleString()} note={metric.note} icon={metric.icon} tone={metric.tone} />)}
       </div>
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>}

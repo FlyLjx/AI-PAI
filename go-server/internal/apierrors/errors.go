@@ -46,7 +46,7 @@ func Parse(status int, payload any, body []byte) Details {
 			details.Retryable = retryable
 			details.RetryableSet = true
 		} else {
-			details.Retryable = IsCountedFailureStatus(status)
+			details.Retryable = IsRetryableStatus(status)
 		}
 	}
 	if details.Message == "" {
@@ -65,7 +65,22 @@ func errorPayload(payload any) (map[string]any, bool) {
 	if nested, ok := value["error"].(map[string]any); ok {
 		return nested, true
 	}
-	return value, true
+	if message, ok := value["error"].(string); ok && strings.TrimSpace(message) != "" {
+		return map[string]any{"message": message}, true
+	}
+	for _, key := range []string{"message", "error_message", "detail", "title", "type", "code", "category", "action", "hint", "request_id", "retryable"} {
+		if _, exists := value[key]; exists {
+			return value, true
+		}
+	}
+	for _, key := range []string{"task", "data"} {
+		if nested, ok := value[key].(map[string]any); ok {
+			if details, found := errorPayload(nested); found {
+				return details, true
+			}
+		}
+	}
+	return nil, false
 }
 
 func bodyText(body []byte) string {
@@ -116,9 +131,9 @@ func Normalize(details *Details) {
 	if details.Hint == "" {
 		details.Hint = defaultHint(details.Code, details.StatusCode)
 	}
-	if !details.RetryableSet && (details.StatusCode == http.StatusBadGateway || details.StatusCode == http.StatusTooManyRequests) {
-		// The upstream envelope marks these responses retryable. This default
-		// also covers HTML gateway pages and legacy upstream responses.
+	if !details.RetryableSet && IsRetryableStatus(details.StatusCode) {
+		// Structured upstream responses keep their explicit value. This default
+		// covers legacy and HTML responses that omit the retryable field.
 		details.Retryable = true
 	}
 }
@@ -170,11 +185,11 @@ func defaultTitle(code string, status int) string {
 		return "参考图无效"
 	case "content_policy_violation":
 		return "内容不符合要求"
-	case "image_generation_failed", "image_session_failed", "image_result_unavailable", "image_upload_failed", "upstream_service_error":
+	case "image_generation_failed", "image_session_failed", "image_result_unavailable", "image_upload_failed", "service_error", "upstream_service_error":
 		return "上游生图服务异常"
-	case "image_generation_stalled", "oai_image_generation_timeout", "upstream_rate_limited", "image_quota_exhausted", "account_pool_unavailable", "task_queue_full":
+	case "image_generation_stalled", "image_generation_timeout", "oai_image_generation_timeout", "service_rate_limited", "request_rate_limited", "upstream_rate_limited", "image_quota_exhausted", "account_pool_unavailable", "task_queue_full", "service_busy":
 		return "上游生图资源繁忙"
-	case "upstream_timeout", "image_upload_timeout", "image_preparation_timeout":
+	case "service_timeout", "upstream_timeout", "image_upload_timeout", "image_preparation_timeout":
 		return "上游服务超时"
 	case "api_key_invalid":
 		return "API Key 无效"
@@ -193,7 +208,7 @@ func defaultAction(code string, status int) string {
 	if code == "reference_image_required" {
 		return "upload_reference_image"
 	}
-	if IsCountedFailureStatus(status) || status >= 500 {
+	if IsRetryableStatus(status) {
 		return "retry"
 	}
 	return "check_request"
@@ -203,7 +218,7 @@ func defaultHint(code string, status int) string {
 	if code == "reference_image_required" {
 		return "请上传缩略图或参考图后重新提交任务"
 	}
-	if IsCountedFailureStatus(status) || status >= 500 {
+	if IsRetryableStatus(status) {
 		return "请稍后重试"
 	}
 	return "请检查请求参数"
@@ -217,25 +232,68 @@ func DefaultCode(status int) string {
 	case http.StatusUnauthorized:
 		return "api_key_invalid"
 	case http.StatusForbidden:
-		return "endpoint_not_allowed"
+		return "request_not_allowed"
+	case http.StatusNotFound:
+		return "resource_not_found"
 	case http.StatusRequestTimeout:
-		return "upstream_timeout"
+		return "request_failed"
 	case http.StatusPaymentRequired:
 		return "client_quota_exhausted"
+	case http.StatusRequestEntityTooLarge:
+		return "request_body_too_large"
+	case http.StatusUnprocessableEntity:
+		return "invalid_request"
 	case http.StatusPreconditionRequired:
 		return "interactive_challenge_required"
 	case http.StatusTooManyRequests:
-		return "upstream_rate_limited"
+		return "service_rate_limited"
+	case http.StatusInternalServerError:
+		return "internal_error"
 	case http.StatusBadGateway:
-		return "upstream_service_error"
+		return "service_error"
 	case http.StatusServiceUnavailable:
-		return "upstream_service_busy"
+		return "service_unavailable"
 	case http.StatusGatewayTimeout:
-		return "upstream_timeout"
+		return "service_timeout"
 	case 499:
 		return "request_canceled"
 	default:
 		return "api_error"
+	}
+}
+
+// StatusForCode resolves the documented upstream business codes when an
+// asynchronous task reports an error inside an otherwise successful response.
+func StatusForCode(code string) (int, bool) {
+	switch strings.TrimSpace(code) {
+	case "invalid_request", "request_body_incomplete", "reference_image_required", "content_policy_violation",
+		"invalid_output_format", "prompt_required", "reference_image_invalid", "request_failed":
+		return http.StatusBadRequest, true
+	case "api_key_invalid":
+		return http.StatusUnauthorized, true
+	case "request_not_allowed", "endpoint_not_allowed", "model_not_allowed":
+		return http.StatusForbidden, true
+	case "resource_not_found":
+		return http.StatusNotFound, true
+	case "request_body_too_large":
+		return http.StatusRequestEntityTooLarge, true
+	case "interactive_challenge_required":
+		return http.StatusPreconditionRequired, true
+	case "image_generation_stalled", "image_generation_timeout", "image_quota_exhausted", "account_pool_unavailable",
+		"task_queue_full", "service_rate_limited", "request_rate_limited", "client_quota_exhausted":
+		return http.StatusTooManyRequests, true
+	case "request_canceled":
+		return 499, true
+	case "internal_error":
+		return http.StatusInternalServerError, true
+	case "image_generation_failed", "image_session_failed", "image_result_unavailable", "image_upload_failed", "service_error":
+		return http.StatusBadGateway, true
+	case "service_restarted", "service_unavailable", "service_busy":
+		return http.StatusServiceUnavailable, true
+	case "image_upload_timeout", "image_preparation_timeout", "service_timeout":
+		return http.StatusGatewayTimeout, true
+	default:
+		return 0, false
 	}
 }
 
@@ -253,10 +311,16 @@ func trimLong(value string, limit int) string {
 	return value[:limit] + "..."
 }
 
-// IsCountedFailureStatus identifies the 429/502 upstream statuses that use
-// special retry handling and are excluded from success-rate denominators.
-func IsCountedFailureStatus(status int) bool {
-	return status == http.StatusTooManyRequests || status == http.StatusBadGateway
+// IsRetryableStatus supplies a default only when an upstream response omits
+// its explicit retryable field.
+func IsRetryableStatus(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError,
+		http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
 }
 
 func IsSuccessStatus(status int) bool {

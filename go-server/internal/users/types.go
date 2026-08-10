@@ -48,6 +48,21 @@ type PublicUser struct {
 	Subscription    any     `json:"subscription"`
 }
 
+type AdminUserPageInput struct {
+	Keyword  string
+	Status   string
+	Billing  string
+	Page     int
+	PageSize int
+}
+
+type AdminUserPageStats struct {
+	Total      int `json:"total"`
+	Active     int `json:"active"`
+	Verified   int `json:"verified"`
+	Subscribed int `json:"subscribed"`
+}
+
 func RequireEmailVerifiedForAPIKey(user *User) error {
 	if user == nil || user.EmailVerifiedAt == nil {
 		return ErrEmailNotVerified

@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarDays, Loader2, ReceiptText, RefreshCw } from 'lucide-react';
+import { CalendarDays, CircleDollarSign, Clock3, CreditCard, Loader2, ReceiptText, RefreshCw } from 'lucide-react';
 import { AppSelect } from '@/components/common/AppSelect';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { DataTable, type SortState } from '@/components/common/DataTable';
 import { DateRangePicker } from '@/components/common/DateRangePicker';
 import { EmptyState } from '@/components/common/EmptyState';
@@ -129,11 +130,11 @@ export default function AdminRechargesPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          ['已收金额', formatCNY(summary.paidAmount), `${summary.paidCount} 笔已支付`],
-          ['待支付订单', summary.pendingCount, '当前筛选范围'],
-          ['订阅订单', summary.subscriptionCount, '当前筛选范围'],
-          ['订单总数', summary.total.toLocaleString('zh-CN'), '当前筛选范围'],
-        ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
+          { title: '已收金额', value: formatCNY(summary.paidAmount), note: `${summary.paidCount} 笔已支付`, icon: CircleDollarSign, tone: 'green' as const },
+          { title: '待支付订单', value: summary.pendingCount, note: '当前筛选范围', icon: Clock3, tone: 'amber' as const },
+          { title: '订阅订单', value: summary.subscriptionCount, note: '当前筛选范围', icon: CreditCard, tone: 'blue' as const },
+          { title: '订单总数', value: summary.total.toLocaleString('zh-CN'), note: '当前筛选范围', icon: ReceiptText, tone: 'neutral' as const },
+        ].map((metric) => <AdminMetricCard key={metric.title} title={metric.title} value={metric.value} note={metric.note} icon={metric.icon} tone={metric.tone} />)}
       </div>
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load(page)} className="font-semibold underline">重试</button></div>}
@@ -169,6 +170,7 @@ export default function AdminRechargesPage() {
           )}
           currentPage={page}
           totalPages={totalPages}
+          totalItems={total}
           onPageChange={(nextPage) => void load(nextPage)}
           sortKey={sort.key}
           sortDirection={sort.direction}

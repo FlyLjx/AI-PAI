@@ -1,8 +1,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Activity, Check, CircleStop, Clipboard, Eye, KeyRound, Loader2, RefreshCw, Trash2, X } from 'lucide-react';
+import { Activity, Check, CircleStop, Clipboard, Eye, Gauge, Image as ImageIcon, KeyRound, Loader2, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable, type SortState } from '@/components/common/DataTable';
@@ -107,8 +108,7 @@ function wantsBase64Response(format?: string | null): boolean {
 
 function isCountedFailure(log: UsageLog): boolean {
   const status = log.status.toLowerCase();
-  return ['failed', 'canceled', 'cancelled'].includes(status)
-    && ![429, 502].includes(Number(log.responseStatusCode || 0));
+  return ['failed', 'canceled', 'cancelled'].includes(status);
 }
 
 function isCountedRequest(log: UsageLog): boolean {
@@ -253,8 +253,12 @@ export default function AdminAPIAccessPage() {
   }, [logSearch, logSort.direction, logSort.key, logStatusFilter]);
 
   const refreshAll = useCallback(async () => {
-    await Promise.all([loadKeys(keyPage), loadLogs(logPage)]);
-  }, [keyPage, loadKeys, loadLogs, logPage]);
+    if (tab === 'logs') {
+      await Promise.all([loadKeys(keyPage), loadLogs(logPage)]);
+      return;
+    }
+    await loadKeys(keyPage);
+  }, [keyPage, loadKeys, loadLogs, logPage, tab]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadKeys(1), searchDebounceMs);
@@ -262,9 +266,10 @@ export default function AdminAPIAccessPage() {
   }, [loadKeys]);
 
   useEffect(() => {
+    if (tab !== 'logs') return;
     const timer = window.setTimeout(() => void loadLogs(1), searchDebounceMs);
     return () => window.clearTimeout(timer);
-  }, [loadLogs]);
+  }, [loadLogs, tab]);
 
   useEffect(() => () => {
     keyRequestController.current?.abort();
@@ -374,23 +379,23 @@ export default function AdminAPIAccessPage() {
   return (
     <div className="space-y-5">
       <PageHeader title="API 调用" description="管理客户 API Key、动态并发和 OpenAI 图片接口调用记录。">
-        <button type="button" onClick={() => void refreshAll()} disabled={keysLoading || logsLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${keysLoading || logsLoading ? 'animate-spin' : ''}`} />刷新</button>
+        <button type="button" onClick={() => void refreshAll()} disabled={keysLoading || (tab === 'logs' && logsLoading)} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${keysLoading || (tab === 'logs' && logsLoading) ? 'animate-spin' : ''}`} />刷新</button>
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         {(tab === 'logs' ? [
-          ['筛选请求', logSummary.total, '全部匹配记录'],
-          ['成功请求', logSummary.success, '全部匹配记录'],
-          ['失败请求', logSummary.failed, '全部匹配记录'],
-          ['成功率', logSuccessRate, '成功 / 纳入统计'],
-          ['输出图片', logSummary.imageCount, '全部匹配记录'],
+          { title: '筛选请求', value: logSummary.total, note: '全部匹配记录', icon: Activity, tone: 'blue' as const },
+          { title: '成功请求', value: logSummary.success, note: '全部匹配记录', icon: Check, tone: 'green' as const },
+          { title: '失败请求', value: logSummary.failed, note: '全部匹配记录', icon: CircleStop, tone: 'red' as const },
+          { title: '成功率', value: logSuccessRate, note: '成功 / 纳入统计', icon: Gauge, tone: 'green' as const },
+          { title: '输出图片', value: logSummary.imageCount, note: '全部匹配记录', icon: ImageIcon, tone: 'amber' as const },
         ] : [
-          ['Key 总数', stats.totalKeys ?? keyTotal, '用户创建'],
-          ['启用 Key', stats.activeKeys ?? 0, '可正常调用'],
-          ['今日请求', stats.todayRequests ?? 0, 'OpenAI 图片接口'],
-          ['今日成功', stats.todaySuccess ?? 0, '完成请求'],
-          ['今日图片', stats.todayImageCount ?? 0, '返回图片数'],
-        ]).map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{typeof value === 'number' ? Number(value || 0).toLocaleString('zh-CN') : value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
+          { title: 'Key 总数', value: stats.totalKeys ?? keyTotal, note: '用户创建', icon: KeyRound, tone: 'blue' as const },
+          { title: '启用 Key', value: stats.activeKeys ?? 0, note: '可正常调用', icon: Check, tone: 'green' as const },
+          { title: '今日请求', value: stats.todayRequests ?? 0, note: 'OpenAI 图片接口', icon: Activity, tone: 'blue' as const },
+          { title: '今日成功', value: stats.todaySuccess ?? 0, note: '完成请求', icon: Check, tone: 'green' as const },
+          { title: '今日图片', value: stats.todayImageCount ?? 0, note: '返回图片数', icon: ImageIcon, tone: 'amber' as const },
+        ]).map((metric) => <AdminMetricCard key={metric.title} title={metric.title} value={typeof metric.value === 'number' ? Number(metric.value || 0).toLocaleString('zh-CN') : metric.value} note={metric.note} icon={metric.icon} tone={metric.tone} />)}
       </div>
 
       <div className="inline-flex rounded-md border border-[#DCE4DF] bg-[#F6F8F6] p-0.5">
@@ -422,6 +427,7 @@ export default function AdminAPIAccessPage() {
           filterControls={<><AppSelect value={keyStatus} options={KEY_STATUS_OPTIONS} onValueChange={(value) => { setKeyStatus(value); setKeyPage(1); }} compact ariaLabel="筛选 API Key 状态" /><span className="text-[11px] text-zinc-400">{keysLoading ? '正在查询...' : `共 ${keyTotal} 条 · 本页 ${keys.length} 条`}</span></>}
           currentPage={effectiveKeyPage}
           totalPages={keyTotalPages}
+          totalItems={keyTotal}
           onPageChange={(page) => void loadKeys(page)}
           sortKey={keySort.key}
           sortDirection={keySort.direction}
@@ -475,6 +481,7 @@ export default function AdminAPIAccessPage() {
           filterControls={<><AppSelect value={logStatusFilter} options={LOG_STATUS_OPTIONS} onValueChange={(value) => { setLogStatusFilter(value); setLogPage(1); }} compact ariaLabel="筛选调用状态" /><span className="text-[11px] text-zinc-400">{logsLoading ? '正在查询...' : `共 ${logTotal} 条 · 本页 ${logs.length} 条`}</span></>}
           currentPage={logPage}
           totalPages={Math.max(1, Math.ceil(logTotal / logPageSize))}
+          totalItems={logTotal}
           onPageChange={(page) => void loadLogs(page)}
           sortKey={logSort.key}
           sortDirection={logSort.direction}

@@ -97,7 +97,7 @@ func TestToPublicLogIncludesFailureResponseParameters(t *testing.T) {
 	if errorPayload["message"] != message || errorPayload["type"] != "api_error" {
 		t.Fatalf("unexpected error payload: %#v", errorPayload)
 	}
-	if errorPayload["param"] != nil || errorPayload["code"] != "upstream_service_error" {
+	if errorPayload["param"] != nil || errorPayload["code"] != "service_error" {
 		t.Fatalf("expected normalized code: %#v", errorPayload)
 	}
 }
@@ -111,11 +111,11 @@ func TestToPublicLogIncludes400FailureMessage(t *testing.T) {
 		CreatedAt:          time.Now(),
 	})
 	if publicLog.ErrorMessage == nil || *publicLog.ErrorMessage != message {
-		t.Fatalf("non-429/502 error message should be visible: %+v", publicLog)
+		t.Fatalf("failure error message should be visible: %+v", publicLog)
 	}
 	errorPayload, ok := publicLog.ResponseParams["error"].(map[string]any)
 	if !ok || errorPayload["message"] != message || errorPayload["code"] != "invalid_request" {
-		t.Fatalf("non-429/502 error details should be visible: %#v", publicLog.ResponseParams)
+		t.Fatalf("failure error details should be visible: %#v", publicLog.ResponseParams)
 	}
 }
 

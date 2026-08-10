@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Activity, Cable, Clock3, FlaskConical, Loader2, Pause, Pencil, Play, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { AppSelect } from '@/components/common/AppSelect';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable } from '@/components/common/DataTable';
@@ -35,8 +36,6 @@ const emptyDraft: ProviderDraft = {
   status: 'active',
 };
 
-const PAGE_SIZE = 15;
-
 function maskKey(value: string) {
   const key = String(value || '');
   if (!key) return '-';
@@ -58,7 +57,6 @@ export default function UpstreamAPIsPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [typeFilter, setTypeFilter] = useState('all');
-  const [page, setPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<Provider | null>(null);
   const [draft, setDraft] = useState<ProviderDraft>(emptyDraft);
@@ -113,8 +111,6 @@ export default function UpstreamAPIsPage() {
     });
   }, [providers, search, statusFilter, typeFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
   const summary = useMemo(() => ({
     total: filtered.length,
     active: filtered.filter((provider) => provider.status === 'active').length,
@@ -254,11 +250,11 @@ export default function UpstreamAPIsPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          ['接口总数', summary.total, '全部上游配置'],
-          ['正常启用', summary.active, '参与请求调度'],
-          ['已停用', summary.disabled, '不再接收请求'],
-          ['New API', summary.newapi, '兼容服务商'],
-        ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
+          { title: '接口总数', value: summary.total, note: '全部上游配置', icon: Activity, tone: 'blue' as const },
+          { title: '正常启用', value: summary.active, note: '参与请求调度', icon: Play, tone: 'green' as const },
+          { title: '已停用', value: summary.disabled, note: '不再接收请求', icon: Pause, tone: 'neutral' as const },
+          { title: 'New API', value: summary.newapi, note: '兼容服务商', icon: FlaskConical, tone: 'amber' as const },
+        ].map((metric) => <AdminMetricCard key={metric.title} title={metric.title} value={metric.value} note={metric.note} icon={metric.icon} tone={metric.tone} />)}
       </div>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
@@ -340,17 +336,15 @@ export default function UpstreamAPIsPage() {
             { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
           data={filtered}
-          pageSize={PAGE_SIZE}
-          clientSidePagination
           searchPlaceholder="搜索名称、地址或类型"
           searchValue={search}
-          onSearchChange={(value) => { setSearch(value); setPage(1); }}
+          onSearchChange={setSearch}
           filterControls={(
             <>
               <AppSelect
                 compact
                 value={typeFilter}
-                onValueChange={(value) => { setTypeFilter(value); setPage(1); }}
+                onValueChange={setTypeFilter}
                 ariaLabel="接口类型筛选"
                 options={[
                   { value: 'all', label: '全部类型' },
@@ -362,7 +356,7 @@ export default function UpstreamAPIsPage() {
               <AppSelect
                 compact
                 value={statusFilter}
-                onValueChange={(value) => { setStatusFilter(value); setPage(1); }}
+                onValueChange={setStatusFilter}
                 ariaLabel="接口状态筛选"
                 options={[
                   { value: 'all', label: '全部状态' },
@@ -373,9 +367,6 @@ export default function UpstreamAPIsPage() {
               <span className="text-[11px] text-zinc-400">{filtered.length} 条</span>
             </>
           )}
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={setPage}
           emptyState={<EmptyState title="暂无上游接口" description="添加第一个兼容 OpenAI 图片接口的上游。" icon={Cable} />}
           renderRow={(provider) => (
             <tr key={provider.id} className="hover:bg-[#FAFBFA]">

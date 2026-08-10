@@ -562,6 +562,74 @@ func (r *Router) listUsers(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
+func (r *Router) listUserOptions(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
+	defer cancel()
+	items, err := users.NewRepository(r.db).FindOptions(ctx, req.URL.Query().Get("keyword"), req.URL.Query().Get("status"), queryInt(req, "limit", 200))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	data := make([]users.PublicUser, 0, len(items))
+	for index := range items {
+		data = append(data, users.ToPublicUser(&items[index]))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": data})
+}
+
+func (r *Router) adminUsers(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
+	defer cancel()
+	page := queryInt(req, "page", 1)
+	pageSize := queryInt(req, "pageSize", 20)
+	items, total, stats, err := users.NewRepository(r.db).FindAdminPage(ctx, users.AdminUserPageInput{
+		Keyword:  req.URL.Query().Get("keyword"),
+		Status:   req.URL.Query().Get("status"),
+		Billing:  req.URL.Query().Get("billing"),
+		Page:     page,
+		PageSize: pageSize,
+	})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	values, err := settings.NewRepository(r.db).Get(ctx)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	freeLimits := operations.FreeQuotaLimits{
+		Hourly:  generationQuotaSetting(values["freeHourlyGenerationQuota"], defaultFreeHourlyGenerationQuota),
+		Daily:   generationQuotaSetting(values["freeDailyGenerationQuota"], defaultFreeDailyGenerationQuota),
+		Monthly: generationQuotaSetting(values["freeGenerationQuota"], defaultFreeGenerationQuota),
+	}
+	data := make([]users.PublicUser, 0, len(items))
+	for index := range items {
+		data = append(data, r.publicUserWithSubscriptionLimits(ctx, &items[index], freeLimits))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"data":       data,
+		"pagination": map[string]any{"total": total, "page": page, "pageSize": pageSize},
+		"summary":    stats,
+	})
+}
+
 func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request, id string) {
 	if req.Method != http.MethodPost && req.Method != http.MethodDelete {
 		writeMethodNotAllowed(w)

@@ -1,13 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Loader2, Package, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { BadgeCheck, CircleDollarSign, Images, Loader2, Package, Pencil, Plus, RefreshCw, Trash2, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { DataTable } from '@/components/common/DataTable';
 import { EmptyState } from '@/components/common/EmptyState';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
+import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { StatusBadge } from '@/components/common/StatusBadge';
 import { type Plan, portalApi } from '@/lib/admin-api';
 import { formatCNY } from '@/lib/common/utils';
@@ -48,8 +49,6 @@ const emptyDraft: PlanDraft = {
   status: 'active',
 };
 
-const PAGE_SIZE = 15;
-
 function planInput(plan: AdminPlan, overrides: Partial<PlanDraft> = {}): PlanDraft {
   return {
     name: plan.name,
@@ -75,7 +74,6 @@ export default function AdminPackagesPage() {
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
-  const [page, setPage] = useState(1);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<AdminPlan | null>(null);
   const [draft, setDraft] = useState<PlanDraft>(emptyDraft);
@@ -114,8 +112,6 @@ export default function AdminPackagesPage() {
     }).sort((a, b) => Number(a.sortOrder || 100) - Number(b.sortOrder || 100));
   }, [plans, search, statusFilter]);
 
-  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
   const summary = useMemo(() => ({
     total: filtered.length,
     active: filtered.filter((plan) => plan.status === 'active').length,
@@ -216,11 +212,11 @@ export default function AdminPackagesPage() {
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
-          ['套餐总数', summary.total, '全部订阅商品'],
-          ['已上架', summary.active, '用户可购买'],
-          ['额度合计', summary.quota.toLocaleString('zh-CN'), '各套餐额度之和'],
-          ['平均售价', formatCNY(summary.avgPrice), '当前套餐均价'],
-        ].map(([label, value, note]) => <div key={String(label)} className="rounded-md border border-[#DCE4DF] bg-white p-3.5"><span className="text-[11px] font-semibold text-zinc-500">{label}</span><strong className="mt-1.5 block text-xl">{value}</strong><small className="mt-1 block text-[11px] text-zinc-400">{note}</small></div>)}
+          { title: '套餐总数', value: summary.total, note: '全部订阅商品', icon: Package, tone: 'blue' as const },
+          { title: '已上架', value: summary.active, note: '用户可购买', icon: BadgeCheck, tone: 'green' as const },
+          { title: '额度合计', value: summary.quota.toLocaleString('zh-CN'), note: '各套餐额度之和', icon: Images, tone: 'amber' as const },
+          { title: '平均售价', value: formatCNY(summary.avgPrice), note: '当前套餐均价', icon: CircleDollarSign, tone: 'neutral' as const },
+        ].map((metric) => <AdminMetricCard key={metric.title} title={metric.title} value={metric.value} note={metric.note} icon={metric.icon} tone={metric.tone} />)}
       </div>
 
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>}
@@ -239,15 +235,10 @@ export default function AdminPackagesPage() {
             { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
           data={filtered}
-          pageSize={PAGE_SIZE}
-          clientSidePagination
           searchPlaceholder="搜索套餐名称、说明或标签"
           searchValue={search}
-          onSearchChange={(value) => { setSearch(value); setPage(1); }}
-          filterControls={<><AppSelect compact value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }} ariaLabel="筛选套餐状态" options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已上架' }, { value: 'disabled', label: '已下架' }]} /><span className="text-[11px] text-zinc-400">{filtered.length} 条</span></>}
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={setPage}
+          onSearchChange={setSearch}
+          filterControls={<><AppSelect compact value={statusFilter} onValueChange={setStatusFilter} ariaLabel="筛选套餐状态" options={[{ value: 'all', label: '全部状态' }, { value: 'active', label: '已上架' }, { value: 'disabled', label: '已下架' }]} /><span className="text-[11px] text-zinc-400">{filtered.length} 条</span></>}
           emptyState={<EmptyState title="暂无订阅套餐" description="创建一个套餐后即可向 API 客户发放或销售订阅。" icon={Package} />}
           renderRow={(plan) => (
             <tr key={plan.id} className="hover:bg-[#FAFBFA]">
