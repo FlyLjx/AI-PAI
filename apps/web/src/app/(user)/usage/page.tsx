@@ -55,6 +55,7 @@ const USAGE_TABLE_HEADERS = [
   { key: 'type', label: '请求类型' },
   { key: 'model', label: '渠道 / 模型' },
   { key: 'resolution', label: '分辨率' },
+  { key: 'charge', label: '扣费金额' },
   { key: 'time', label: '请求时间' },
   { key: 'status', label: '状态' },
 ];
@@ -111,6 +112,12 @@ function durationMeta(log: UsageLog): { label: string; className: string } {
   if (seconds <= 65) return { label: `${seconds.toFixed(2)}s`, className: 'active' };
   if (seconds < 120) return { label: `${seconds.toFixed(2)}s`, className: 'processing' };
   return { label: `${seconds.toFixed(2)}s`, className: 'failed' };
+}
+
+function chargeLabel(log: UsageLog): string {
+  const amount = Number(log.chargedCredits);
+  if (!Number.isFinite(amount)) return '--';
+  return amount.toFixed(4);
 }
 
 function requestParameters(log: UsageLog): Record<string, unknown> {
@@ -449,6 +456,7 @@ export default function UsagePage() {
                         </div>
                       </td>
                       <td><span className="usage-resolution">{log.size || '-'}</span></td>
+                      <td><span className="usage-charge">{chargeLabel(log)}</span></td>
                       <td><time className="usage-time">{formatDate(log.createdAt)}</time></td>
                       <td><span className={`usage-status-text ${meta.className}`}><i />{meta.label}</span></td>
                     </tr>
@@ -467,7 +475,7 @@ export default function UsagePage() {
                         <span className={`usage-status-text ${meta.className}`}><i />{meta.label}</span>
                       </div>
                       <div className="usage-mobile-item-meta">
-                        <span>{requestType(log)}</span><span>{log.size || '-'}</span><time>{formatDate(log.createdAt)}</time>
+                        <span>{requestType(log)}</span><span>{log.size || '-'}</span><span className="usage-mobile-charge">扣费 {chargeLabel(log)}</span><time>{formatDate(log.createdAt)}</time>
                       </div>
                     </article>
                   );
