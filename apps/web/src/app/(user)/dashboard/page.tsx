@@ -1,7 +1,6 @@
 'use client';
 
 import Link from 'next/link';
-import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Area,
@@ -49,7 +48,7 @@ type Metric = {
 };
 
 const RECENT_REQUEST_HEADERS = [
-  { key: 'request', label: '返回图片 / 请求接口' },
+  { key: 'request', label: '请求接口' },
   { key: 'type', label: '请求类型' },
   { key: 'model', label: '模型' },
   { key: 'status', label: '状态' },
@@ -89,12 +88,6 @@ function logStatus(status: string): { label: string; className: string; icon: Lu
   }
 }
 
-function imagePreviewUrl(log: UsageLog): string {
-  const status = String(log.status || '').trim().toLowerCase();
-  if (!log.taskId || !['success', 'succeeded'].includes(status)) return '';
-  return `/api/tasks/${encodeURIComponent(log.taskId)}/thumbnails/0?w=320&q=78`;
-}
-
 function requestLabel(log: UsageLog): string {
   const endpoint = String(log.endpoint || '').trim();
   if (endpoint) {
@@ -112,26 +105,6 @@ function requestType(log: UsageLog): string {
 
 function channelLabel(log: UsageLog): string {
   return String(log.model || '').trim() || log.keyName || log.keyPrefix || '未指定模型';
-}
-
-function RequestThumbnail({ log }: { log: UsageLog }) {
-  const [failed, setFailed] = useState(false);
-  const previewUrl = imagePreviewUrl(log);
-
-  if (!previewUrl || failed) {
-    return <span className="image-request-placeholder" aria-label="暂无返回图片"><ImageIcon size={14} /></span>;
-  }
-
-  return (
-    <Image
-      src={previewUrl}
-      alt={`${channelLabel(log)} 返回图片缩略图`}
-      width={42}
-      height={32}
-      unoptimized
-      onError={() => setFailed(true)}
-    />
-  );
 }
 
 function shortDate(value: string): string {
@@ -374,7 +347,6 @@ export default function DashboardPage() {
               <tr key={log.id}>
                 <td>
                   <span className="image-request-cell">
-                    <RequestThumbnail log={log} />
                     <code title={requestLabel(log)}>{requestLabel(log)}</code>
                   </span>
                 </td>

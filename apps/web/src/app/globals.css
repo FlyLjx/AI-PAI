@@ -2087,8 +2087,6 @@ body {
 .recent-table td { padding: 6px 24px; border-top: 1px solid var(--relay-border-soft); color: #445148; vertical-align: middle; white-space: nowrap; }
 .recent-table tbody tr:hover td { background: #fbfefc; }
 .image-request-cell { min-width: 0; display: flex; align-items: center; gap: 9px; }
-.image-request-cell img,
-.image-request-placeholder { width: 42px; height: 32px; flex: 0 0 42px; display: grid; place-items: center; overflow: hidden; border: 1px solid #dce9df; border-radius: 5px; background: #f3f8f4; color: #83a18d; object-fit: cover; }
 .image-request-cell code { max-width: 190px; overflow: hidden; color: #47564c; font-family: 'IBM Plex Mono', monospace; font-size: 10px; text-overflow: ellipsis; }
 .request-model { display: inline-block; max-width: 145px; overflow: hidden; color: #3e5145; font-family: 'IBM Plex Mono', monospace; font-size: 10px; font-weight: 600; text-overflow: ellipsis; vertical-align: middle; }
 .request-status-pill { gap: 5px; min-height: 21px; padding: 0 7px; border-radius: 5px; background: #f1f4f2; color: #69766d; font-size: 10px; font-weight: 750; }
