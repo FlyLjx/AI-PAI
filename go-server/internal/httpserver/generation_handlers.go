@@ -18,18 +18,18 @@ import (
 )
 
 type generateImageInput struct {
-	UserID                string   `json:"userId"`
-	ModelID               string   `json:"modelId"`
-	Prompt                string   `json:"prompt"`
-	Capability            string   `json:"capability"`
-	SizeTier              string   `json:"sizeTier"`
-	Size                  string   `json:"size"`
-	Quantity              int      `json:"quantity"`
-	ReferenceImageURL     string   `json:"referenceImageUrl"`
-	ReferenceImageURLs    []string `json:"referenceImageUrls"`
-	MaskImageURL          string   `json:"maskImageUrl"`
-	OutputFormat          string   `json:"outputFormat"`
-	OpenAIParams          any      `json:"openaiParams"`
+	UserID             string   `json:"userId"`
+	ModelID            string   `json:"modelId"`
+	Prompt             string   `json:"prompt"`
+	Capability         string   `json:"capability"`
+	SizeTier           string   `json:"sizeTier"`
+	Size               string   `json:"size"`
+	Quantity           int      `json:"quantity"`
+	ReferenceImageURL  string   `json:"referenceImageUrl"`
+	ReferenceImageURLs []string `json:"referenceImageUrls"`
+	MaskImageURL       string   `json:"maskImageUrl"`
+	OutputFormat       string   `json:"outputFormat"`
+	OpenAIParams       any      `json:"openaiParams"`
 }
 
 const (
@@ -156,6 +156,9 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	if err := r.withUserGenerationLock(ctx, user.ID, func(tx *database.Tx) error {
 		costCredits, subscriptionQuotaUnits, err := r.generationBillingQuote(ctx, tx, user.ID, *model, input.SizeTier, input.Quantity, generationBillingModeAuto)
 		if err != nil {
+			return err
+		}
+		if err := reserveGenerationBalance(ctx, tx, user.ID, costCredits, generationBillingModeAuto); err != nil {
 			return err
 		}
 		task := tasks.Task{

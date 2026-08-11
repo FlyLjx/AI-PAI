@@ -141,6 +141,15 @@ func (s *Service) finishSuccessWithBillingOnce(ctx context.Context, input Billin
 	if err := tx.Commit(); err != nil {
 		return err
 	}
+	// The task is now terminal, so refresh the idempotent reservation cache
+	// outside the settlement transaction. This keeps the user lock out of the
+	// image/result writes and guarantees that a success releases its pending
+	// balance reservation exactly once.
+	if s.tasks != nil {
+		if err := s.tasks.ReconcileGenerationBalanceReservation(context.Background(), taskUserID); err != nil && s.logger != nil {
+			s.logger.Warn("generation balance reservation reconcile failed", "taskId", input.TaskID, "userId", taskUserID, "error", err)
+		}
+	}
 	if s.userHub != nil && costCredits > 0 {
 		if user, err := users.NewRepository(s.db).FindByID(context.Background(), taskUserID); err == nil {
 			s.userHub.PublishUser(user)

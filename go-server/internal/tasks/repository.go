@@ -33,12 +33,10 @@ func (r *Repository) CreateWithTx(ctx context.Context, tx *database.Tx, task Tas
 	if tx == nil {
 		return r.Create(ctx, task)
 	}
-	// The caller already holds the user-generation transaction lock. Re-reading
-	// the task through the wide user/model/provider join here needlessly keeps
-	// that lock while the database resolves several unrelated rows. The task
-	// fields supplied by the caller are the authoritative values at insert
-	// time, so return them directly and let the normal FindByID path enrich a
-	// task after the transaction has committed.
+	// Re-reading the task through the wide user/model/provider join here would
+	// keep the admission transaction open while unrelated rows are resolved.
+	// The task fields supplied by the caller are authoritative at insert time;
+	// let the normal FindByID path enrich a task after the transaction commits.
 	if err := insertTask(ctx, tx, task); err != nil {
 		return nil, err
 	}
@@ -302,6 +300,42 @@ func (r *Repository) UpdateStatus(ctx context.Context, id string, status Status)
 		return nil, err
 	}
 	return r.FindByID(ctx, id)
+}
+
+// ReconcileGenerationBalanceReservation rebuilds the small per-user
+// reservation cache from active generation tasks. It is intentionally
+// idempotent, so it is safe to call after success, failure, cancellation, or
+// a timeout sweep; a repeated status callback can never subtract twice.
+func (r *Repository) ReconcileGenerationBalanceReservation(ctx context.Context, userID string) error {
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil
+	}
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var lockedUserID string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT id FROM users WHERE id = ? FOR UPDATE
+	`, userID).Scan(&lockedUserID); err != nil {
+		return err
+	}
+	var reserved float64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT COALESCE(SUM(cost_credits), 0)
+		FROM generation_tasks
+		WHERE user_id = ? AND status IN ('queued', 'pending', 'processing')
+	`, userID).Scan(&reserved); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE users SET generation_reserved_credits = ? WHERE id = ?
+	`, reserved, userID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (r *Repository) ClaimForProcessing(ctx context.Context, id string) (bool, error) {

@@ -12,12 +12,13 @@ import (
 )
 
 const (
-	// A generation request should not wait for an account row indefinitely. A
-	// short, explicit lock budget prevents a busy account from consuming the
-	// whole request deadline; transient database deadlocks are retried below.
-	generationLockWaitTimeout = 5 * time.Second
-	generationLockRetryCount  = 3
-	generationEnqueueTimeout  = 30 * time.Second
+	// Admission must stay database-only. The old implementation held the user
+	// row lock while calculating the quote and inserting the task, which made
+	// every request for one account wait behind the previous request and turn
+	// normal concurrency into a 5-second 429. Balance reservation below uses a
+	// single conditional UPDATE, so the row is locked only for that statement.
+	generationLockRetryCount = 3
+	generationEnqueueTimeout = 30 * time.Second
 )
 
 func (r *Router) withUserGenerationLock(ctx context.Context, userID string, fn func(tx *database.Tx) error) error {
@@ -51,20 +52,18 @@ func (r *Router) withUserGenerationLockOnce(ctx context.Context, userID string, 
 	}
 	defer tx.Rollback()
 
-	lockCtx, cancel := context.WithTimeout(ctx, generationLockWaitTimeout)
-	defer cancel()
-	var lockedUserID string
-	if err := tx.QueryRowContext(lockCtx, `
+	// Validate the account without SELECT ... FOR UPDATE. A generation task
+	// must not hold an account lock while doing quota/price reads or writing
+	// access logs; the balance reservation UPDATE is the only admission point
+	// that needs a short database row lock.
+	var activeUserID string
+	if err := tx.QueryRowContext(ctx, `
 		SELECT id
 		FROM users
 		WHERE id = ? AND status = 'active'
-		FOR UPDATE
-	`, userID).Scan(&lockedUserID); err != nil {
+	`, userID).Scan(&activeUserID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return newAppError(http.StatusForbidden, "用户不存在或已被禁用"), false
-		}
-		if errors.Is(lockCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil {
-			return newAppError(http.StatusTooManyRequests, "当前账户请求较多，请稍后重试"), true
 		}
 		return err, false
 	}
@@ -73,6 +72,36 @@ func (r *Router) withUserGenerationLockOnce(ctx context.Context, userID string, 
 		return err, false
 	}
 	return tx.Commit(), false
+}
+
+// reserveGenerationBalance atomically adds a pending balance reservation.
+// The conditional UPDATE is the concurrency gate: concurrent requests may
+// read the same quote, but only requests that still have unreserved balance
+// can commit a reservation. It holds the user row lock for one UPDATE instead
+// of the full admission transaction.
+func reserveGenerationBalance(ctx context.Context, tx *database.Tx, userID string, amount float64, billingMode string) error {
+	amount = normalizedCreditAmount(amount)
+	if amount <= 0 {
+		return nil
+	}
+	result, err := tx.ExecContext(ctx, `
+		UPDATE users
+		SET generation_reserved_credits = COALESCE(generation_reserved_credits, 0) + ?
+		WHERE id = ?
+			AND status = 'active'
+			AND credits - COALESCE(generation_reserved_credits, 0) >= ?
+	`, amount, userID, amount)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return newAppError(http.StatusPaymentRequired, generationBalanceInsufficientMessage(billingMode))
+	}
+	return nil
 }
 
 func isRetryableGenerationLockError(err error) bool {

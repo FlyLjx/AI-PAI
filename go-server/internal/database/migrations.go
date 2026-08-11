@@ -56,6 +56,28 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "users", "invited_ip", "VARCHAR(64) NULL", "invited_by"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "users", "generation_reserved_credits", "NUMERIC(12,4) NOT NULL DEFAULT 0.0000", "credits"); err != nil {
+		return err
+	}
+	// Rebuild the reservation cache from active tasks. This repairs rows left
+	// by a process interrupted between admission and settlement.
+	if _, err := db.ExecContext(ctx, Rebind(`
+		UPDATE users
+		SET generation_reserved_credits = COALESCE((
+			SELECT SUM(generation_tasks.cost_credits)
+			FROM generation_tasks
+			WHERE generation_tasks.user_id = users.id
+				AND generation_tasks.status IN ('queued', 'pending', 'processing')
+		), 0)
+		WHERE COALESCE(generation_reserved_credits, 0) <> COALESCE((
+			SELECT SUM(generation_tasks.cost_credits)
+			FROM generation_tasks
+			WHERE generation_tasks.user_id = users.id
+				AND generation_tasks.status IN ('queued', 'pending', 'processing')
+		), 0)
+	`)); err != nil {
+		return err
+	}
 	if err := backfillUserInviteCodes(ctx, db); err != nil {
 		return err
 	}
@@ -523,7 +545,8 @@ func schemaBootstrapStatements() []string {
 				email_verified_at TIMESTAMP NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				credits NUMERIC(12,4) NOT NULL DEFAULT 0.0000
+				credits NUMERIC(12,4) NOT NULL DEFAULT 0.0000,
+				generation_reserved_credits NUMERIC(12,4) NOT NULL DEFAULT 0.0000
 			)`,
 			`CREATE TABLE IF NOT EXISTS api_providers (
 				id VARCHAR(36) PRIMARY KEY,

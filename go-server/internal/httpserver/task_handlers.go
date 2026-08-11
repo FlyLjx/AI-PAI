@@ -475,6 +475,11 @@ func (r *Router) cancelTask(w http.ResponseWriter, req *http.Request, id string)
 		writeError(w, newAppError(http.StatusConflict, "任务已经结束，不能取消"))
 		return
 	}
+	// Cancellation releases any pending balance reservation. The reconcile is
+	// idempotent and also handles a repeated cancel request safely.
+	if err := tasks.NewRepository(r.db).ReconcileGenerationBalanceReservation(ctx, task.UserID); err != nil && r.logger != nil {
+		r.logger.Warn("generation balance reservation reconcile failed", "taskId", task.ID, "userId", task.UserID, "error", err)
+	}
 	if r.queue != nil {
 		r.queue.Cancel(task.ID)
 	}

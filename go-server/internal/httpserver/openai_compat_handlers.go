@@ -222,6 +222,9 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		if err != nil {
 			return err
 		}
+		if err := reserveGenerationBalance(ctx, tx, auth.User.ID, costCredits, auth.APIKey.BillingMode); err != nil {
+			return err
+		}
 		task := tasks.Task{
 			ID:                     newID(),
 			UserID:                 auth.User.ID,

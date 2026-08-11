@@ -66,6 +66,7 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		details := taskErrorDetails(err)
 		s.finishAPIAccessLogFailure(taskID, err.Error(), details)
 		failed, _ := s.tasks.FinishFailedWithDetails(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds(), details)
+		s.reconcileTaskBalanceReservation(failed)
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
@@ -83,6 +84,7 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		details := taskErrorDetails(errors.New(message))
 		s.finishAPIAccessLogFailure(taskID, message, details)
 		failed, _ := s.tasks.FinishFailedWithDetails(context.Background(), taskID, message, time.Since(startedAt).Seconds(), details)
+		s.reconcileTaskBalanceReservation(failed)
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
@@ -192,6 +194,7 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		details := taskErrorDetails(lastErr)
 		s.finishAPIAccessLogFailure(taskID, lastErr.Error(), details)
 		failed, _ := s.tasks.FinishFailedWithDetails(context.Background(), taskID, lastErr.Error(), time.Since(startedAt).Seconds(), details)
+		s.reconcileTaskBalanceReservation(failed)
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
 			s.hub.PublishTask(*failed)
@@ -264,6 +267,9 @@ func (s *Service) FailTimedOut(ctx context.Context, cutoff time.Time, now time.T
 	logRepository := apiaccess.NewRepository(s.db)
 	var syncErr error
 	for _, id := range ids {
+		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
+			s.reconcileTaskBalanceReservation(task)
+		}
 		if err := logRepository.FinishLogsForTaskWithDetails(ctx, id, "failed", 0, message, taskErrorDetails(ErrTaskTimedOut)); err != nil {
 			syncErr = errors.Join(syncErr, err)
 		}
@@ -287,6 +293,9 @@ func (s *Service) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, 
 	logRepository := apiaccess.NewRepository(s.db)
 	var syncErr error
 	for _, id := range ids {
+		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
+			s.reconcileTaskBalanceReservation(task)
+		}
 		if err := logRepository.FinishLogsForTaskWithDetails(ctx, id, "failed", 0, message, taskErrorDetails(ErrTaskTimedOut)); err != nil {
 			syncErr = errors.Join(syncErr, err)
 		}
@@ -300,6 +309,17 @@ func (s *Service) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, 
 		}
 	}
 	return ids, syncErr
+}
+
+func (s *Service) reconcileTaskBalanceReservation(task *tasks.Task) {
+	if task == nil || strings.TrimSpace(task.UserID) == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.tasks.ReconcileGenerationBalanceReservation(ctx, task.UserID); err != nil && s.logger != nil {
+		s.logger.Warn("generation balance reservation reconcile failed", "taskId", task.ID, "userId", task.UserID, "error", err)
+	}
 }
 
 func (s *Service) TouchWaitingTasks(ctx context.Context) error {
