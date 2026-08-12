@@ -915,7 +915,7 @@ func scanTask(row taskScanner) (*Task, error) {
 	} else if task.TransparentBackground {
 		task.OutputFormat = "png"
 	} else {
-		task.OutputFormat = "jpeg"
+		task.OutputFormat = "png"
 	}
 	if errorMessage.Valid {
 		task.ErrorMessage = &errorMessage.String

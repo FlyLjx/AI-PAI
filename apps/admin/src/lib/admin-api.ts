@@ -634,7 +634,7 @@ export const portalApi = {
   updateUpstreamMaintenance: (enabled: boolean) => api<UpstreamMaintenanceState>('/api/admin/upstream-maintenance', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
   users: () => api<PortalUser[]>('/api/users'),
   userOptions: (input: { keyword?: string; status?: string; limit?: number } = {}) => api<PortalUser[]>(`/api/users/options${query(input)}`),
-  adminUsers: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; billing?: string }) => api<PortalUser[], { total: number; active: number; verified: number; subscribed: number }>(`/api/admin/users${query(input)}`),
+  adminUsers: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; billing?: string }, signal?: AbortSignal) => api<PortalUser[], { total: number; active: number; verified: number; subscribed: number }>(`/api/admin/users${query(input)}`, { signal }),
   createUser: (input: Record<string, unknown>) => api<PortalUser>('/api/users', { method: 'POST', body: JSON.stringify(input) }),
   updateUser: (id: string, input: Record<string, unknown>) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   updateUserBalance: (id: string, input: { balance: number; remark: string }) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/balance`, { method: 'PATCH', body: JSON.stringify(input) }),

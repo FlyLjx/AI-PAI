@@ -102,6 +102,38 @@ func TestToPublicLogIncludesFailureResponseParameters(t *testing.T) {
 	}
 }
 
+func TestToPublicLogOmitsLegacyInternalErrorFields(t *testing.T) {
+	message := "上游接口返回错误"
+	publicLog := ToPublicLog(UsageLog{
+		Status:       "failed",
+		ErrorMessage: &message,
+		ErrorDetails: &apierrors.Details{
+			StatusCode: 502,
+			Message:    message,
+			Title:      "Upstream failure",
+			Category:   "upstream",
+			Retryable:  true,
+			Action:     "retry",
+			Hint:       "Try later",
+			RequestID:  "req_legacy",
+		},
+		CreatedAt: time.Now(),
+	})
+
+	errorPayload, ok := publicLog.ResponseParams["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected error response: %#v", publicLog.ResponseParams)
+	}
+	if len(errorPayload) != 4 {
+		t.Fatalf("error response leaked non-OpenAI fields: %#v", errorPayload)
+	}
+	for _, field := range []string{"title", "category", "retryable", "action", "hint", "request_id"} {
+		if _, exists := errorPayload[field]; exists {
+			t.Fatalf("error response should not contain %q: %#v", field, errorPayload)
+		}
+	}
+}
+
 func TestToPublicLogIncludes400FailureMessage(t *testing.T) {
 	message := "参考图缺失或格式不可识别"
 	publicLog := ToPublicLog(UsageLog{

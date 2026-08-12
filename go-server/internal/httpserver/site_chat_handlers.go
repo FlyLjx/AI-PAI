@@ -74,9 +74,13 @@ func (r *Router) siteChatCompletions(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	body["stream"] = false
-	responseBytes, _, err := postOpenAIJSON(req.Context(), *provider, "chat/completions", body)
+	responseBytes, _, status, err := postOpenAIJSON(req.Context(), *provider, "chat/completions", body)
 	if err != nil {
-		writeError(w, newAppError(upstreamStatus(err), err.Error()))
+		writeError(w, newAppError(http.StatusBadGateway, err.Error()))
+		return
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		writeError(w, newAppError(status, string(responseBytes)))
 		return
 	}
 	var payload any

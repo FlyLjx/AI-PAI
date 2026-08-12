@@ -501,16 +501,10 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 		apierrors.Normalize(&details)
 		return map[string]any{
 			"error": map[string]any{
-				"message":    details.Message,
-				"title":      details.Title,
-				"type":       details.Type,
-				"category":   details.Category,
-				"retryable":  details.Retryable,
-				"action":     details.Action,
-				"hint":       details.Hint,
-				"request_id": details.RequestID,
-				"param":      nil,
-				"code":       details.Code,
+				"message": details.Message,
+				"type":    details.Type,
+				"param":   nil,
+				"code":    details.Code,
 			},
 		}
 	default:

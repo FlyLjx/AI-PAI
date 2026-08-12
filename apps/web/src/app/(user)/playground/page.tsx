@@ -64,8 +64,8 @@ const quantityOptions: AppSelectOption[] = [1, 2, 3, 4].map((value) => ({
 }));
 
 const formatOptions: AppSelectOption[] = [
-  { value: 'jpeg', label: 'JPEG' },
   { value: 'png', label: 'PNG' },
+  { value: 'jpeg', label: 'JPEG' },
   { value: 'webp', label: 'WEBP' },
 ];
 
@@ -140,7 +140,7 @@ export default function PlaygroundPage() {
   const [sizeTier, setSizeTier] = useState<SizeTier>('1k');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
   const [quantity, setQuantity] = useState(1);
-  const [outputFormat, setOutputFormat] = useState<OutputFormat>('jpeg');
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>('png');
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [loadingModels, setLoadingModels] = useState(false);
   const [generating, setGenerating] = useState(false);

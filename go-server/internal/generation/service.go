@@ -424,7 +424,7 @@ func taskOutputFormat(format string) string {
 	case "jpeg", "webp":
 		return format
 	}
-	return "jpeg"
+	return "png"
 }
 
 func imageOperation(raw *string) string {

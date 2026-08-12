@@ -8,7 +8,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 	"time"
 
@@ -25,71 +27,21 @@ const (
 func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt int) (any, error) {
 	body := map[string]any{
 		"model":           input.Model.ModelName,
-		"prompt":          buildUpstreamPrompt(input.Prompt, input.Size, input.SizeTier, input.Model.AppendSizeToPrompt),
+		"prompt":          strings.TrimSpace(input.Prompt),
 		"size":            input.Size,
 		"n":               input.Quantity,
 		"quality":         normalizeUpstreamImageQuality(input.Quality),
 		"response_format": normalizeUpstreamImageResponseFormat(input.ResponseFormat),
 	}
-	if input.OutputFormat != "" {
-		body["output_format"] = input.OutputFormat
+	payload, contentType, err := imageUpstreamPayload(ctx, input, body)
+	if err != nil {
+		return nil, err
 	}
-	if len(input.ReferenceImageURLs) > 0 {
-		items := make([]map[string]string, 0, len(input.ReferenceImageURLs))
-		urls := make([]string, 0, len(input.ReferenceImageURLs))
-		base64Images := make([]string, 0, len(input.ReferenceImageURLs))
-		for _, url := range input.ReferenceImageURLs {
-			if strings.TrimSpace(url) == "" {
-				continue
-			}
-			cleanURL := strings.TrimSpace(url)
-			upstreamURL := cleanURL
-			if input.Operation == "edit" {
-				inlineImage, err := inlineEditImageData(ctx, cleanURL)
-				if err != nil {
-					return nil, err
-				}
-				upstreamURL = inlineImage.DataURL
-				base64Images = append(base64Images, inlineImage.Base64)
-			}
-			urls = append(urls, upstreamURL)
-			items = append(items, map[string]string{"url": upstreamURL})
-		}
-		if len(items) > 0 {
-			body["referenceImages"] = items
-			body["referenceImage"] = map[string]any{
-				"count": len(items),
-				"items": items,
-			}
-			if input.Operation == "edit" {
-				body["image_url"] = urls[0]
-				if len(base64Images) > 0 {
-					body["image"] = base64Images[0]
-				} else {
-					body["image"] = urls[0]
-				}
-				body["image_urls"] = urls
-			}
-		}
-	}
-	if strings.TrimSpace(input.MaskImageURL) != "" {
-		maskURL := strings.TrimSpace(input.MaskImageURL)
-		if input.Operation == "edit" {
-			inlineMask, err := inlineEditImageData(ctx, maskURL)
-			if err != nil {
-				return nil, err
-			}
-			maskURL = inlineMask.DataURL
-			body["mask"] = inlineMask.Base64
-		}
-		body["maskImage"] = map[string]string{"url": maskURL}
-	}
-	payload, _ := json.Marshal(body)
 	endpoint := imageEndpoint(input.Provider, input.Operation)
 
 	var lastErr error
 	for requestAttempt := 1; requestAttempt <= upstreamImageMaxAttempts; requestAttempt++ {
-		result, err := s.callImageJSONOnce(ctx, input, attempt, requestAttempt, endpoint, payload)
+		result, err := s.callImageJSONOnce(ctx, input, attempt, requestAttempt, endpoint, payload, contentType)
 		if err == nil {
 			return result, nil
 		}
@@ -114,13 +66,85 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 	return nil, lastErr
 }
 
-func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, attempt int, requestAttempt int, endpoint string, payload []byte) (any, error) {
+func imageUpstreamPayload(ctx context.Context, input ImageRequest, body map[string]any) ([]byte, string, error) {
+	if input.Operation != "edit" {
+		payload, err := json.Marshal(body)
+		return payload, "application/json", err
+	}
+
+	var buffer bytes.Buffer
+	writer := multipart.NewWriter(&buffer)
+	for _, key := range []string{"model", "prompt", "size", "n", "quality", "response_format"} {
+		if value, exists := body[key]; exists {
+			if err := writer.WriteField(key, fmt.Sprint(value)); err != nil {
+				return nil, "", err
+			}
+		}
+	}
+	for _, value := range input.ReferenceImageURLs {
+		image, err := inlineEditImageData(ctx, value)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := writeEditImagePart(writer, "image", image); err != nil {
+			return nil, "", err
+		}
+	}
+	if strings.TrimSpace(input.MaskImageURL) != "" {
+		mask, err := inlineEditImageData(ctx, input.MaskImageURL)
+		if err != nil {
+			return nil, "", err
+		}
+		if err := writeEditImagePart(writer, "mask", mask); err != nil {
+			return nil, "", err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, "", err
+	}
+	return buffer.Bytes(), writer.FormDataContentType(), nil
+}
+
+func writeEditImagePart(writer *multipart.Writer, field string, image inlineEditImage) error {
+	contentType := image.ContentType
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	header := textproto.MIMEHeader{}
+	header.Set("Content-Disposition", fmt.Sprintf(`form-data; name=%q; filename=%q`, field, "image"+imageFileExtension(contentType)))
+	header.Set("Content-Type", contentType)
+	part, err := writer.CreatePart(header)
+	if err != nil {
+		return err
+	}
+	decoded, err := base64.StdEncoding.DecodeString(image.Base64)
+	if err != nil {
+		return err
+	}
+	_, err = part.Write(decoded)
+	return err
+}
+
+func imageFileExtension(contentType string) string {
+	switch strings.ToLower(contentType) {
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	default:
+		return ".png"
+	}
+}
+
+func (s *Service) callImageJSONOnce(ctx context.Context, input ImageRequest, attempt int, requestAttempt int, endpoint string, payload []byte, contentType string) (any, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", providers.AuthorizationHeader(input.Provider.APIKey))
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 
 	startedAt := time.Now()
 	if s.logger != nil {

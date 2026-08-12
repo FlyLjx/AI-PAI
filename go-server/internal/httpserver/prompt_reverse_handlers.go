@@ -78,9 +78,13 @@ func (r *Router) promptReverse(w http.ResponseWriter, req *http.Request) {
 		"temperature": 0.35,
 		"stream":      false,
 	}
-	result, _, err := postOpenAIJSON(ctx, *provider, "chat/completions", body)
+	result, _, status, err := postOpenAIJSON(ctx, *provider, "chat/completions", body)
 	if err != nil {
-		writeError(w, newAppError(upstreamStatus(err), "上游提示词反推失败："+err.Error()))
+		writeError(w, newAppError(http.StatusBadGateway, "上游提示词反推失败："+err.Error()))
+		return
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		writeError(w, newAppError(status, string(result)))
 		return
 	}
 	var payload any

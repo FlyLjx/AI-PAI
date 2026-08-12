@@ -151,6 +151,7 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/v1/models", r.compatModels)
 	r.mux.HandleFunc("/v1/balance", r.compatBalance)
 	r.mux.HandleFunc("/v1/chat/completions", r.compatChatCompletions)
+	r.mux.HandleFunc("/v1/responses", r.compatResponses)
 	r.mux.HandleFunc("/v1/images/generations", r.compatImageGenerations)
 	r.mux.HandleFunc("/v1/images/edits", r.compatImageEdits)
 

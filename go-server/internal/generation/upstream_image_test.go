@@ -1,10 +1,12 @@
 package generation
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -198,7 +200,7 @@ func TestCallImageJSONRewritesLocalhostImageURLToProviderOrigin(t *testing.T) {
 }
 
 func TestCallImageJSONSendsEditImageDataFields(t *testing.T) {
-	var received map[string]any
+	var receivedImage []byte
 	sourcePNG, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAFgwJ/lYV0ZQAAAABJRU5ErkJggg==")
 	if err != nil {
 		t.Fatalf("decode source png: %v", err)
@@ -212,9 +214,18 @@ func TestCallImageJSONSendsEditImageDataFields(t *testing.T) {
 		if req.URL.Path != "/v1/images/edits" {
 			t.Fatalf("unexpected endpoint path: %s", req.URL.Path)
 		}
-		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
-			t.Fatalf("decode request: %v", err)
+		if err := req.ParseMultipartForm(1024 * 1024); err != nil {
+			t.Fatalf("parse multipart request: %v", err)
 		}
+		if req.FormValue("model") != "gpt-image-test" || req.FormValue("prompt") != "测试" {
+			t.Fatalf("unexpected form fields: model=%q prompt=%q", req.FormValue("model"), req.FormValue("prompt"))
+		}
+		file, _, err := req.FormFile("image")
+		if err != nil {
+			t.Fatalf("read image form field: %v", err)
+		}
+		defer file.Close()
+		receivedImage, _ = io.ReadAll(file)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]string{{"url": "https://cdn.example.test/edited.png"}},
 		})
@@ -228,34 +239,23 @@ func TestCallImageJSONSendsEditImageDataFields(t *testing.T) {
 	if _, err := service.callImageJSON(context.Background(), input, 1); err != nil {
 		t.Fatalf("callImageJSON returned error: %v", err)
 	}
-	wantBase64 := base64.StdEncoding.EncodeToString(sourcePNG)
-	wantDataURL := "data:image/png;base64," + wantBase64
-	if received["image_url"] != wantDataURL {
-		t.Fatalf("expected image_url field, got %#v", received["image_url"])
-	}
-	if received["image"] != wantBase64 {
-		t.Fatalf("expected image field, got %#v", received["image"])
-	}
-	urls, ok := received["image_urls"].([]any)
-	if !ok || len(urls) != 1 || urls[0] != wantDataURL {
-		t.Fatalf("expected image_urls array, got %#v", received["image_urls"])
-	}
-	references, ok := received["referenceImages"].([]any)
-	if !ok || len(references) != 1 {
-		t.Fatalf("expected referenceImages array, got %#v", received["referenceImages"])
-	}
-	reference, ok := references[0].(map[string]any)
-	if !ok || reference["url"] != wantDataURL {
-		t.Fatalf("expected reference image data URL, got %#v", references[0])
+	if !bytes.Equal(receivedImage, sourcePNG) {
+		t.Fatal("edit image content did not reach the upstream multipart request")
 	}
 }
 
 func TestCallImageJSONSendsEditMaskImageData(t *testing.T) {
-	var received map[string]any
+	var receivedMask []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if err := json.NewDecoder(req.Body).Decode(&received); err != nil {
-			t.Fatalf("decode request: %v", err)
+		if err := req.ParseMultipartForm(1024 * 1024); err != nil {
+			t.Fatalf("parse multipart request: %v", err)
 		}
+		file, _, err := req.FormFile("mask")
+		if err != nil {
+			t.Fatalf("read mask form field: %v", err)
+		}
+		defer file.Close()
+		receivedMask, _ = io.ReadAll(file)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": []map[string]string{{"url": "https://cdn.example.test/edited.png"}},
 		})
@@ -272,12 +272,9 @@ func TestCallImageJSONSendsEditMaskImageData(t *testing.T) {
 	if _, err := service.callImageJSON(context.Background(), input, 1); err != nil {
 		t.Fatalf("callImageJSON returned error: %v", err)
 	}
-	if received["mask"] != maskBase64 {
-		t.Fatalf("expected mask field, got %#v", received["mask"])
-	}
-	maskImage, ok := received["maskImage"].(map[string]any)
-	if !ok || maskImage["url"] != "data:image/png;base64,"+maskBase64 {
-		t.Fatalf("expected maskImage data URL, got %#v", received["maskImage"])
+	wantMask, _ := base64.StdEncoding.DecodeString(maskBase64)
+	if !bytes.Equal(receivedMask, wantMask) {
+		t.Fatal("edit mask content did not reach the upstream multipart request")
 	}
 }
 

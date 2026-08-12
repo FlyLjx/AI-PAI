@@ -116,8 +116,11 @@ function BillingSummary({ user }: { user: PortalUser }) {
   }
   const remaining = Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0);
   const limit = Number(user.subscription?.quotaLimit ?? user.subscription?.quotaImages ?? 0);
+  const usedPercent = limit > 0 ? Math.min(100, Math.max(0, ((limit - remaining) / limit) * 100)) : 0;
+  const remainingPercent = limit > 0 ? Math.min(100, Math.max(0, (remaining / limit) * 100)) : 0;
+  const progressTone = remainingPercent <= 10 ? 'bg-red-500' : remainingPercent <= 30 ? 'bg-amber-500' : 'bg-emerald-500';
   return (
-    <span className="inline-flex min-w-[150px] flex-col items-start gap-0.5 leading-tight">
+    <span className="inline-flex min-w-[180px] flex-col items-start gap-1 leading-tight">
       <span className="inline-flex max-w-[220px] items-center gap-1.5 text-[11px] font-semibold text-zinc-800">
         <i className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
         <span className="truncate">{subscriptionName(user)}</span>
@@ -125,6 +128,14 @@ function BillingSummary({ user }: { user: PortalUser }) {
       <small className="max-w-[240px] truncate whitespace-nowrap font-mono text-[10px] text-zinc-400">
         剩余 {remaining.toLocaleString('zh-CN')} / {limit.toLocaleString('zh-CN')} · 至 {formatDate(user.subscription?.expiresAt || '', false)}
       </small>
+      {limit > 0 && (
+        <span className="flex w-full max-w-[220px] items-center gap-2" title={`已使用 ${Math.round(usedPercent)}%`}>
+          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-100">
+            <span className={`block h-full rounded-full transition-[width] duration-300 ${progressTone}`} style={{ width: `${usedPercent}%` }} />
+          </span>
+          <small className="w-7 text-right font-mono text-[10px] text-zinc-400">{Math.round(usedPercent)}%</small>
+        </span>
+      )}
     </span>
   );
 }
@@ -140,8 +151,10 @@ export default function AdminUsersPage() {
   const [users, setUsers] = useState<PortalUser[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
+  const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [billingFilter, setBillingFilter] = useState('all');
@@ -189,6 +202,14 @@ export default function AdminUsersPage() {
   const [deleteCandidate, setDeleteCandidate] = useState<PortalUser | null>(null);
   const [actionId, setActionId] = useState('');
   const [verifyingId, setVerifyingId] = useState('');
+  const hasLoadedUsersRef = useRef(false);
+  const usersRequestRef = useRef<AbortController | null>(null);
+  const searching = searchInput.trim() !== search;
+  const displayedUsers = useMemo(() => {
+    const keyword = searchInput.trim().toLocaleLowerCase();
+    if (!keyword) return users;
+    return users.filter((user) => `${user.email} ${user.id}`.toLocaleLowerCase().includes(keyword));
+  }, [searchInput, users]);
 
   const closeRanking = useCallback(() => {
     setRankingOpen(false);
@@ -250,7 +271,12 @@ export default function AdminUsersPage() {
   };
 
   const load = useCallback(async () => {
-    setLoading(true);
+    usersRequestRef.current?.abort();
+    const controller = new AbortController();
+    usersRequestRef.current = controller;
+    const isInitialLoad = !hasLoadedUsersRef.current;
+    if (isInitialLoad) setLoading(true);
+    else setRefreshing(true);
     setError('');
     try {
       const [userResponse, planResponse] = await Promise.all([
@@ -260,17 +286,22 @@ export default function AdminUsersPage() {
           keyword: search.trim() || undefined,
           status: statusFilter === 'all' ? undefined : statusFilter,
           billing: billingFilter === 'all' ? undefined : billingFilter,
-        }),
+        }, controller.signal),
         portalApi.adminPlans(),
       ]);
+      if (controller.signal.aborted) return;
       setUsers(userResponse.data);
       setTotal(Number(userResponse.pagination?.total || 0));
       setSummaryStats(userResponse.summary || { total: 0, active: 0, verified: 0, subscribed: 0 });
       setPlans(planResponse.data);
     } catch (requestError) {
+      if (controller.signal.aborted) return;
       setError(requestError instanceof Error ? requestError.message : '用户列表加载失败');
     } finally {
+      if (controller.signal.aborted || usersRequestRef.current !== controller) return;
       setLoading(false);
+      setRefreshing(false);
+      hasLoadedUsersRef.current = true;
     }
   }, [billingFilter, page, search, statusFilter]);
 
@@ -291,15 +322,28 @@ export default function AdminUsersPage() {
   useEffect(() => {
     const initialSearch = new URLSearchParams(window.location.search).get('search')?.trim();
     const timer = window.setTimeout(() => {
-      if (initialSearch) setSearch(initialSearch);
+      if (initialSearch) setSearchInput(initialSearch);
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearch((current) => {
+        const next = searchInput.trim();
+        if (current !== next) setPage(1);
+        return next;
+      });
+    }, 350);
+    return () => window.clearTimeout(timer);
+  }, [searchInput]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => void load(), 0);
     return () => window.clearTimeout(timer);
   }, [load]);
+
+  useEffect(() => () => usersRequestRef.current?.abort(), []);
 
   useEffect(() => {
     if (!rankingOpen) return;
@@ -620,7 +664,7 @@ export default function AdminUsersPage() {
       >
         <button type="button" onClick={() => void openSubscriptionVisibility()} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-zinc-700 hover:border-[#86EFAC] hover:text-[#047857]"><Eye className="h-3.5 w-3.5" />可见订阅</button>
         <button ref={rankingTriggerRef} type="button" onClick={() => { setConsumptionLoading(true); setRankingOpen(true); }} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-zinc-700 hover:border-[#86EFAC] hover:text-[#047857]"><Trophy className="h-3.5 w-3.5" />消费排行</button>
-        <button type="button" onClick={() => void load()} disabled={loading} title="刷新数据" aria-label="刷新用户数据" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} /></button>
+        <button type="button" onClick={() => void load()} disabled={loading || refreshing} title="刷新数据" aria-label="刷新用户数据" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-[#DCE4DF] bg-white hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} /></button>
         <button type="button" onClick={openCreate} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#047857] px-3 text-xs font-semibold text-white hover:bg-[#036b4f]"><Plus className="h-4 w-4" />新增用户</button>
       </PageHeader>
 
@@ -789,11 +833,11 @@ export default function AdminUsersPage() {
             { key: 'created', label: '注册时间', sortValue: (item) => Date.parse(item.createdAt || '') || 0 },
             { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={users}
+          data={displayedUsers}
           pageSize={pageSize}
           searchPlaceholder="搜索邮箱或用户 ID"
-          searchValue={search}
-          onSearchChange={(value) => { setSearch(value); resetPage(); }}
+          searchValue={searchInput}
+          onSearchChange={(value) => setSearchInput(value)}
           filterControls={(
             <>
               <AppSelect
@@ -818,7 +862,7 @@ export default function AdminUsersPage() {
                   { value: 'disabled', label: '已停用' },
                 ]}
               />
-              <span className="text-[11px] text-zinc-400">共 {total.toLocaleString('zh-CN')} 条</span>
+              {searching || refreshing ? <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400"><Loader2 className="h-3 w-3 animate-spin" />{searching ? '正在搜索' : '正在更新'}</span> : <span className="text-[11px] text-zinc-400">共 {total.toLocaleString('zh-CN')} 条</span>}
             </>
           )}
           currentPage={Math.min(page, totalPages)}

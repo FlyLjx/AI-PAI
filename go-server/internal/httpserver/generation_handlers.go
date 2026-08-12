@@ -356,49 +356,19 @@ func requireGenerationQuotaForEntitlement(entitlement *operations.SubscriptionEn
 	if quantity < 0 {
 		quantity = 0
 	}
-	if entitlement == nil {
-		return newAppError(http.StatusPaymentRequired, "免费额度已用完，请开通订阅")
+	if entitlement == nil || !entitlement.IsPaid {
+		return newAppError(http.StatusPaymentRequired, "订阅已到期或未开通，请续费后再调用")
 	}
-	if entitlement.IsPaid {
-		if len(entitlement.AllowedProviderIDs) > 0 && !stringInList(entitlement.AllowedProviderIDs, model.ProviderID) {
-			return newAppError(http.StatusForbidden, "当前订阅套餐不支持该接口")
-		}
-		if len(entitlement.AllowedModelIDs) > 0 && !stringInList(entitlement.AllowedModelIDs, model.ID) {
-			return newAppError(http.StatusForbidden, "当前订阅套餐不支持该模型")
-		}
-	} else {
-		if quantity < 1 {
-			quantity = 1
-		}
-		for _, window := range entitlement.QuotaWindows {
-			if window.QuotaRemaining < quantity {
-				return newAppError(http.StatusPaymentRequired, freeQuotaWindowLimitMessage(window))
-			}
-		}
+	if len(entitlement.AllowedProviderIDs) > 0 && !stringInList(entitlement.AllowedProviderIDs, model.ProviderID) {
+		return newAppError(http.StatusForbidden, "当前订阅套餐不支持该接口")
+	}
+	if len(entitlement.AllowedModelIDs) > 0 && !stringInList(entitlement.AllowedModelIDs, model.ID) {
+		return newAppError(http.StatusForbidden, "当前订阅套餐不支持该模型")
 	}
 	if entitlement.QuotaRemaining < quantity {
-		if entitlement.IsPaid {
-			return newAppError(http.StatusPaymentRequired, "本周期生成额度不足，请续费或升级订阅")
-		}
-		return newAppError(http.StatusPaymentRequired, "免费额度已用完，请开通订阅")
+		return newAppError(http.StatusPaymentRequired, "本周期生成额度不足，请续费或升级订阅")
 	}
 	return nil
-}
-
-func freeQuotaWindowLimitMessage(window operations.SubscriptionQuotaWindow) string {
-	switch window.Key {
-	case "hour":
-		return "免费版每小时额度不足，请稍后再试或开通订阅"
-	case "day":
-		return "免费版今日额度不足，请明天再试或开通订阅"
-	case "month":
-		return "免费版本月额度已用完，请开通订阅"
-	default:
-		if strings.TrimSpace(window.Label) != "" {
-			return "免费版" + strings.TrimSpace(window.Label) + "额度不足，请开通订阅"
-		}
-		return "免费额度已用完，请开通订阅"
-	}
 }
 
 func stringInList(items []string, target string) bool {
@@ -414,7 +384,7 @@ func stringInList(items []string, target string) bool {
 func effectiveOutputFormat(outputFormat string) string {
 	normalized := normalizeOutputFormat(outputFormat)
 	if normalized == "" {
-		return "jpeg"
+		return "png"
 	}
 	return normalized
 }

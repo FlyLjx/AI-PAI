@@ -134,7 +134,7 @@ export function SortableHeader<T>({
     : ArrowUpDown;
 
   return (
-    <th className={`px-4 py-2.5 text-xs font-semibold text-[#17201B]/60 tracking-wider ${header.className || ''} ${className}`}>
+    <th className={`whitespace-nowrap px-4 py-2.5 text-[clamp(9px,0.55vw,11px)] font-semibold text-[#17201B]/60 tracking-normal ${header.className || ''} ${className}`}>
       {sortable ? (
         <button
           type="button"
@@ -144,7 +144,7 @@ export function SortableHeader<T>({
           aria-pressed={active}
           title={`按${header.label}排序`}
         >
-          <span>{header.label}</span>
+          <span className="whitespace-nowrap">{header.label}</span>
           <Icon className={`h-3.5 w-3.5 shrink-0 ${active ? 'opacity-100' : 'opacity-45'}`} aria-hidden="true" />
         </button>
       ) : header.label}

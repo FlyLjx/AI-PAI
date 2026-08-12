@@ -29,7 +29,6 @@ func TestAdminCanVerifyUserEmail(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	expectAdminVerificationUser(mock, "user-1", "user@example.com", "user", now, now)
-	mock.ExpectQuery(`SELECT setting_key, setting_value FROM system_settings`).WillReturnError(sql.ErrConnDone)
 
 	router := &Router{
 		db:     database.Wrap(rawDB),

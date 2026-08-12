@@ -18,12 +18,6 @@ type SubscriptionPlan struct {
 	UpdatedAt          string   `json:"updatedAt"`
 }
 
-type FreeQuotaLimits struct {
-	Hourly  int
-	Daily   int
-	Monthly int
-}
-
 type SubscriptionQuotaWindow struct {
 	Key             string `json:"key"`
 	Label           string `json:"label"`

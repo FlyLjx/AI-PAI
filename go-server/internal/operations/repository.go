@@ -903,7 +903,7 @@ func adminCustomSubscriptionPlanID(userID string) string {
 	return value[0:8] + "-" + value[8:12] + "-" + value[12:16] + "-" + value[16:20] + "-" + value[20:32]
 }
 
-func (r *Repository) CurrentSubscription(ctx context.Context, userID string, freeLimits FreeQuotaLimits) (*SubscriptionEntitlement, error) {
+func (r *Repository) CurrentSubscription(ctx context.Context, userID string) (*SubscriptionEntitlement, error) {
 	entitlement, err := r.currentPaidSubscription(ctx, userID)
 	if err != nil && err != sql.ErrNoRows {
 		return nil, err
@@ -915,38 +915,7 @@ func (r *Repository) CurrentSubscription(ctx context.Context, userID string, fre
 		}
 		return entitlement.public(used), nil
 	}
-	freeLimits = normalizeFreeQuotaLimits(freeLimits)
-	hourStart, hourEnd := currentHourWindow()
-	dayStart, dayEnd := currentDayWindow()
-	monthStart, monthEnd := currentMonthWindow()
-	usage, err := r.generationUsageWindows(ctx, userID, []generationUsageWindow{
-		{start: hourStart, end: hourEnd},
-		{start: dayStart, end: dayEnd},
-		{start: monthStart, end: monthEnd},
-	})
-	if err != nil {
-		return nil, err
-	}
-	hourUsed, dayUsed, monthUsed := usage[0], usage[1], usage[2]
-	hourWindow := quotaWindow("hour", "小时", freeLimits.Hourly, hourUsed, hourStart, hourEnd)
-	dayWindow := quotaWindow("day", "今日", freeLimits.Daily, dayUsed, dayStart, dayEnd)
-	monthWindow := quotaWindow("month", "本月", freeLimits.Monthly, monthUsed, monthStart, monthEnd)
-	effectiveRemaining := minNonNegative(hourWindow.QuotaRemaining, dayWindow.QuotaRemaining, monthWindow.QuotaRemaining)
-	return &SubscriptionEntitlement{
-		Status:             "free",
-		Tier:               "free",
-		IsPaid:             false,
-		PeriodStartedAt:    monthStart.In(time.Local).Format(time.RFC3339),
-		PeriodEndsAt:       monthEnd.In(time.Local).Format(time.RFC3339),
-		PlanName:           "免费版",
-		QuotaImages:        freeLimits.Monthly,
-		QuotaLimit:         freeLimits.Monthly,
-		QuotaUsed:          monthUsed,
-		QuotaRemaining:     monthWindow.QuotaRemaining,
-		EffectiveRemaining: effectiveRemaining,
-		QuotaUnlimited:     false,
-		QuotaWindows:       []SubscriptionQuotaWindow{hourWindow, dayWindow, monthWindow},
-	}, nil
+	return nil, nil
 }
 
 func (r *Repository) CurrentSubscriptionPlan(ctx context.Context, userID string) (*SubscriptionPlan, error) {
@@ -1260,75 +1229,6 @@ func (r *Repository) currentPaidSubscription(ctx context.Context, userID string)
 		periodStart: started,
 		periodEnd:   expires,
 	}, nil
-}
-
-func currentMonthWindow() (time.Time, time.Time) {
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.Local)
-	return start, start.AddDate(0, 1, 0)
-}
-
-func currentHourWindow() (time.Time, time.Time) {
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, time.Local)
-	return start, start.Add(time.Hour)
-}
-
-func currentDayWindow() (time.Time, time.Time) {
-	now := time.Now()
-	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.Local)
-	return start, start.AddDate(0, 0, 1)
-}
-
-func normalizeFreeQuotaLimits(limits FreeQuotaLimits) FreeQuotaLimits {
-	if limits.Hourly < 0 {
-		limits.Hourly = 0
-	}
-	if limits.Daily < 0 {
-		limits.Daily = 0
-	}
-	if limits.Monthly < 0 {
-		limits.Monthly = 0
-	}
-	return limits
-}
-
-func quotaWindow(key string, label string, limit int, used int, start time.Time, end time.Time) SubscriptionQuotaWindow {
-	if limit < 0 {
-		limit = 0
-	}
-	remaining := limit - used
-	if remaining < 0 {
-		remaining = 0
-	}
-	return SubscriptionQuotaWindow{
-		Key:             key,
-		Label:           label,
-		QuotaLimit:      limit,
-		QuotaUsed:       used,
-		QuotaRemaining:  remaining,
-		PeriodStartedAt: start.In(time.Local).Format(time.RFC3339),
-		PeriodEndsAt:    end.In(time.Local).Format(time.RFC3339),
-	}
-}
-
-func minNonNegative(values ...int) int {
-	if len(values) == 0 {
-		return 0
-	}
-	min := values[0]
-	if min < 0 {
-		min = 0
-	}
-	for _, value := range values[1:] {
-		if value < 0 {
-			value = 0
-		}
-		if value < min {
-			min = value
-		}
-	}
-	return min
 }
 
 func defaultPlanQuotaImages(durationDays int) int {

@@ -41,22 +41,7 @@ func (r *Router) compatChatCompletions(w http.ResponseWriter, req *http.Request)
 		writeOpenAIError(w, http.StatusBadRequest, "缺少 messages", "invalid_request_error")
 		return
 	}
-	prompt := compatChatPrompt(body["messages"])
-	if prompt == "" {
-		writeOpenAIError(w, http.StatusBadRequest, "messages 中缺少用户提示词", "invalid_request_error")
-		return
-	}
-	r.compatImageRequestWithInput(w, req, auth, compatImageInput{
-		Model:          strings.TrimSpace(stringValue(body["model"])),
-		Prompt:         prompt,
-		N:              compatChatImageCount(body["n"]),
-		Stream:         boolValue(body["stream"]),
-		Size:           defaultString(stringValue(body["size"]), "1024x1024"),
-		Quality:        stringValue(body["quality"]),
-		ResponseFormat: defaultString(stringValue(body["response_format"]), "url"),
-		OutputFormat:   stringValue(body["output_format"]),
-		RequestParams:  body,
-	}, false, compatImageResponseChatCompletion)
+	r.forwardOpenAIText(w, req, auth, body, "chat/completions")
 }
 
 func compatChatPrompt(value any) string {
@@ -176,26 +161,18 @@ func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, aut
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
 		return
 	}
-	if err := r.requireGenerationSubscription(ctx, auth.User.ID, *model); err != nil {
-		status := http.StatusInternalServerError
-		var appErr appError
-		if errors.As(err, &appErr) {
-			status = appErr.status
-		}
-		writeOpenAIError(w, status, err.Error(), "insufficient_quota")
-		return
-	}
-
-	body["model"] = model.ModelName
 	stream := boolValue(body["stream"])
 	if stream {
 		r.forwardOpenAITextStream(w, req, *provider, body, upstreamPath)
 		return
 	}
-	body["stream"] = false
-	result, contentType, err := postOpenAIJSON(req.Context(), *provider, upstreamPath, body)
+	result, contentType, status, err := postOpenAIJSON(req.Context(), *provider, upstreamPath, body)
 	if err != nil {
-		writeOpenAIErrorDetails(w, upstreamErrorDetails(err))
+		writeOpenAIError(w, http.StatusBadGateway, err.Error(), "api_error")
+		return
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		writeUpstreamResponse(w, status, contentType, result)
 		return
 	}
 	if strings.Contains(strings.ToLower(contentType), "application/json") {
@@ -204,7 +181,7 @@ func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, aut
 		w.Header().Set("Content-Type", contentType)
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
+	w.WriteHeader(status)
 	_, _ = w.Write(result)
 }
 
@@ -226,7 +203,7 @@ func (r *Router) forwardOpenAITextStream(w http.ResponseWriter, req *http.Reques
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
-		writeOpenAIErrorDetails(w, apierrors.Parse(resp.StatusCode, decodeJSONPayload(bodyBytes), bodyBytes))
+		writeUpstreamResponse(w, resp.StatusCode, resp.Header.Get("Content-Type"), bodyBytes)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
@@ -243,29 +220,34 @@ func (r *Router) forwardOpenAITextStream(w http.ResponseWriter, req *http.Reques
 	}
 }
 
-func postOpenAIJSON(ctx context.Context, provider providers.Provider, upstreamPath string, body map[string]any) ([]byte, string, error) {
+func postOpenAIJSON(ctx context.Context, provider providers.Provider, upstreamPath string, body map[string]any) ([]byte, string, int, error) {
 	payload, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, openAIProxyEndpoint(provider, upstreamPath), bytes.NewReader(payload))
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	req.Header.Set("Authorization", providers.AuthorizationHeader(provider.APIKey))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, "", fmt.Errorf("上游接口连接失败：%w", err)
+		return nil, "", 0, fmt.Errorf("upstream request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	bodyBytes, _ := io.ReadAll(io.LimitReader(resp.Body, 8*1024*1024))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		details := apierrors.Parse(resp.StatusCode, decodeJSONPayload(bodyBytes), bodyBytes)
-		return nil, "", upstreamHTTPError{status: resp.StatusCode, message: details.Message, details: details}
-	}
 	contentType := resp.Header.Get("Content-Type")
 	if contentType == "" {
 		contentType = "application/json; charset=utf-8"
 	}
-	return bodyBytes, contentType, nil
+	return bodyBytes, contentType, resp.StatusCode, nil
+}
+
+func writeUpstreamResponse(w http.ResponseWriter, status int, contentType string, body []byte) {
+	if strings.TrimSpace(contentType) != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
 }
 
 func openAIProxyEndpoint(provider providers.Provider, upstreamPath string) string {

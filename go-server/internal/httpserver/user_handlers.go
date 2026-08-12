@@ -87,18 +87,6 @@ func (r *Router) frontUserWithSubscription(ctx context.Context, user *users.User
 	return publicUser
 }
 
-func (r *Router) publicUserWithSubscriptionLimits(ctx context.Context, user *users.User, limits operations.FreeQuotaLimits) users.PublicUser {
-	if user == nil || user.ID == "" {
-		return users.PublicUser{}
-	}
-	publicUser := users.ToPublicUser(user)
-	subscription, err := r.currentSubscriptionEntitlementWithLimits(ctx, user.ID, limits)
-	if err == nil {
-		publicUser.Subscription = subscription
-	}
-	return publicUser
-}
-
 func (r *Router) publishCurrentUser(ctx context.Context, userID string) {
 	if r.userHub == nil || strings.TrimSpace(userID) == "" {
 		return
@@ -542,22 +530,10 @@ func (r *Router) listUsers(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	// Read the small settings table once. Calling publicUserWithSubscription
-	// for every row used to reload these settings for each user.
-	values, err := settings.NewRepository(r.db).Get(ctx)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	freeLimits := operations.FreeQuotaLimits{
-		Hourly:  generationQuotaSetting(values["freeHourlyGenerationQuota"], defaultFreeHourlyGenerationQuota),
-		Daily:   generationQuotaSetting(values["freeDailyGenerationQuota"], defaultFreeDailyGenerationQuota),
-		Monthly: generationQuotaSetting(values["freeGenerationQuota"], defaultFreeGenerationQuota),
-	}
 	data := make([]users.PublicUser, 0, len(items))
 	for index := range items {
 		item := items[index]
-		data = append(data, r.publicUserWithSubscriptionLimits(ctx, &item, freeLimits))
+		data = append(data, r.publicUserWithSubscription(ctx, &item))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
@@ -609,19 +585,9 @@ func (r *Router) adminUsers(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	values, err := settings.NewRepository(r.db).Get(ctx)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	freeLimits := operations.FreeQuotaLimits{
-		Hourly:  generationQuotaSetting(values["freeHourlyGenerationQuota"], defaultFreeHourlyGenerationQuota),
-		Daily:   generationQuotaSetting(values["freeDailyGenerationQuota"], defaultFreeDailyGenerationQuota),
-		Monthly: generationQuotaSetting(values["freeGenerationQuota"], defaultFreeGenerationQuota),
-	}
 	data := make([]users.PublicUser, 0, len(items))
 	for index := range items {
-		data = append(data, r.publicUserWithSubscriptionLimits(ctx, &items[index], freeLimits))
+		data = append(data, r.publicUserWithSubscription(ctx, &items[index]))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data":       data,

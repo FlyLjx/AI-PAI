@@ -216,6 +216,17 @@ button { cursor: pointer; }
 .data-table th { padding: 10px 12px; background: #fafbf9; color: #778079; font-weight: 750; text-align: left; white-space: nowrap; }
 .data-table td { padding: 11px 12px; border-top: 1px solid #edf0ee; color: #3f4943; vertical-align: middle; }
 .data-table tr:hover td { background: #fcfdfc; }
+
+/* Keep operational table headers compact and scannable on every desktop width. */
+.app-main table th {
+  white-space: nowrap;
+  font-size: clamp(9px, .55vw, 11px);
+  line-height: 1.2;
+  letter-spacing: 0;
+}
+.app-main table th button { white-space: nowrap; }
+.app-main table td { white-space: nowrap; }
+.app-main table { min-width: 100%; width: max-content; }
 .mono { font-family: 'IBM Plex Mono', monospace; }
 .truncate-cell { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .status-pill { display: inline-flex; align-items: center; min-height: 22px; padding: 0 7px; border-radius: 999px; background: #f1f3f2; color: #59625d; font-size: 10px; font-weight: 750; }

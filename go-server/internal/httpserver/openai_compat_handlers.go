@@ -873,16 +873,10 @@ func writeOpenAIErrorDetails(w http.ResponseWriter, details apierrors.Details) {
 	apierrors.Normalize(&details)
 	writeJSON(w, details.StatusCode, map[string]any{
 		"error": map[string]any{
-			"message":    details.Message,
-			"title":      details.Title,
-			"type":       details.Type,
-			"code":       details.Code,
-			"category":   details.Category,
-			"retryable":  details.Retryable,
-			"action":     details.Action,
-			"hint":       details.Hint,
-			"request_id": details.RequestID,
-			"param":      nil,
+			"message": details.Message,
+			"type":    details.Type,
+			"param":   nil,
+			"code":    details.Code,
 		},
 	})
 }
@@ -1006,7 +1000,7 @@ func normalizeOutputFormat(value string) string {
 	if value == "jpeg" || value == "png" || value == "webp" {
 		return value
 	}
-	return "jpeg"
+	return "png"
 }
 
 func compatReferencePayload(req *http.Request, urls []string) *string {

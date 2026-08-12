@@ -1,28 +1,20 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Clock3, CreditCard, Gauge, Gift, Loader2, PackageCheck, RefreshCw, X } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { CreditCard, Gauge, Gift, Loader2, PackageCheck, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/DataTable';
 import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { EmptyState } from '@/components/common/EmptyState';
 import { AppSelect } from '@/components/common/AppSelect';
 import { PageHeader } from '@/components/common/PageHeader';
-import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { type Plan, type PortalUser, portalApi } from '@/lib/admin-api';
-import { formatDate } from '@/lib/common/utils';
 
 const pageSize = 15;
 type GrantMode = 'plan' | 'custom';
 
 function isActive(user: PortalUser) {
-  return user.subscription?.status === 'active';
-}
-
-function expiryDays(user: PortalUser) {
-  const time = Date.parse(user.subscription?.expiresAt || '');
-  if (!Number.isFinite(time)) return null;
-  return Math.ceil((time - Date.now()) / 86_400_000);
+  return user.subscription?.status === 'active' && user.subscription?.isPaid === true;
 }
 
 export default function AdminSubscriptionsPage() {
@@ -36,7 +28,6 @@ export default function AdminSubscriptionsPage() {
   const [cancelCandidate, setCancelCandidate] = useState<PortalUser | null>(null);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('active');
   const [page, setPage] = useState(1);
   const [grantOpen, setGrantOpen] = useState(false);
   const [userId, setUserId] = useState('');
@@ -55,40 +46,30 @@ export default function AdminSubscriptionsPage() {
           page: targetPage,
           pageSize,
           keyword: search,
-          billing: statusFilter === 'active' ? 'subscription' : statusFilter === 'none' ? 'payg' : undefined,
+          billing: 'subscription',
         }),
         portalApi.userOptions({ limit: 1000 }),
         portalApi.adminPlans(),
       ]);
-      const loadedUsers = userResponse.data || [];
+      // Subscription management only lists active paid subscriptions.
+      const loadedUsers = (userResponse.data || []).filter(isActive);
       setUsers(loadedUsers);
       setPickerUsers((pickerResponse.data || []).filter((user) => user.role === 'user'));
-      setTotal(userResponse.pagination?.total || loadedUsers.length);
+      setTotal(loadedUsers.length);
       setPlans(planResponse.data);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '订阅数据加载失败');
     } finally {
       setLoading(false);
     }
-  }, [page, search, statusFilter]);
+  }, [page, search]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(page), 0);
     return () => window.clearTimeout(timer);
   }, [load, page]);
 
-  const filtered = useMemo(() => {
-    return users;
-  }, [users]);
-
   const activePlans = plans.filter((plan) => plan.status === 'active');
-  const activeUsers = users.filter(isActive);
-  const summary = useMemo(() => ({
-    active: activeUsers.length,
-    expiring: activeUsers.filter((user) => { const days = expiryDays(user); return days !== null && days >= 0 && days <= 7; }).length,
-    remaining: activeUsers.reduce((sum, user) => sum + Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0), 0),
-    plans: activePlans.length,
-  }), [activePlans.length, activeUsers]);
 
   const openGrant = (user?: PortalUser) => {
     setUserId(user?.id || pickerUsers[0]?.id || '');
@@ -147,15 +128,6 @@ export default function AdminSubscriptionsPage() {
         <button type="button" onClick={() => openGrant()} disabled={!users.length} className="inline-flex h-8 items-center gap-1.5 rounded-md bg-[#047857] px-3 text-xs font-semibold text-white hover:bg-[#036b4f] disabled:opacity-40"><Gift className="h-4 w-4" />发放订阅</button>
       </PageHeader>
 
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {[
-          { title: '有效订阅', value: summary.active, note: '当前生效客户', icon: PackageCheck, tone: 'green' as const },
-          { title: '7 天内到期', value: summary.expiring, note: '需要续期关注', icon: Clock3, tone: 'amber' as const },
-          { title: '剩余额度', value: summary.remaining.toLocaleString('zh-CN'), note: '有效订阅合计', icon: Gauge, tone: 'blue' as const },
-          { title: '上架套餐', value: summary.plans, note: '当前可发放', icon: Gift, tone: 'neutral' as const },
-        ].map((metric) => <AdminMetricCard key={metric.title} title={metric.title} value={metric.value} note={metric.note} icon={metric.icon} tone={metric.tone} />)}
-      </div>
-
       {error && <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700"><span>{error}</span><button type="button" onClick={() => void load()} className="font-semibold underline">重试</button></div>}
 
       {loading ? (
@@ -164,47 +136,42 @@ export default function AdminSubscriptionsPage() {
         <DataTable
           headers={[
             { key: 'user', label: 'API 客户', sortValue: (item) => item.email },
-            { key: 'plan', label: '订阅套餐', sortValue: (item) => item.subscription?.planName || item.subscription?.tier || '' },
-            { key: 'quota', label: '额度使用', sortValue: (item) => Number(item.subscription?.effectiveQuotaRemaining ?? item.subscription?.quotaRemaining ?? 0) },
-            { key: 'period', label: '有效期', sortValue: (item) => Date.parse(item.subscription?.expiresAt || '') || 0 },
-            { key: 'status', label: '状态', sortValue: (item) => isActive(item) ? 1 : 0 },
+            { key: 'quota', label: '订阅数量', sortValue: (item) => Number(item.subscription?.effectiveQuotaRemaining ?? item.subscription?.quotaRemaining ?? 0) },
             { key: 'action', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={filtered}
-          searchPlaceholder="搜索邮箱、用户 ID 或套餐"
+          data={users}
+          searchPlaceholder="搜索订阅用户邮箱或用户 ID"
           searchValue={search}
           onSearchChange={(value) => { setSearch(value); setPage(1); }}
-          filterControls={<><AppSelect compact value={statusFilter} onValueChange={(value) => { setStatusFilter(value); setPage(1); }} ariaLabel="筛选订阅状态" options={[{ value: 'active', label: '有效订阅' }, { value: 'none', label: '未订阅' }, { value: 'all', label: '全部客户' }]} /><span className="text-[11px] text-zinc-400">{filtered.length} 条</span></>}
+          filterControls={<span className="text-[11px] text-zinc-400">共 {total.toLocaleString('zh-CN')} 位订阅用户</span>}
           currentPage={page}
           totalPages={Math.max(1, Math.ceil(total / pageSize))}
           totalItems={total}
           onPageChange={setPage}
           emptyState={<EmptyState title="暂无订阅记录" description="可从全部客户中选择用户并发放套餐或自定义额度。" icon={CreditCard} action={<button type="button" onClick={() => openGrant()} disabled={!users.length} className="h-8 rounded-md bg-[#047857] px-3 text-xs font-semibold text-white disabled:opacity-40">发放订阅</button>} />}
           renderRow={(user) => {
-            const active = isActive(user);
             const limit = Number(user.subscription?.quotaLimit ?? user.subscription?.quotaImages ?? 0);
-            const used = Number(user.subscription?.quotaUsed || 0);
+            const remaining = Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0);
+            const used = Math.max(0, limit - remaining);
             const percent = limit > 0 ? Math.min(100, Math.round((used / limit) * 100)) : 0;
-            const days = expiryDays(user);
+            const progressTone = percent >= 90 ? 'bg-red-500' : percent >= 70 ? 'bg-amber-500' : 'bg-[#12B76A]';
             return (
               <tr key={user.id} className="hover:bg-[#FAFBFA]">
                 <td className="px-4 py-3"><strong className="block max-w-[210px] truncate font-medium">{user.email}</strong><small className="font-mono text-[10px] text-zinc-400">{user.id}</small></td>
-                <td className="px-4 py-3">{active ? <><strong className="block text-[12px] font-medium">{user.subscription?.planName || user.subscription?.tier || '订阅套餐'}</strong><small className="text-[10px] text-zinc-400">{user.subscription?.source === 'admin_custom' ? '后台自定义发放' : '套餐订阅'}</small></> : <span className="text-zinc-400">按余额计费</span>}</td>
-                <td className="px-4 py-3">{active ? <div className="w-36"><div className="mb-1 flex justify-between font-mono text-[10px] text-zinc-500"><span>{used} / {limit || '不限'}</span><span>{percent}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-zinc-100"><span className="block h-full bg-[#12B76A]" style={{ width: `${percent}%` }} /></div></div> : '-'}</td>
-                <td className="px-4 py-3"><span className="block whitespace-nowrap text-[11px]">{active ? formatDate(user.subscription?.expiresAt || '', false) : '-'}</span>{active && days !== null && <small className={`text-[10px] ${days <= 7 ? 'text-amber-700' : 'text-zinc-400'}`}>{days < 0 ? '已到期' : `剩余 ${days} 天`}</small>}</td>
-                <td className="px-4 py-3"><span className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${active ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-zinc-50 text-zinc-500'}`}>{active ? '生效中' : '未订阅'}</span></td>
-                <td className="px-4 py-3 text-right"><div className="flex justify-end gap-1.5">{active && <button type="button" onClick={() => setCancelCandidate(user)} disabled={cancelingId === user.id} className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">取消订阅</button>}<button type="button" onClick={() => openGrant(user)} className="rounded-md border border-[#DCE4DF] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#047857] hover:border-[#86EFAC]">{active ? '续期/更换' : '发放'}</button></div></td>
+                <td className="px-4 py-3"><div className="w-52"><div className="mb-1 flex justify-between font-mono text-[10px] text-zinc-500"><span>剩余 {remaining.toLocaleString('zh-CN')} / {limit.toLocaleString('zh-CN')}</span><span>已用 {percent}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-zinc-100"><span className={`block h-full transition-[width] duration-300 ${progressTone}`} style={{ width: `${percent}%` }} /></div></div></td>
+                <td className="px-4 py-3 text-right"><div className="flex justify-end gap-1.5"><button type="button" onClick={() => setCancelCandidate(user)} disabled={cancelingId === user.id} className="rounded-md border border-red-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">取消订阅</button><button type="button" onClick={() => openGrant(user)} className="rounded-md border border-[#DCE4DF] bg-white px-2.5 py-1 text-[11px] font-semibold text-[#047857] hover:border-[#86EFAC]">续期/更换</button></div></td>
               </tr>
             );
           }}
           renderMobileItem={(user) => {
-            const active = isActive(user);
             const remaining = Number(user.subscription?.effectiveQuotaRemaining ?? user.subscription?.quotaRemaining ?? 0);
+            const limit = Number(user.subscription?.quotaLimit ?? user.subscription?.quotaImages ?? 0);
+            const percent = limit > 0 ? Math.min(100, Math.round(((limit - remaining) / limit) * 100)) : 0;
             return (
               <article key={user.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
-                <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{user.email}</strong><small className="font-mono text-[10px] text-zinc-400">{user.id}</small></div><span className={`rounded border px-2 py-0.5 text-[11px] font-semibold ${active ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-zinc-200 bg-zinc-50 text-zinc-500'}`}>{active ? '生效中' : '未订阅'}</span></div>
-                <div className="mt-3 grid grid-cols-2 gap-2 border-y border-[#EDF0EE] py-2 text-xs"><span><small className="block text-[10px] text-zinc-400">套餐</small>{active ? user.subscription?.planName || '订阅套餐' : '按余额计费'}</span><span className="text-right"><small className="block text-[10px] text-zinc-400">剩余额度</small><strong>{active ? `${remaining} 张` : '-'}</strong></span></div>
-                <div className="mt-2 flex items-center justify-between gap-2"><small className="text-[10px] text-zinc-400">{active ? `到期 ${formatDate(user.subscription?.expiresAt || '', false)}` : '未开通订阅'}</small><span className="flex items-center gap-1">{active && <button type="button" onClick={() => setCancelCandidate(user)} disabled={cancelingId === user.id} className="rounded px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">取消</button>}<button type="button" onClick={() => openGrant(user)} className="rounded px-2 py-1 text-[11px] font-semibold text-[#047857] hover:bg-emerald-50">{active ? '续期/更换' : '发放'}</button></span></div>
+                <div className="min-w-0"><strong className="block truncate text-sm">{user.email}</strong><small className="font-mono text-[10px] text-zinc-400">{user.id}</small></div>
+                <div className="mt-3 border-y border-[#EDF0EE] py-2 text-xs"><div className="mb-1 flex justify-between font-mono text-[10px] text-zinc-500"><span>剩余 {remaining} / {limit}</span><span>已用 {percent}%</span></div><div className="h-1.5 overflow-hidden rounded-full bg-zinc-100"><span className="block h-full bg-[#12B76A]" style={{ width: `${percent}%` }} /></div></div>
+                <div className="mt-2 flex justify-end gap-1"><button type="button" onClick={() => setCancelCandidate(user)} disabled={cancelingId === user.id} className="rounded px-2 py-1 text-[11px] font-semibold text-red-700 hover:bg-red-50 disabled:opacity-50">取消</button><button type="button" onClick={() => openGrant(user)} className="rounded px-2 py-1 text-[11px] font-semibold text-[#047857] hover:bg-emerald-50">续期/更换</button></div>
               </article>
             );
           }}
