@@ -19,6 +19,11 @@ import (
 
 const systemUpdateCacheTTL = 2 * time.Minute
 
+const (
+	systemUpdateRequestFile        = "request.json"
+	systemUpdatePendingRequestFile = "pending-request.json"
+)
+
 type systemUpdateVersion struct {
 	Version     string `json:"version"`
 	RunID       int64  `json:"runId,omitempty"`
@@ -112,7 +117,7 @@ func (r *Router) systemUpdate(w http.ResponseWriter, req *http.Request) {
 			forced.Message = "强制更新已确认，将跳过任务等待直接更新"
 			forced.Force = true
 			forced.PendingTaskCount = view.PendingTaskCount
-			if err := signalSystemUpdateForce(r.cfg.SystemUpdateDir, admin.UserID, time.Now().UTC(), forced); err != nil {
+			if err := promotePendingSystemUpdate(r.cfg.SystemUpdateDir, forced); err != nil {
 				writeError(w, err)
 				return
 			}
@@ -171,6 +176,9 @@ func (r *Router) systemUpdate(w http.ResponseWriter, req *http.Request) {
 			writeError(w, err)
 			return
 		}
+		if status == "waiting_idle" {
+			go r.promoteSystemUpdateWhenIdle(request.Version)
+		}
 		view.State = queued
 		view.CanUpdate = false
 		writeJSON(w, http.StatusAccepted, map[string]any{"data": view})
@@ -191,6 +199,13 @@ func (r *Router) systemUpdateView(ctx context.Context, force bool) systemUpdateV
 		PendingTaskCount: pendingTaskCount,
 		State:            state,
 		CheckedAt:        time.Now().UTC().Format(time.RFC3339),
+	}
+	if taskCountErr == nil {
+		if promoted, promoteErr := promotePendingSystemUpdateWhenIdle(r.cfg.SystemUpdateDir, state, pendingTaskCount); promoteErr != nil {
+			taskCountErr = promoteErr
+		} else if promoted {
+			state = readSystemUpdateState(r.cfg.SystemUpdateDir)
+		}
 	}
 	if err != nil {
 		view.CheckError = err.Error()
@@ -233,6 +248,27 @@ func (r *Router) systemUpdatePendingTaskCount(ctx context.Context) (int, error) 
 		return 0, fmt.Errorf("运行任务统计失败: %w", err)
 	}
 	return count, nil
+}
+
+func (r *Router) promoteSystemUpdateWhenIdle(version string) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+	for range ticker.C {
+		state := readSystemUpdateState(r.cfg.SystemUpdateDir)
+		if !strings.EqualFold(state.Status, "waiting_idle") || state.TargetVersion != version {
+			return
+		}
+		pendingTaskCount, err := r.systemUpdatePendingTaskCount(context.Background())
+		if err != nil {
+			continue
+		}
+		if _, err := promotePendingSystemUpdateWhenIdle(r.cfg.SystemUpdateDir, state, pendingTaskCount); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return
+		}
+		if pendingTaskCount == 0 {
+			return
+		}
+	}
 }
 
 func currentSystemVersion() systemUpdateVersion {
@@ -347,19 +383,34 @@ func queueSystemUpdate(directory string, request systemUpdateRequest, state syst
 	if err := os.MkdirAll(directory, 0750); err != nil {
 		return err
 	}
-	requestPath := filepath.Join(directory, "request.json")
-	if _, err := os.Stat(requestPath); err == nil {
-		return os.ErrExist
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return err
+	for _, name := range []string{systemUpdateRequestFile, systemUpdatePendingRequestFile} {
+		if _, err := os.Stat(filepath.Join(directory, name)); err == nil {
+			return os.ErrExist
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	if err := writeJSONFileAtomic(filepath.Join(directory, "status.json"), state); err != nil {
 		return err
 	}
-	return writeJSONFileAtomic(requestPath, request)
+	requestName := systemUpdateRequestFile
+	if strings.EqualFold(state.Status, "waiting_idle") {
+		requestName = systemUpdatePendingRequestFile
+	}
+	return writeJSONFileAtomic(filepath.Join(directory, requestName), request)
 }
 
-func signalSystemUpdateForce(directory string, requestedBy string, requestedAt time.Time, state systemUpdateState) error {
+func promotePendingSystemUpdateWhenIdle(directory string, state systemUpdateState, pendingTaskCount int) (bool, error) {
+	if !strings.EqualFold(state.Status, "waiting_idle") || pendingTaskCount > 0 {
+		return false, nil
+	}
+	state.Status = "queued"
+	state.PendingTaskCount = 0
+	state.Message = "运行中任务已完成，准备开始更新"
+	return true, promotePendingSystemUpdate(directory, state)
+}
+
+func promotePendingSystemUpdate(directory string, state systemUpdateState) error {
 	directory = strings.TrimSpace(directory)
 	if directory == "" {
 		return errors.New("system update directory is not configured")
@@ -367,13 +418,17 @@ func signalSystemUpdateForce(directory string, requestedBy string, requestedAt t
 	if err := os.MkdirAll(directory, 0750); err != nil {
 		return err
 	}
-	forcePath := filepath.Join(directory, "force.json")
-	payload := map[string]any{
-		"force":       true,
-		"requestedBy": strings.TrimSpace(requestedBy),
-		"requestedAt": requestedAt.Format(time.RFC3339),
+	pendingPath := filepath.Join(directory, systemUpdatePendingRequestFile)
+	requestPath := filepath.Join(directory, systemUpdateRequestFile)
+	if _, err := os.Stat(requestPath); err == nil {
+		return os.ErrExist
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
 	}
-	if err := writeJSONFileAtomic(forcePath, payload); err != nil {
+	if err := os.Rename(pendingPath, requestPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
 		return err
 	}
 	return writeJSONFileAtomic(filepath.Join(directory, "status.json"), state)

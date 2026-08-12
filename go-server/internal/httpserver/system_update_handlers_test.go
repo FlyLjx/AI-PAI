@@ -55,7 +55,7 @@ func TestLatestActionsVersion(t *testing.T) {
 	}
 }
 
-func TestQueueSystemUpdateWritesCompleteRequestAndState(t *testing.T) {
+func TestQueueSystemUpdateWaitingIdleDoesNotTriggerWorker(t *testing.T) {
 	directory := t.TempDir()
 	request := systemUpdateRequest{
 		RunID:          99,
@@ -72,7 +72,10 @@ func TestQueueSystemUpdateWritesCompleteRequestAndState(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	requestData, err := os.ReadFile(filepath.Join(directory, "request.json"))
+	if _, err := os.Stat(filepath.Join(directory, systemUpdateRequestFile)); !os.IsNotExist(err) {
+		t.Fatalf("executable request error = %v, want not exist", err)
+	}
+	requestData, err := os.ReadFile(filepath.Join(directory, systemUpdatePendingRequestFile))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -101,32 +104,39 @@ func TestQueueSystemUpdateWritesCompleteRequestAndState(t *testing.T) {
 	}
 }
 
-func TestSignalSystemUpdateForceWritesMarkerAndState(t *testing.T) {
+func TestPromotePendingSystemUpdateWhenIdle(t *testing.T) {
 	directory := t.TempDir()
+	request := systemUpdateRequest{RunID: 200, RunNumber: 20, Version: "build-20", Commit: "commit-20"}
 	state := systemUpdateState{
-		Status:           "queued",
+		Status:           "waiting_idle",
 		TargetVersion:    "build-20",
 		TargetRunID:      200,
 		TargetCommit:     "commit-20",
-		Message:          "强制更新已确认",
+		Message:          "等待任务完成",
 		PendingTaskCount: 3,
-		Force:            true,
 	}
-	requestedAt := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
-	if err := signalSystemUpdateForce(directory, "admin-1", requestedAt, state); err != nil {
+	if err := queueSystemUpdate(directory, request, state); err != nil {
 		t.Fatal(err)
 	}
-
-	forceData, err := os.ReadFile(filepath.Join(directory, "force.json"))
+	if promoted, err := promotePendingSystemUpdateWhenIdle(directory, state, 1); err != nil || promoted {
+		t.Fatalf("promote with active task = (%v, %v), want (false, nil)", promoted, err)
+	}
+	if promoted, err := promotePendingSystemUpdateWhenIdle(directory, state, 0); err != nil || !promoted {
+		t.Fatalf("promote when idle = (%v, %v), want (true, nil)", promoted, err)
+	}
+	if _, err := os.Stat(filepath.Join(directory, systemUpdatePendingRequestFile)); !os.IsNotExist(err) {
+		t.Fatalf("pending request error = %v, want not exist", err)
+	}
+	requestData, err := os.ReadFile(filepath.Join(directory, systemUpdateRequestFile))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var forcePayload map[string]any
-	if err := json.Unmarshal(forceData, &forcePayload); err != nil {
+	var savedRequest systemUpdateRequest
+	if err := json.Unmarshal(requestData, &savedRequest); err != nil {
 		t.Fatal(err)
 	}
-	if forcePayload["force"] != true || forcePayload["requestedBy"] != "admin-1" {
-		t.Fatalf("unexpected force signal: %+v", forcePayload)
+	if savedRequest.Version != request.Version {
+		t.Fatalf("unexpected request: %+v", savedRequest)
 	}
 
 	stateData, err := os.ReadFile(filepath.Join(directory, "status.json"))
@@ -137,7 +147,7 @@ func TestSignalSystemUpdateForceWritesMarkerAndState(t *testing.T) {
 	if err := json.Unmarshal(stateData, &savedState); err != nil {
 		t.Fatal(err)
 	}
-	if savedState.Status != "queued" || !savedState.Force || savedState.PendingTaskCount != 3 {
-		t.Fatalf("unexpected forced state: %+v", savedState)
+	if savedState.Status != "queued" || savedState.PendingTaskCount != 0 {
+		t.Fatalf("unexpected promoted state: %+v", savedState)
 	}
 }
