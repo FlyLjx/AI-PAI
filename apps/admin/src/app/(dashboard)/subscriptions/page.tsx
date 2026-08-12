@@ -14,7 +14,7 @@ const pageSize = 15;
 type GrantMode = 'plan' | 'custom';
 
 function isActive(user: PortalUser) {
-  return user.subscription?.status === 'active' && user.subscription?.isPaid === true;
+  return user.subscription?.status === 'active';
 }
 
 export default function AdminSubscriptionsPage() {
@@ -51,11 +51,11 @@ export default function AdminSubscriptionsPage() {
         portalApi.userOptions({ limit: 1000 }),
         portalApi.adminPlans(),
       ]);
-      // Subscription management only lists active paid subscriptions.
-      const loadedUsers = (userResponse.data || []).filter(isActive);
+      // The backend already filters this page to active, unexpired subscriptions.
+      const loadedUsers = userResponse.data || [];
       setUsers(loadedUsers);
       setPickerUsers((pickerResponse.data || []).filter((user) => user.role === 'user'));
-      setTotal(loadedUsers.length);
+      setTotal(Number(userResponse.pagination?.total || 0));
       setPlans(planResponse.data);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '订阅数据加载失败');
@@ -148,6 +148,7 @@ export default function AdminSubscriptionsPage() {
           totalPages={Math.max(1, Math.ceil(total / pageSize))}
           totalItems={total}
           onPageChange={setPage}
+          paginationLoading={loading}
           emptyState={<EmptyState title="暂无订阅记录" description="可从全部客户中选择用户并发放套餐或自定义额度。" icon={CreditCard} action={<button type="button" onClick={() => openGrant()} disabled={!users.length} className="h-8 rounded-md bg-[#047857] px-3 text-xs font-semibold text-white disabled:opacity-40">发放订阅</button>} />}
           renderRow={(user) => {
             const limit = Number(user.subscription?.quotaLimit ?? user.subscription?.quotaImages ?? 0);
