@@ -205,12 +205,6 @@ export default function AdminUsersPage() {
   const hasLoadedUsersRef = useRef(false);
   const usersRequestRef = useRef<AbortController | null>(null);
   const searching = searchInput.trim() !== search;
-  const displayedUsers = useMemo(() => {
-    const keyword = searchInput.trim().toLocaleLowerCase();
-    if (!keyword) return users;
-    return users.filter((user) => `${user.email} ${user.id}`.toLocaleLowerCase().includes(keyword));
-  }, [searchInput, users]);
-
   const closeRanking = useCallback(() => {
     setRankingOpen(false);
     window.setTimeout(() => rankingTriggerRef.current?.focus(), 0);
@@ -833,7 +827,7 @@ export default function AdminUsersPage() {
             { key: 'created', label: '注册时间', sortValue: (item) => Date.parse(item.createdAt || '') || 0 },
             { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
-          data={displayedUsers}
+          data={users}
           pageSize={pageSize}
           searchPlaceholder="搜索邮箱或用户 ID"
           searchValue={searchInput}
