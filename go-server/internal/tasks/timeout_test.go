@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
@@ -70,5 +71,21 @@ func TestFailTimedOutProcessingOnlyIgnoresWaitingTasks(t *testing.T) {
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestTruncateUTF8PreservesCompleteRunes(t *testing.T) {
+	value := "上游返回错误"
+	result := truncateUTF8(value, 5)
+	if result != "上" {
+		t.Fatalf("truncated value = %q, want %q", result, "上")
+	}
+	if !utf8.ValidString(result) {
+		t.Fatalf("truncated value is not valid UTF-8: %q", result)
+	}
+
+	invalid := string([]byte{0xe6, 0xaf, 0x2e})
+	if result := truncateUTF8(invalid, 8); !utf8.ValidString(result) {
+		t.Fatalf("sanitized value is not valid UTF-8: %q", result)
 	}
 }

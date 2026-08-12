@@ -65,7 +65,10 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		}
 		details := taskErrorDetails(err)
 		s.finishAPIAccessLogFailure(taskID, err.Error(), details)
-		failed, _ := s.tasks.FinishFailedWithDetails(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds(), details)
+		failed, finishErr := s.tasks.FinishFailedWithDetails(context.Background(), taskID, err.Error(), time.Since(startedAt).Seconds(), details)
+		if finishErr != nil && s.logger != nil {
+			s.logger.Error("failed to persist generation failure", "taskId", taskID, "error", finishErr)
+		}
 		s.reconcileTaskBalanceReservation(failed)
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
@@ -83,7 +86,10 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		message := "模型或接口已禁用"
 		details := taskErrorDetails(errors.New(message))
 		s.finishAPIAccessLogFailure(taskID, message, details)
-		failed, _ := s.tasks.FinishFailedWithDetails(context.Background(), taskID, message, time.Since(startedAt).Seconds(), details)
+		failed, finishErr := s.tasks.FinishFailedWithDetails(context.Background(), taskID, message, time.Since(startedAt).Seconds(), details)
+		if finishErr != nil && s.logger != nil {
+			s.logger.Error("failed to persist generation failure", "taskId", taskID, "error", finishErr)
+		}
 		s.reconcileTaskBalanceReservation(failed)
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {
@@ -193,7 +199,10 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		}
 		details := taskErrorDetails(lastErr)
 		s.finishAPIAccessLogFailure(taskID, lastErr.Error(), details)
-		failed, _ := s.tasks.FinishFailedWithDetails(context.Background(), taskID, lastErr.Error(), time.Since(startedAt).Seconds(), details)
+		failed, finishErr := s.tasks.FinishFailedWithDetails(context.Background(), taskID, lastErr.Error(), time.Since(startedAt).Seconds(), details)
+		if finishErr != nil && s.logger != nil {
+			s.logger.Error("failed to persist generation failure", "taskId", taskID, "error", finishErr)
+		}
 		s.reconcileTaskBalanceReservation(failed)
 		s.syncAPIAccessLogForTask(failed)
 		if failed != nil && s.hub != nil {

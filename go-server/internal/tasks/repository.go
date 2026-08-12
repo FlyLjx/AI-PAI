@@ -16,6 +16,8 @@ type Repository struct {
 	db *database.DB
 }
 
+const maxTaskErrorMessageBytes = 8 << 10
+
 func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
 }
@@ -369,6 +371,7 @@ func (r *Repository) FinishSuccess(ctx context.Context, id string, result any, d
 }
 
 func (r *Repository) FinishFailed(ctx context.Context, id string, message string, durationSeconds float64) (*Task, error) {
+	message = truncateUTF8(message, maxTaskErrorMessageBytes)
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE generation_tasks
 		SET status = 'failed',
@@ -383,6 +386,7 @@ func (r *Repository) FinishFailed(ctx context.Context, id string, message string
 }
 
 func (r *Repository) FinishFailedWithDetails(ctx context.Context, id string, message string, durationSeconds float64, details any) (*Task, error) {
+	message = truncateUTF8(message, maxTaskErrorMessageBytes)
 	resultJSON, err := errorDetailsResultJSON(details)
 	if err != nil {
 		return nil, err
@@ -399,6 +403,17 @@ func (r *Repository) FinishFailedWithDetails(ctx context.Context, id string, mes
 		return nil, err
 	}
 	return r.FindByID(ctx, id)
+}
+
+func truncateUTF8(value string, limit int) string {
+	value = strings.ToValidUTF8(value, "\uFFFD")
+	if limit <= 0 || len(value) <= limit {
+		return value
+	}
+	for limit > 0 && (value[limit]&0xc0) == 0x80 {
+		limit--
+	}
+	return value[:limit]
 }
 
 const errorDetailsResultKey = "__aipi_error_details"
