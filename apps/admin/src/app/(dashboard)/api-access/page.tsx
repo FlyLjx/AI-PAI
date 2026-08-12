@@ -180,6 +180,7 @@ export default function AdminAPIAccessPage() {
   const [detailTab, setDetailTab] = useState<'request' | 'response'>('request');
   const keyRequestSequence = useRef(0);
   const logRequestSequence = useRef(0);
+  const loadedLogPage = useRef(1);
   const keyRequestController = useRef<AbortController | null>(null);
   const logRequestController = useRef<AbortController | null>(null);
 
@@ -220,6 +221,7 @@ export default function AdminAPIAccessPage() {
     logRequestController.current?.abort();
     const controller = new AbortController();
     logRequestController.current = controller;
+    setLogPage(page);
     setLogsLoading(true);
     setError('');
     try {
@@ -242,10 +244,13 @@ export default function AdminAPIAccessPage() {
         failed: response.data.filter(isCountedFailure).length,
         imageCount: response.data.reduce((total, log) => total + Number(log.imageCount || 0), 0),
       });
-      setLogPage(page);
+      const resolvedPage = response.pagination?.page ?? page;
+      loadedLogPage.current = resolvedPage;
+      setLogPage(resolvedPage);
     } catch (requestError) {
       if (isAbortError(requestError)) return;
       if (requestSequence !== logRequestSequence.current) return;
+      setLogPage(loadedLogPage.current);
       setError(requestError instanceof Error ? requestError.message : 'API 调用日志加载失败');
     } finally {
       if (requestSequence === logRequestSequence.current) setLogsLoading(false);
@@ -483,6 +488,7 @@ export default function AdminAPIAccessPage() {
           totalPages={Math.max(1, Math.ceil(logTotal / logPageSize))}
           totalItems={logTotal}
           onPageChange={(page) => void loadLogs(page)}
+          paginationLoading={logsLoading}
           sortKey={logSort.key}
           sortDirection={logSort.direction}
           onSort={(key, direction) => { setLogSort({ key, direction }); setLogPage(1); }}

@@ -86,3 +86,53 @@ func TestAdminAPIAccessLogsReturnsFilteredFullSummary(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAdminAPIAccessLogsReturnsRequestedPage(t *testing.T) {
+	previousDialect := database.CurrentDialect()
+	database.SetDialect("mysql")
+	defer database.SetDialect(string(previousDialect))
+
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+
+	now := time.Now().UTC()
+	expectAdminBalanceUser(mock, "admin-1", "admin@example.com", 0, "admin", now)
+	mock.ExpectQuery(`(?s)SELECT COUNT\(\*\) AS total,.*FROM api_access_logs`).
+		WillReturnRows(sqlmock.NewRows([]string{"total", "success", "failed", "counted", "image_count", "charged_credits", "model_cost_credits"}).AddRow(61, 50, 11, 61, 61, 20.0, 10.0))
+	mock.ExpectQuery(`(?s)SELECT\s+api_access_logs\.id,.*ORDER BY.*LIMIT \? OFFSET \?`).
+		WithArgs(30, 30).
+		WillReturnRows(sqlmock.NewRows([]string{"id"}))
+
+	router := &Router{db: database.Wrap(rawDB), tokens: auth.NewTokenManager(config.DatabaseConfig{})}
+	token, err := router.tokens.CreateAdminToken("admin-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "http://example.test/api/admin/api-access/logs?page=2&pageSize=30", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+	router.adminAPIAccessLogs(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response struct {
+		Pagination struct {
+			Total    int `json:"total"`
+			Page     int `json:"page"`
+			PageSize int `json:"pageSize"`
+		} `json:"pagination"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Pagination.Total != 61 || response.Pagination.Page != 2 || response.Pagination.PageSize != 30 {
+		t.Fatalf("unexpected pagination: %+v", response.Pagination)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

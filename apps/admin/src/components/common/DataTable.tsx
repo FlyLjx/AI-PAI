@@ -60,6 +60,7 @@ interface DataTableProps<T> {
   onPageChange?: (page: number) => void;
   pageSize?: number;
   clientSidePagination?: boolean;
+  paginationLoading?: boolean;
 
   // Sorting
   sortKey?: string;
@@ -167,6 +168,7 @@ export function DataTable<T>({
   onPageChange,
   pageSize,
   clientSidePagination = false,
+  paginationLoading = false,
   sortKey,
   sortDirection,
   onSort,
@@ -269,7 +271,7 @@ export function DataTable<T>({
               type="button"
               className="table-pagination-button"
               onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-              disabled={currentPage === 1}
+              disabled={paginationLoading || currentPage === 1}
               aria-label="上一页"
             >
               <ChevronLeft size={14} />
@@ -281,7 +283,7 @@ export function DataTable<T>({
                   type="button"
                   onClick={() => onPageChange(item)}
                   className={`table-pagination-page ${item === currentPage ? 'is-active' : ''}`}
-                  disabled={false}
+                  disabled={paginationLoading || item === currentPage}
                   aria-current={item === currentPage ? 'page' : undefined}
                   aria-label={`第 ${item} 页`}
                 >
@@ -295,7 +297,7 @@ export function DataTable<T>({
               type="button"
               className="table-pagination-button"
               onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-              disabled={currentPage === totalPages}
+              disabled={paginationLoading || currentPage === totalPages}
               aria-label="下一页"
             >
               <ChevronRight size={14} />
