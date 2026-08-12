@@ -863,6 +863,7 @@ export default function AdminUsersPage() {
           totalPages={totalPages}
           totalItems={total}
           onPageChange={(nextPage) => setPage(nextPage)}
+          paginationLoading={refreshing}
           emptyState={<EmptyState title="暂无用户" description="调整筛选条件或创建一个 API 客户。" icon={UserRoundCog} />}
           renderRow={(user) => (
             <tr key={user.id} className="hover:bg-[#FAFBFA]">

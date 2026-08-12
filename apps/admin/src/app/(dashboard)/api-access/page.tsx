@@ -189,6 +189,7 @@ export default function AdminAPIAccessPage() {
     keyRequestController.current?.abort();
     const controller = new AbortController();
     keyRequestController.current = controller;
+    setKeyPage(page);
     setKeysLoading(true);
     setError('');
     try {
@@ -434,6 +435,7 @@ export default function AdminAPIAccessPage() {
           totalPages={keyTotalPages}
           totalItems={keyTotal}
           onPageChange={(page) => void loadKeys(page)}
+          paginationLoading={keysLoading}
           sortKey={keySort.key}
           sortDirection={keySort.direction}
           onSort={(key, direction) => { setKeySort({ key, direction }); setKeyPage(1); }}

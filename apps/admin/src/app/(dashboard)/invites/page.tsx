@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
   ChevronLeft,
@@ -87,12 +87,15 @@ export default function AdminInvitesPage() {
   const [reviewDialog, setReviewDialog] = useState<{ item: AdminInviteRecord; action: ReviewAction } | null>(null);
   const [reviewNote, setReviewNote] = useState('');
   const [summary, setSummary] = useState<AdminInviteSummary>({ total: 0, rewarded: 0, pending: 0, review: 0, blocked: 0 });
+  const requestSequence = useRef(0);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError('');
     try {
       const response = await portalApi.adminInvites(page, PAGE_SIZE, sort.key, sort.direction);
+      if (sequence !== requestSequence.current) return;
       setItems(response.data || []);
       const responseTotal = Number(response.pagination?.total ?? response.summary?.total ?? 0);
       setTotal(responseTotal);
@@ -104,9 +107,10 @@ export default function AdminInvitesPage() {
         blocked: Number(response.summary?.blocked ?? response.data.filter((item) => item.status === 'blocked').length),
       });
     } catch (loadError) {
+      if (sequence !== requestSequence.current) return;
       setError(loadError instanceof Error ? loadError.message : '邀请记录加载失败');
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   }, [page, sort.direction, sort.key]);
 

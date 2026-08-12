@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { CreditCard, Gauge, Gift, Loader2, PackageCheck, RefreshCw, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { DataTable } from '@/components/common/DataTable';
@@ -36,8 +36,10 @@ export default function AdminSubscriptionsPage() {
   const [customName, setCustomName] = useState('自定义订阅');
   const [customDurationDays, setCustomDurationDays] = useState(30);
   const [customQuotaImages, setCustomQuotaImages] = useState(100);
+  const requestSequence = useRef(0);
 
   const load = useCallback(async (targetPage = page) => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     setError('');
     try {
@@ -51,6 +53,7 @@ export default function AdminSubscriptionsPage() {
         portalApi.userOptions({ limit: 1000 }),
         portalApi.adminPlans(),
       ]);
+      if (sequence !== requestSequence.current) return;
       // The backend already filters this page to active, unexpired subscriptions.
       const loadedUsers = userResponse.data || [];
       setUsers(loadedUsers);
@@ -58,9 +61,10 @@ export default function AdminSubscriptionsPage() {
       setTotal(Number(userResponse.pagination?.total || 0));
       setPlans(planResponse.data);
     } catch (requestError) {
+      if (sequence !== requestSequence.current) return;
       setError(requestError instanceof Error ? requestError.message : '订阅数据加载失败');
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   }, [page, search]);
 

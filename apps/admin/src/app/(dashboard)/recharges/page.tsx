@@ -72,6 +72,7 @@ export default function AdminRechargesPage() {
 
   const load = useCallback(async (nextPage: number) => {
     const sequence = ++requestSequence.current;
+    setPage(nextPage);
     setLoading(true);
     setError('');
     try {
@@ -172,6 +173,7 @@ export default function AdminRechargesPage() {
           totalPages={totalPages}
           totalItems={total}
           onPageChange={(nextPage) => void load(nextPage)}
+          paginationLoading={loading}
           sortKey={sort.key}
           sortDirection={sort.direction}
           onSort={(key, direction) => { setSort({ key, direction }); setPage(1); }}

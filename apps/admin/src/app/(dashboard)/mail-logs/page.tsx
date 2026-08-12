@@ -103,12 +103,14 @@ export default function AdminMailLogsPage() {
   const [preview, setPreview] = useState<MailPreviewResult | null>(null);
   const [previewError, setPreviewError] = useState('');
   const previewRequestId = useRef(0);
+  const loadRequestId = useRef(0);
   const [usersLoading, setUsersLoading] = useState(false);
   const [users, setUsers] = useState<PortalUser[]>([]);
   const [broadcast, setBroadcast] = useState<MailBroadcastInput>(emptyBroadcast);
   const [userSearch, setUserSearch] = useState('');
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestId.current;
     setLoading(true);
     setError('');
     try {
@@ -121,15 +123,17 @@ export default function AdminMailLogsPage() {
         sortBy: sort.key,
         sortOrder: sort.direction,
       });
+      if (requestId !== loadRequestId.current) return;
       const nextItems = response.data.items || [];
       setItems(nextItems);
       setSummary(response.data.summary || emptySummary);
       setTotal(Number(response.pagination?.total || response.data.summary?.total || 0));
       setSelectedId((current) => nextItems.some((item) => item.id === current) ? current : nextItems[0]?.id || '');
     } catch (loadError) {
+      if (requestId !== loadRequestId.current) return;
       setError(loadError instanceof Error ? loadError.message : '邮件记录加载失败');
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestId.current) setLoading(false);
     }
   }, [category, keyword, page, sort.direction, sort.key, status]);
 

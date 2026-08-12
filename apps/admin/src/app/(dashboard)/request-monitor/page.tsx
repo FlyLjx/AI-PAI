@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   Clock3,
@@ -117,6 +117,7 @@ export default function RequestMonitorPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selected, setSelected] = useState<RequestMonitorLog | null>(null);
+  const requestSequence = useRef(0);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -127,6 +128,7 @@ export default function RequestMonitorPage() {
   }, [search]);
 
   const load = useCallback(async () => {
+    const sequence = ++requestSequence.current;
     setLoading(true);
     try {
       const response = await portalApi.requestMonitor({
@@ -139,13 +141,15 @@ export default function RequestMonitorPage() {
         sortBy: sort.key,
         sortOrder: sort.direction,
       });
+      if (sequence !== requestSequence.current) return;
       setSnapshot(response.data);
       setTotal(response.pagination?.total || 0);
       setError('');
     } catch (requestError) {
+      if (sequence !== requestSequence.current) return;
       setError(requestError instanceof Error ? requestError.message : '请求监控数据加载失败');
     } finally {
-      setLoading(false);
+      if (sequence === requestSequence.current) setLoading(false);
     }
   }, [keyword, method, page, range, sort.direction, sort.key, status]);
 
@@ -230,6 +234,7 @@ export default function RequestMonitorPage() {
           totalPages={totalPages}
           totalItems={total}
           onPageChange={setPage}
+          paginationLoading={loading}
           sortKey={sort.key}
           sortDirection={sort.direction}
           onSort={(key, direction) => { setSort({ key, direction }); setPage(1); }}
