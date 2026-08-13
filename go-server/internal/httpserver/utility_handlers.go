@@ -86,6 +86,13 @@ func fetchUpstreamStabilitySnapshot(ctx context.Context) map[string]any {
 		return upstreamStabilityFallback("状态接口返回格式异常", resp.StatusCode)
 	}
 	if data, ok := payload.(map[string]any); ok {
+		// The upstream endpoint calls the one-hour breakdown recent_hour,
+		// while existing clients use the older recent_60 field name.
+		if _, exists := data["recent_60"]; !exists {
+			if recentHour, exists := data["recent_hour"]; exists {
+				data["recent_60"] = recentHour
+			}
+		}
 		data["source"] = upstreamStabilityEndpoint
 		data["upstream_status_code"] = resp.StatusCode
 		data["reachable"] = true
