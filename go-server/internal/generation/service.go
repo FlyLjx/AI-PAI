@@ -11,7 +11,6 @@ import (
 
 	"aipi-go/internal/apiaccess"
 	"aipi-go/internal/apierrors"
-	"aipi-go/internal/imagecache"
 	"aipi-go/internal/tasks"
 )
 
@@ -139,10 +138,6 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		}
 		actualQuantity = quantity
 		modelCostCredits = taskModelCost(task.SizeTier, actualQuantity, model.Cost1K, model.Cost2K, model.Cost4K)
-		if err := s.cacheTaskResultImages(ctx, taskID, result); err != nil {
-			lastErr = err
-			break
-		}
 		err = s.finishSuccessWithBilling(ctx, BillingSuccessInput{
 			TaskID:           taskID,
 			ProviderID:       provider.ID,
@@ -230,23 +225,6 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		"modelCostCredits", modelCostCredits,
 		"imageCount", actualQuantity,
 	)
-	return nil
-}
-
-func (s *Service) cacheTaskResultImages(ctx context.Context, taskID string, result any) error {
-	images := ExtractImages(result)
-	for index, image := range images {
-		url := strings.TrimSpace(image.URL)
-		if url == "" {
-			continue
-		}
-		if _, err := imagecache.StoreTaskImageWithTimeout(ctx, taskID, index, url); err != nil {
-			if s.logger != nil {
-				s.logger.Warn("generation result image cache failed", "taskId", taskID, "index", index, "url", url, "error", err)
-			}
-			return fmt.Errorf("第 %d 张图片无法访问，上游返回了不可下载的图片地址", index+1)
-		}
-	}
 	return nil
 }
 

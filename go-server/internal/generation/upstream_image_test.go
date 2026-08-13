@@ -14,7 +14,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"aipi-go/internal/models"
 	"aipi-go/internal/providers"
@@ -156,23 +155,6 @@ func TestNormalizeImageResultForProviderMapsChatUsage(t *testing.T) {
 	usage := ExtractImageUsage(result)
 	if usage["input_tokens"] != 90 || usage["output_tokens"] != 60 || usage["total_tokens"] != 150 {
 		t.Fatalf("unexpected mapped usage: %#v", usage)
-	}
-}
-
-func TestCacheTaskResultImagesRejectsUnavailableURL(t *testing.T) {
-	t.Setenv("LOG_DIR", t.TempDir())
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		http.Error(w, "not an image", http.StatusBadGateway)
-	}))
-	defer server.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-	defer cancel()
-	err := (&Service{logger: slog.Default()}).cacheTaskResultImages(ctx, "task-bad-url", map[string]any{
-		"data": []any{map[string]any{"url": server.URL + "/broken.png"}},
-	})
-	if err == nil || !strings.Contains(err.Error(), "无法访问") {
-		t.Fatalf("cacheTaskResultImages error = %v, want unavailable image error", err)
 	}
 }
 

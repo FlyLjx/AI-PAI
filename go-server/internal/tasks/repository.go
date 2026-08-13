@@ -707,7 +707,7 @@ func (r *Repository) ImageURLByIndex(ctx context.Context, id string, index int) 
 	if index < 0 {
 		return "", sql.ErrNoRows
 	}
-	// Successful tasks normally have their upstream images cached in the
+	// Successful tasks normally have their upstream image references in the
 	// normalized table. Read that small row instead of loading/parsing the
 	// potentially hundreds-of-KB result_json column for every image request.
 	var status, imageURL string
