@@ -35,7 +35,6 @@ import {
   type AdminOperationsRange,
   type AdminOperationsRankingSnapshot,
   type AdminOperationsTopUser,
-  type AdminOperationsTrendSnapshot,
   type StabilitySnapshot,
 } from '@/lib/admin-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
@@ -72,12 +71,6 @@ const EMPTY_RANKING: AdminOperationsRankingSnapshot = {
   range: 'today',
   metric: 'credits',
   topUsers: [],
-  generatedAt: '',
-};
-
-const EMPTY_TREND: AdminOperationsTrendSnapshot = {
-  minutes: 60,
-  points: [],
   generatedAt: '',
 };
 
@@ -161,18 +154,15 @@ function operationPanelId(value: string) {
 export default function AdminAPIOperationsPage() {
   const [live, setLive] = useState<AdminOperationsLiveSnapshot>(EMPTY_LIVE);
   const [ranking, setRanking] = useState<AdminOperationsRankingSnapshot>(EMPTY_RANKING);
-  const [trend, setTrend] = useState<AdminOperationsTrendSnapshot>(EMPTY_TREND);
   const [stability, setStability] = useState<StabilitySnapshot | null>(null);
   const [range, setRange] = useState<AdminOperationsRange>('today');
   const [metric, setMetric] = useState<AdminOperationsMetric>('credits');
   const [expandedUser, setExpandedUser] = useState('');
   const [liveLoading, setLiveLoading] = useState(true);
   const [rankingLoading, setRankingLoading] = useState(true);
-  const [trendLoading, setTrendLoading] = useState(true);
   const [stabilityLoading, setStabilityLoading] = useState(true);
   const [liveError, setLiveError] = useState('');
   const [rankingError, setRankingError] = useState('');
-  const [trendError, setTrendError] = useState('');
   const [stabilityError, setStabilityError] = useState('');
   const liveRequestRef = useRef(false);
   const rankingRequestRef = useRef(0);
@@ -210,19 +200,6 @@ export default function AdminAPIOperationsPage() {
     }
   }, [metric, range]);
 
-  const loadTrend = useCallback(async () => {
-    setTrendLoading(true);
-    try {
-      const response = await portalApi.adminOperationsTrend();
-      setTrend(response.data);
-      setTrendError('');
-    } catch (requestError) {
-      setTrendError(requestError instanceof Error ? requestError.message : '调用趋势加载失败');
-    } finally {
-      setTrendLoading(false);
-    }
-  }, []);
-
   const loadStability = useCallback(async (quiet = false) => {
     if (!quiet) setStabilityLoading(true);
     try {
@@ -237,8 +214,8 @@ export default function AdminAPIOperationsPage() {
   }, []);
 
   const refreshAll = useCallback(async () => {
-    await Promise.allSettled([loadLive(), loadRanking(), loadTrend(), loadStability()]);
-  }, [loadLive, loadRanking, loadStability, loadTrend]);
+    await Promise.allSettled([loadLive(), loadRanking(), loadStability()]);
+  }, [loadLive, loadRanking, loadStability]);
 
   useEffect(() => {
     const firstLoad = window.setTimeout(() => void loadLive(), 0);
@@ -264,21 +241,16 @@ export default function AdminAPIOperationsPage() {
 
   useEffect(() => {
     const firstLoad = window.setTimeout(() => {
-      void loadTrend();
       void loadStability();
     }, 0);
-    const trendTimer = window.setInterval(() => {
-      if (!document.hidden) void loadTrend();
-    }, 60_000);
     const stabilityTimer = window.setInterval(() => {
       if (!document.hidden) void loadStability(true);
     }, 30_000);
     return () => {
       window.clearTimeout(firstLoad);
-      window.clearInterval(trendTimer);
       window.clearInterval(stabilityTimer);
     };
-  }, [loadStability, loadTrend]);
+  }, [loadStability]);
 
   const activeCallUserGroups = useMemo<ActiveCallUserGroup[]>(() => {
     const groups = new Map<string, {
@@ -398,19 +370,18 @@ export default function AdminAPIOperationsPage() {
 
   const issues = [
     liveError && `实时任务：${liveError}`,
-    trendError && `调用趋势：${trendError}`,
     rankingError && `用户排行：${rankingError}`,
     stabilityError && `上游状态：${stabilityError}`,
   ].filter(Boolean) as string[];
-  const trendHasData = trend.points.some((point) => point.total > 0 || point.success > 0 || point.failed > 0);
-  const trendSummary = useMemo(() => trend.points.reduce((summary, point) => ({
-    total: summary.total + Number(point.total || 0),
-    success: summary.success + Number(point.success || 0),
-    failed: summary.failed + Number(point.failed || 0),
-  }), { total: 0, success: 0, failed: 0 }), [trend.points]);
-  const trendCounted = trendSummary.success + trendSummary.failed;
-  const trendSuccessRate = trendCounted > 0 ? `${((trendSummary.success / trendCounted) * 100).toFixed(1)}%` : '0.0%';
-  const trendExcluded = Math.max(0, trendSummary.total - trendCounted);
+  const upstreamRuntime = stability?.runtime;
+  const trendPoints = useMemo(() => (upstreamRuntime?.series || []).map((point) => ({
+    timestamp: point.time,
+    success: Number(point.success || 0),
+    failed: Number(point.failed || 0),
+  })), [upstreamRuntime?.series]);
+  const trendHasData = trendPoints.some((point) => point.success > 0 || point.failed > 0);
+  const trendSuccessRate = `${Number(upstreamRuntime?.success_rate || 0).toFixed(1)}%`;
+  const trendErrorRate = `${Number(upstreamRuntime?.error_rate || 0).toFixed(1)}%`;
 
   const summaryItems = [
     { label: '调用用户', value: live.activeUsers.toLocaleString('zh-CN'), note: '当前有任务', icon: Users, tone: 'blue' as const },
@@ -421,7 +392,7 @@ export default function AdminAPIOperationsPage() {
     { label: '上游状态', value: stabilityLoading && !stability ? '同步中' : upstreamHealthy ? '正常' : stability ? '异常' : '待同步', note: stability ? `${upstreamCode || '-'} · ${Number(stability.stability_percent || 0).toFixed(1)}%` : '等待状态数据', icon: Radio, tone: upstreamHealthy ? 'green' as const : stability ? 'red' as const : 'neutral' as const },
   ];
 
-  const refreshing = liveLoading || rankingLoading || trendLoading || stabilityLoading;
+  const refreshing = liveLoading || rankingLoading || stabilityLoading;
 
   return (
     <div className="space-y-5">
@@ -450,26 +421,24 @@ export default function AdminAPIOperationsPage() {
 
       <section className="overflow-hidden rounded-md border border-[#DCE4DF] bg-white" aria-labelledby="operation-trend-title">
         <header className="flex flex-wrap items-center justify-between gap-3 border-b border-[#EDF0EE] px-4 py-3">
-          <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-md bg-blue-50 text-blue-700"><ChartNoAxesCombined className="h-4 w-4" /></span><div><h2 id="operation-trend-title" className="text-xs font-semibold text-[#17201B]">近 60 分钟调用趋势</h2><p className="mt-0.5 text-[10px] text-zinc-400">按分钟统计所有已完成请求</p></div></div>
+          <div className="flex items-center gap-2.5"><span className="grid h-8 w-8 place-items-center rounded-md bg-blue-50 text-blue-700"><ChartNoAxesCombined className="h-4 w-4" /></span><div><h2 id="operation-trend-title" className="text-xs font-semibold text-[#17201B]">近 {upstreamRuntime?.window_minutes || 60} 分钟上游调用趋势</h2><p className="mt-0.5 text-[10px] text-zinc-400">数据源 /health/stability</p></div></div>
           <div className="flex items-center gap-3 text-[10px] text-zinc-500">
-            <span className="inline-flex items-center gap-1.5"><i className="inline-block h-px w-5" style={{ backgroundColor: ADMIN_CHART_COLORS.total }} />调用（全部）</span>
             <span className="inline-flex items-center gap-1.5"><i className="inline-block h-px w-5" style={{ backgroundColor: ADMIN_CHART_COLORS.success }} />成功</span>
             <span className="inline-flex items-center gap-1.5"><i className="inline-block h-px w-5 border-t border-dashed" style={{ borderColor: ADMIN_CHART_COLORS.failed }} />失败</span>
             <span className="font-semibold" style={{ color: ADMIN_CHART_COLORS.success }}>成功率 {trendSuccessRate}</span>
-            {trendExcluded > 0 && <span className="text-zinc-400">未纳入 {trendExcluded}</span>}
+            <span className="font-semibold text-red-600">错误率 {trendErrorRate}</span>
           </div>
         </header>
         <div className="h-[220px] p-4 pl-1">
-          {trendLoading && !trend.points.length ? (
+          {stabilityLoading && !stability ? (
             <div className="grid h-full place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[#12B76A]" /></div>
           ) : trendHasData ? (
             <ResponsiveContainer width="100%" height="100%">
-              <LineChart accessibilityLayer data={trend.points} margin={ADMIN_CHART_MARGIN}>
+              <LineChart accessibilityLayer data={trendPoints} margin={ADMIN_CHART_MARGIN}>
                 <CartesianGrid stroke={ADMIN_CHART_GRID} vertical />
                 <XAxis dataKey="timestamp" tickFormatter={(value) => shortClock(String(value))} tick={{ fontSize: 10, fill: ADMIN_CHART_AXIS }} tickLine={false} axisLine={{ stroke: ADMIN_CHART_BORDER }} minTickGap={30} />
                 <YAxis allowDecimals={false} tick={{ fontSize: 10, fill: ADMIN_CHART_AXIS }} tickLine={false} axisLine={false} width={42} />
-                <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), ({ total: '调用（全部）', success: '成功', failed: '失败' } as Record<string, string>)[String(name)] || String(name)]} labelFormatter={(label) => `时间 ${formatDate(String(label))}`} contentStyle={{ border: `1px solid ${ADMIN_CHART_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
-                <Line type="monotone" dataKey="total" name="调用（全部）" stroke={ADMIN_CHART_COLORS.total} strokeWidth={2} dot={ADMIN_CHART_DOT} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
+                <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), ({ success: '成功', failed: '失败' } as Record<string, string>)[String(name)] || String(name)]} labelFormatter={(label) => `时间 ${formatDate(String(label))}`} contentStyle={{ border: `1px solid ${ADMIN_CHART_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
                 <Line type="monotone" dataKey="success" name="成功" stroke={ADMIN_CHART_COLORS.success} strokeWidth={2} dot={{ ...ADMIN_CHART_DOT, fill: ADMIN_CHART_COLORS.success, strokeWidth: 0 }} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
                 <Line type="monotone" dataKey="failed" name="失败" stroke={ADMIN_CHART_COLORS.failed} strokeWidth={1.8} strokeDasharray="5 4" dot={{ ...ADMIN_CHART_DOT, fill: ADMIN_CHART_COLORS.failed, strokeWidth: 0 }} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
               </LineChart>
