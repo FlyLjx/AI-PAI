@@ -122,7 +122,7 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 		return nil, newAppError(http.StatusNotFound, "模型不存在")
 	}
 	if err != nil {
-		return nil, err
+		return nil, generationAdmissionError(err)
 	}
 	if model.Status != "active" {
 		return nil, newAppError(http.StatusBadRequest, "模型已禁用")
@@ -141,7 +141,7 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 		return nil, newAppError(http.StatusNotFound, "用户不存在")
 	}
 	if err != nil {
-		return nil, err
+		return nil, generationAdmissionError(err)
 	}
 	if user.Status != "active" {
 		return nil, newAppError(http.StatusForbidden, "用户已被禁用")
@@ -153,14 +153,11 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	}
 	prompt := input.Prompt
 	var savedTask *tasks.Task
+	costCredits, subscriptionQuotaUnits, err := r.generationBillingQuote(ctx, user.ID, *model, input.SizeTier, input.Quantity, generationBillingModeAuto)
+	if err != nil {
+		return nil, generationAdmissionError(err)
+	}
 	if err := r.withUserGenerationLock(ctx, user.ID, func(tx *database.Tx) error {
-		costCredits, subscriptionQuotaUnits, err := r.generationBillingQuote(ctx, tx, user.ID, *model, input.SizeTier, input.Quantity, generationBillingModeAuto)
-		if err != nil {
-			return err
-		}
-		if err := reserveGenerationBalance(ctx, tx, user.ID, costCredits, generationBillingModeAuto); err != nil {
-			return err
-		}
 		task := tasks.Task{
 			ID:                     newID(),
 			UserID:                 user.ID,
@@ -183,9 +180,13 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 			PublicStatus:           "private",
 		}
 		savedTask, err = tasks.NewRepository(r.db).CreateWithTx(ctx, tx, task)
-		return err
+		if err != nil {
+			return err
+		}
+		// Reserve last so the per-user row lock is held only until commit.
+		return r.reserveGenerationBalance(ctx, tx, user.ID, costCredits, generationBillingModeAuto)
 	}); err != nil {
-		return nil, err
+		return nil, generationAdmissionError(err)
 	}
 	if r.logger != nil {
 		r.logger.Info("[generation:request-accepted]",
@@ -202,7 +203,7 @@ func (r *Router) createGenerationTask(req *http.Request) (*tasks.Task, error) {
 	return savedTask, nil
 }
 
-func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, userID string, model models.Model, sizeTier string, quantity int, billingMode string) (float64, int, error) {
+func (r *Router) generationBillingQuote(ctx context.Context, userID string, model models.Model, sizeTier string, quantity int, billingMode string) (float64, int, error) {
 	if quantity < 1 {
 		quantity = 1
 	}
@@ -226,27 +227,14 @@ func (r *Router) generationBillingQuote(ctx context.Context, tx *database.Tx, us
 		}
 	}
 
-	unitPrice, err := r.modelPriceForUser(ctx, tx, userID, model, sizeTier)
+	unitPrice, err := r.modelPriceForUser(ctx, userID, model, sizeTier)
 	if err != nil {
 		return 0, 0, err
 	}
 	price := generationBalanceCost(unitPrice, quantity)
-	var credits float64
-	var reserved float64
-	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ?`, userID).Scan(&credits); err != nil {
-		return 0, 0, err
-	}
-	if err := tx.QueryRowContext(ctx, `
-		SELECT COALESCE(SUM(cost_credits), 0)
-		FROM generation_tasks
-		WHERE user_id = ? AND status IN ('queued', 'pending', 'processing')
-	`, userID).Scan(&reserved); err != nil {
-		return 0, 0, err
-	}
-	if !hasAvailableGenerationBalance(credits, reserved, price) {
-		r.notifyBalanceInsufficient(userID)
-		return 0, 0, newAppError(http.StatusPaymentRequired, generationBalanceInsufficientMessage(billingMode))
-	}
+	// The conditional reservation UPDATE is the authoritative balance check.
+	// Avoid scanning active tasks on every admission; the reservation column is
+	// maintained atomically and reconciled when tasks reach a terminal state.
 	return price, 0, nil
 }
 

@@ -6,12 +6,20 @@ import (
 	"encoding/json"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"aipi-go/internal/apierrors"
 	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
 )
+
+const markUsedWriteInterval = 10 * time.Second
+
+var markUsedWrites = struct {
+	sync.Mutex
+	last map[string]time.Time
+}{last: make(map[string]time.Time)}
 
 type Repository struct {
 	db *database.DB
@@ -583,7 +591,25 @@ func (r *Repository) DeleteKey(ctx context.Context, id string, userID string) (b
 }
 
 func (r *Repository) MarkUsed(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	now := time.Now()
+	markUsedWrites.Lock()
+	if last := markUsedWrites.last[id]; !last.IsZero() && now.Sub(last) < markUsedWriteInterval {
+		markUsedWrites.Unlock()
+		return nil
+	}
+	markUsedWrites.last[id] = now
+	markUsedWrites.Unlock()
+
 	_, err := r.db.ExecContext(ctx, `UPDATE api_access_keys SET last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?`, id)
+	if err != nil {
+		markUsedWrites.Lock()
+		delete(markUsedWrites.last, id)
+		markUsedWrites.Unlock()
+	}
 	return err
 }
 

@@ -204,6 +204,7 @@ func EnsureSchema(db *sql.DB) error {
 	}{
 		{"idx_generation_tasks_status_created_at", `CREATE INDEX idx_generation_tasks_status_created_at ON generation_tasks (status, created_at)`},
 		{"idx_generation_tasks_user_id_created_at", `CREATE INDEX idx_generation_tasks_user_id_created_at ON generation_tasks (user_id, created_at)`},
+		{"idx_generation_tasks_user_status", `CREATE INDEX idx_generation_tasks_user_status ON generation_tasks (user_id, status)`},
 		{"idx_generation_tasks_user_created_status", `CREATE INDEX idx_generation_tasks_user_created_status ON generation_tasks (user_id, created_at, status)`},
 		{"idx_generation_tasks_created_at_user_id", `CREATE INDEX idx_generation_tasks_created_at_user_id ON generation_tasks (created_at, user_id)`},
 		{"idx_generation_tasks_public_status_display_enabled_created_at", `CREATE INDEX idx_generation_tasks_public_status_display_enabled_created_at ON generation_tasks (public_status, display_enabled, created_at)`},

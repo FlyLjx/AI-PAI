@@ -48,9 +48,9 @@ func (s *Service) finishSuccessWithBillingOnce(ctx context.Context, input Billin
 	}
 	defer tx.Rollback()
 
-	// Settlement and task admission must use the same lock order. Admission
-	// locks the user row before inserting a task; settlement therefore reads the
-	// task without locking only to discover its owner, then locks user -> task.
+	// Read the task without locking only to discover its owner, then lock
+	// user -> task. Admission inserts a brand-new, uncommitted task before its
+	// final user reservation, so settlement can never contend for that task.
 	// The second read is the authoritative status/cost check.
 	var taskUserID string
 	var taskStatus string

@@ -160,6 +160,8 @@ func (r *Router) compatImageRequest(w http.ResponseWriter, req *http.Request, is
 }
 
 func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Request, auth *apiaccess.Authenticated, input compatImageInput, isEdit bool, responseMode compatImageResponseMode) {
+	admissionStarted := time.Now()
+	admissionStage := "request_validation"
 	input.Model = strings.TrimSpace(input.Model)
 	input.Prompt = strings.TrimSpace(input.Prompt)
 	if input.N == 0 {
@@ -184,6 +186,7 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 	// wait below so a slow database lock cannot surface as a generic 500.
 	ctx, cancel := context.WithTimeout(req.Context(), generationEnqueueTimeout)
 	defer cancel()
+	admissionStage = "model_lookup"
 	model, err := models.NewRepository(r.db).FindActiveByNameOrDisplayName(ctx, input.Model)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -192,6 +195,11 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		}
 		if errors.Is(err, models.ErrAmbiguousModelName) {
 			writeOpenAIError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+			return
+		}
+		if errors.Is(err, context.DeadlineExceeded) {
+			r.logGenerationAdmissionFailure(admissionStage, admissionStarted, auth.User.ID, err)
+			writeCompatGenerationAdmissionError(w, err)
 			return
 		}
 		writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
@@ -217,62 +225,75 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 	}
 	accessLogID := newID()
 	var savedTask *tasks.Task
-	if err := r.withUserGenerationLock(ctx, auth.User.ID, func(tx *database.Tx) error {
-		costCredits, subscriptionQuotaUnits, err := r.generationBillingQuote(ctx, tx, auth.User.ID, *model, sizeTier, input.N, auth.APIKey.BillingMode)
-		if err != nil {
-			return err
-		}
-		if err := reserveGenerationBalance(ctx, tx, auth.User.ID, costCredits, auth.APIKey.BillingMode); err != nil {
-			return err
-		}
-		task := tasks.Task{
-			ID:                     newID(),
-			UserID:                 auth.User.ID,
-			ModelID:                model.ID,
-			ProviderID:             model.ProviderID,
-			Capability:             model.Capability,
-			Prompt:                 input.Prompt,
-			ReferenceImageURL:      referencePayload,
-			SizeTier:               sizeTier,
-			Size:                   &size,
-			OutputFormat:           effectiveOutputFormat(outputFormat),
-			Quantity:               input.N,
-			SubscriptionQuotaUnits: subscriptionQuotaUnits,
-			UserIP:                 requestIP(req),
-			CostCredits:            costCredits,
-			ModelCostCredits:       0,
-			RemainingCredits:       0,
-			DurationSeconds:        0,
-			Status:                 tasks.StatusQueued,
-			PublicStatus:           "private",
-		}
-		savedTask, err = tasks.NewRepository(r.db).CreateWithTx(ctx, tx, task)
-		if err != nil {
-			return err
-		}
-		_, err = apiaccess.NewRepository(r.db).CreateLogWithTx(ctx, tx, apiaccess.UsageLog{
-			ID:             accessLogID,
-			UserID:         auth.User.ID,
-			APIKeyID:       auth.APIKey.ID,
-			TaskID:         &savedTask.ID,
-			Endpoint:       req.URL.Path,
-			Model:          input.Model,
-			Prompt:         input.Prompt,
-			Size:           size,
-			Quality:        defaultString(input.Quality, sizeTier),
-			Quantity:       input.N,
-			ImageCount:     0,
-			ResponseFormat: defaultString(input.ResponseFormat, "url"),
-			RequestParams:  requestParams,
-			Status:         "queued",
+	admissionStage = "billing_quote"
+	costCredits, subscriptionQuotaUnits, admissionErr := r.generationBillingQuote(ctx, auth.User.ID, *model, sizeTier, input.N, auth.APIKey.BillingMode)
+	if admissionErr == nil {
+		admissionStage = "transaction"
+		admissionErr = r.withUserGenerationLock(ctx, auth.User.ID, func(tx *database.Tx) error {
+			admissionStage = "task_insert"
+			task := tasks.Task{
+				ID:                     newID(),
+				UserID:                 auth.User.ID,
+				ModelID:                model.ID,
+				ProviderID:             model.ProviderID,
+				Capability:             model.Capability,
+				Prompt:                 input.Prompt,
+				ReferenceImageURL:      referencePayload,
+				SizeTier:               sizeTier,
+				Size:                   &size,
+				OutputFormat:           effectiveOutputFormat(outputFormat),
+				Quantity:               input.N,
+				SubscriptionQuotaUnits: subscriptionQuotaUnits,
+				UserIP:                 requestIP(req),
+				CostCredits:            costCredits,
+				ModelCostCredits:       0,
+				RemainingCredits:       0,
+				DurationSeconds:        0,
+				Status:                 tasks.StatusQueued,
+				PublicStatus:           "private",
+			}
+			var err error
+			savedTask, err = tasks.NewRepository(r.db).CreateWithTx(ctx, tx, task)
+			if err != nil {
+				return err
+			}
+			admissionStage = "access_log_insert"
+			_, err = apiaccess.NewRepository(r.db).CreateLogWithTx(ctx, tx, apiaccess.UsageLog{
+				ID:             accessLogID,
+				UserID:         auth.User.ID,
+				APIKeyID:       auth.APIKey.ID,
+				TaskID:         &savedTask.ID,
+				Endpoint:       req.URL.Path,
+				Model:          input.Model,
+				Prompt:         input.Prompt,
+				Size:           size,
+				Quality:        defaultString(input.Quality, sizeTier),
+				Quantity:       input.N,
+				ImageCount:     0,
+				ResponseFormat: defaultString(input.ResponseFormat, "url"),
+				RequestParams:  requestParams,
+				Status:         "queued",
+			})
+			if err != nil {
+				return err
+			}
+			admissionStage = "balance_reservation"
+			// Reserve last so same-user requests hold the users row lock for only
+			// the UPDATE and immediately following commit.
+			return r.reserveGenerationBalance(ctx, tx, auth.User.ID, costCredits, auth.APIKey.BillingMode)
 		})
-		return err
-	}); err != nil {
+	}
+	if admissionErr != nil {
+		r.logGenerationAdmissionFailure(admissionStage, admissionStarted, auth.User.ID, admissionErr)
+		if errors.Is(admissionErr, context.DeadlineExceeded) {
+			writeCompatGenerationAdmissionError(w, admissionErr)
+			return
+		}
 		status := http.StatusInternalServerError
 		errorType := "api_error"
-		message := err.Error()
+		message := admissionErr.Error()
 		var appErr appError
-		if errors.As(err, &appErr) {
+		if errors.As(admissionErr, &appErr) {
 			status = appErr.status
 			if status == http.StatusPaymentRequired {
 				errorType = "insufficient_quota"
@@ -852,6 +873,10 @@ func (r *Router) waitForCompatTask(ctx context.Context, id string) (*tasks.Task,
 }
 
 func writeCompatAuthError(w http.ResponseWriter, err error) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeOpenAIError(w, http.StatusServiceUnavailable, "认证服务繁忙，请稍后重试", "server_error")
+		return
+	}
 	if errors.Is(err, apiaccess.ErrMissingKey) || errors.Is(err, apiaccess.ErrInvalidKey) {
 		writeOpenAIError(w, http.StatusUnauthorized, err.Error(), "invalid_api_key")
 		return

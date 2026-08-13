@@ -12,11 +12,9 @@ import (
 )
 
 const (
-	// Admission must stay database-only. The old implementation held the user
-	// row lock while calculating the quote and inserting the task, which made
-	// every request for one account wait behind the previous request and turn
-	// normal concurrency into a 5-second 429. Balance reservation below uses a
-	// single conditional UPDATE, so the row is locked only for that statement.
+	// Admission must stay database-only. Quote and entitlement reads happen
+	// before this transaction, and callers reserve the balance as their final
+	// statement so the per-user row lock is released by the following commit.
 	generationLockRetryCount = 3
 	generationEnqueueTimeout = 30 * time.Second
 )
@@ -76,10 +74,9 @@ func (r *Router) withUserGenerationLockOnce(ctx context.Context, userID string, 
 
 // reserveGenerationBalance atomically adds a pending balance reservation.
 // The conditional UPDATE is the concurrency gate: concurrent requests may
-// read the same quote, but only requests that still have unreserved balance
-// can commit a reservation. It holds the user row lock for one UPDATE instead
-// of the full admission transaction.
-func reserveGenerationBalance(ctx context.Context, tx *database.Tx, userID string, amount float64, billingMode string) error {
+// calculate the same quote, but only requests that still have unreserved
+// balance can commit a reservation.
+func (r *Router) reserveGenerationBalance(ctx context.Context, tx *database.Tx, userID string, amount float64, billingMode string) error {
 	amount = normalizedCreditAmount(amount)
 	if amount <= 0 {
 		return nil
@@ -99,6 +96,7 @@ func reserveGenerationBalance(ctx context.Context, tx *database.Tx, userID strin
 		return err
 	}
 	if rows != 1 {
+		r.notifyBalanceInsufficient(userID)
 		return newAppError(http.StatusPaymentRequired, generationBalanceInsufficientMessage(billingMode))
 	}
 	return nil
@@ -128,4 +126,37 @@ func isRetryableGenerationLockError(err error) bool {
 		}
 	}
 	return false
+}
+
+func generationAdmissionError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return newAppError(http.StatusServiceUnavailable, "请求入队繁忙，请稍后重试")
+	}
+	return err
+}
+
+func writeCompatGenerationAdmissionError(w http.ResponseWriter, err error) {
+	if errors.Is(err, context.DeadlineExceeded) {
+		writeOpenAIError(w, http.StatusServiceUnavailable, "请求入队繁忙，请稍后重试", "server_error")
+		return
+	}
+	writeOpenAIError(w, http.StatusInternalServerError, err.Error(), "api_error")
+}
+
+func (r *Router) logGenerationAdmissionFailure(stage string, started time.Time, userID string, err error) {
+	if r == nil || r.logger == nil {
+		return
+	}
+	stats := r.db.Raw().Stats()
+	r.logger.Error("generation admission failed",
+		"stage", stage,
+		"elapsed", time.Since(started),
+		"userId", userID,
+		"error", err,
+		"dbOpenConnections", stats.OpenConnections,
+		"dbInUse", stats.InUse,
+		"dbIdle", stats.Idle,
+		"dbWaitCount", stats.WaitCount,
+		"dbWaitDuration", stats.WaitDuration,
+	)
 }

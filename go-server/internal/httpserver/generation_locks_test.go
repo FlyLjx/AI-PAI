@@ -3,6 +3,8 @@ package httpserver
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -19,5 +21,35 @@ func TestRetryableGenerationLockError(t *testing.T) {
 	}
 	if isRetryableGenerationLockError(context.DeadlineExceeded) {
 		t.Fatal("parent request deadlines must not be retried")
+	}
+}
+
+func TestCompatAdmissionDeadlineReturnsServiceUnavailable(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeCompatGenerationAdmissionError(recorder, context.DeadlineExceeded)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestCompatAuthDeadlineReturnsServiceUnavailable(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	writeCompatAuthError(recorder, context.DeadlineExceeded)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusServiceUnavailable)
+	}
+}
+
+func TestGenerationAdmissionDeadlineMapsToServiceUnavailable(t *testing.T) {
+	err := generationAdmissionError(context.DeadlineExceeded)
+	var appErr appError
+	if !errors.As(err, &appErr) {
+		t.Fatalf("expected appError, got %T", err)
+	}
+	if appErr.status != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d", appErr.status, http.StatusServiceUnavailable)
+	}
+	if appErr.message != "请求入队繁忙，请稍后重试" {
+		t.Fatalf("message = %q", appErr.message)
 	}
 }
