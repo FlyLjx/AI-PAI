@@ -142,6 +142,32 @@ func TestNormalizeImageResultForProviderPreservesCanonicalUsage(t *testing.T) {
 	}
 }
 
+func TestResultWithoutBase64KeepsURLsAndUsage(t *testing.T) {
+	result := ResultWithoutBase64(map[string]any{
+		"data": []any{
+			map[string]any{"url": "https://example.test/image.png"},
+			map[string]any{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"},
+		},
+		"usage": map[string]any{"total_tokens": float64(12)},
+	})
+	images := ExtractImages(result)
+	if len(images) != 1 || images[0].URL != "https://example.test/image.png" || images[0].B64 != "" {
+		t.Fatalf("unexpected durable images: %+v", images)
+	}
+	if usage := ExtractImageUsage(result); usage["total_tokens"] != 12 {
+		t.Fatalf("unexpected durable usage: %+v", usage)
+	}
+}
+
+func TestResultWithoutBase64ReturnsNilForImageBytesOnly(t *testing.T) {
+	result := ResultWithoutBase64(map[string]any{
+		"data": []any{map[string]any{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"}},
+	})
+	if result != nil {
+		t.Fatalf("base64-only result should not be persisted: %#v", result)
+	}
+}
+
 func TestNormalizeImageResultForProviderMapsChatUsage(t *testing.T) {
 	result := NormalizeImageResultForProvider(map[string]any{
 		"data": []any{map[string]any{"url": "https://cdn.example.test/out.png"}},

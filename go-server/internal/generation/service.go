@@ -45,15 +45,6 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		return nil
 	}
 	s.markAPIAccessLogProcessing(taskID)
-	if s.hub != nil {
-		s.hub.PublishTask(*task)
-		s.hub.PublishProgress(taskID, map[string]any{
-			"taskId":  taskID,
-			"stage":   "processing",
-			"message": "正在生成图片...",
-			"detail":  "Go worker 已开始调用生成模型",
-		})
-	}
 
 	model, provider, err := modelAndProvider(ctx, s.db, task)
 	if err != nil {
@@ -70,9 +61,6 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		}
 		s.reconcileTaskBalanceReservation(failed)
 		s.syncAPIAccessLogForTask(failed)
-		if failed != nil && s.hub != nil {
-			s.hub.PublishTask(*failed)
-		}
 		s.logger.Error("[generation:finished]",
 			"taskId", taskID,
 			"status", "failed",
@@ -91,9 +79,6 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		}
 		s.reconcileTaskBalanceReservation(failed)
 		s.syncAPIAccessLogForTask(failed)
-		if failed != nil && s.hub != nil {
-			s.hub.PublishTask(*failed)
-		}
 		s.logger.Warn("[generation:finished]",
 			"taskId", taskID,
 			"status", "failed",
@@ -138,6 +123,12 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		}
 		actualQuantity = quantity
 		modelCostCredits = taskModelCost(task.SizeTier, actualQuantity, model.Cost1K, model.Cost2K, model.Cost4K)
+		rememberInlineResult := wantsBase64ImageResponse(options.ImageResponseFormat)
+		if rememberInlineResult {
+			// Publish before the success transaction commits. A waiter must never
+			// observe a terminal task before its one-time inline result is ready.
+			RememberResult(taskID, result)
+		}
 		err = s.finishSuccessWithBilling(ctx, BillingSuccessInput{
 			TaskID:           taskID,
 			ProviderID:       provider.ID,
@@ -150,6 +141,9 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		if err == nil {
 			lastErr = nil
 			break
+		}
+		if rememberInlineResult {
+			ForgetResult(taskID)
 		}
 		lastErr = err
 		if !errors.Is(err, ErrDuplicateResultImage) || attempt >= upstreamDuplicateGuardAttempts {
@@ -177,18 +171,12 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		if errors.Is(lastErr, context.Canceled) {
 			if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil && finalTask.Status == tasks.StatusCanceled {
 				s.syncAPIAccessLogForTask(finalTask)
-				if s.hub != nil {
-					s.hub.PublishTask(*finalTask)
-				}
 				return nil
 			}
 		}
 		if errors.Is(lastErr, ErrTaskNotProcessing) {
 			if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil {
 				s.syncAPIAccessLogForTask(finalTask)
-				if s.hub != nil {
-					s.hub.PublishTask(*finalTask)
-				}
 			}
 			return nil
 		}
@@ -200,9 +188,6 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		}
 		s.reconcileTaskBalanceReservation(failed)
 		s.syncAPIAccessLogForTask(failed)
-		if failed != nil && s.hub != nil {
-			s.hub.PublishTask(*failed)
-		}
 		s.logger.Error("[generation:finished]",
 			"taskId", taskID,
 			"status", "failed",
@@ -213,9 +198,6 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 	}
 	if finalTask, err := s.tasks.FindByID(context.Background(), taskID); err == nil && finalTask != nil {
 		s.syncAPIAccessLogForTask(finalTask)
-		if s.hub != nil {
-			s.hub.PublishTask(*finalTask)
-		}
 	}
 	s.logger.Info("[generation:finished]",
 		"taskId", taskID,
@@ -260,11 +242,6 @@ func (s *Service) FailTimedOut(ctx context.Context, cutoff time.Time, now time.T
 		if err := logRepository.FinishLogsForTaskWithDetails(ctx, id, "failed", 0, message, taskErrorDetails(ErrTaskTimedOut)); err != nil {
 			syncErr = errors.Join(syncErr, err)
 		}
-		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
-			if s.hub != nil {
-				s.hub.PublishTask(*task)
-			}
-		}
 		if s.logger != nil {
 			s.logger.Warn("generation task timed out", "taskId", id, "timeout", message)
 		}
@@ -285,11 +262,6 @@ func (s *Service) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, 
 		}
 		if err := logRepository.FinishLogsForTaskWithDetails(ctx, id, "failed", 0, message, taskErrorDetails(ErrTaskTimedOut)); err != nil {
 			syncErr = errors.Join(syncErr, err)
-		}
-		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
-			if s.hub != nil {
-				s.hub.PublishTask(*task)
-			}
 		}
 		if s.logger != nil {
 			s.logger.Warn("generation task timed out", "taskId", id, "timeout", message)

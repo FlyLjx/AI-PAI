@@ -26,8 +26,6 @@ var exportTableNames = []string{
 	"user_checkins",
 	"user_invites",
 	"invite_rebate_records",
-	"subscription_lottery_prizes",
-	"subscription_lottery_records",
 	"announcements",
 	"announcement_users",
 	"announcement_receipts",
@@ -45,8 +43,6 @@ var excludedExportData = []string{
 	"user_registration_fingerprints",
 	"user_ip_evidence",
 	"registration_challenges",
-	"oauth_authorization_codes",
-	"oauth_access_tokens",
 	"user_email_tokens",
 	"system log files and cached task images",
 }

@@ -109,6 +109,7 @@ type UsageLog struct {
 	ChargedCredits     float64
 	ModelCostCredits   float64
 	DurationSeconds    float64
+	TaskResult         map[string]any
 	TaskUsage          map[string]any
 	CreatedAt          time.Time
 	FinishedAt         *time.Time
@@ -435,16 +436,17 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 		isChatCompletion := strings.HasSuffix(strings.TrimRight(strings.ToLower(strings.TrimSpace(log.Endpoint)), "/"), "/chat/completions")
 		summarizeBase64 := !isChatCompletion && usageLogWantsBase64ImageResponse(log.ResponseFormat)
 		data := make([]map[string]string, 0, imageCount)
-		for index := 0; index < imageCount; index++ {
+		if !summarizeBase64 {
+			data = usageLogResultData(log.TaskResult)
+		}
+		for len(data) < imageCount {
 			if summarizeBase64 {
 				data = append(data, map[string]string{
 					"b64_json": "[base64 image data omitted from logs]",
 				})
 				continue
 			}
-			data = append(data, map[string]string{
-				"url": "/api/tasks/" + strings.TrimSpace(*log.TaskID) + "/images/" + strconv.Itoa(index),
-			})
+			break
 		}
 		createdAt := log.CreatedAt
 		if log.FinishedAt != nil {
@@ -510,6 +512,25 @@ func usageLogResponseParams(log UsageLog) map[string]any {
 	default:
 		return nil
 	}
+}
+
+func usageLogResultData(result map[string]any) []map[string]string {
+	items, ok := result["data"].([]any)
+	if !ok {
+		return nil
+	}
+	data := make([]map[string]string, 0, len(items))
+	for _, item := range items {
+		payload, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		url, _ := payload["url"].(string)
+		if strings.TrimSpace(url) != "" {
+			data = append(data, map[string]string{"url": strings.TrimSpace(url)})
+		}
+	}
+	return data
 }
 
 func defaultErrorMessage(value string, fallback string) string {

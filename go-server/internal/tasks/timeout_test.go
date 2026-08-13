@@ -26,11 +26,11 @@ func TestFailTimedOutMarksActiveTasksFailed(t *testing.T) {
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, appclock.ConfigureDefault())
 	cutoff := now.Add(-5 * time.Minute)
 	createdAt := now.Add(-6 * time.Minute)
-	mock.ExpectQuery(`(?s)SELECT id, created_at.*status IN \('queued', 'pending', 'processing'\).*updated_at <= \?.*LIMIT \?`).
+	mock.ExpectQuery(`(?s)SELECT id, created_at, reference_image_url.*status IN \('queued', 'pending', 'processing'\).*updated_at <= \?.*LIMIT \?`).
 		WithArgs(cutoff, 500).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}).AddRow("task-1", createdAt))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "reference_image_url"}).AddRow("task-1", createdAt, nil))
 	mock.ExpectExec(`(?s)UPDATE generation_tasks.*status = 'failed'.*error_message = \?.*duration_seconds = \?.*WHERE id = \?.*updated_at <= \?`).
-		WithArgs("任务处理超时（超过 5 分钟）", 360.0, "task-1", cutoff).
+		WithArgs("任务处理超时（超过 5 分钟）", 360.0, nil, "task-1", cutoff).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	ids, err := NewRepository(database.Wrap(rawDB)).FailTimedOut(context.Background(), cutoff, now, "任务处理超时（超过 5 分钟）", 500)
@@ -58,9 +58,9 @@ func TestFailTimedOutProcessingOnlyIgnoresWaitingTasks(t *testing.T) {
 
 	now := time.Date(2026, 7, 19, 10, 0, 0, 0, appclock.ConfigureDefault())
 	cutoff := now.Add(-5 * time.Minute)
-	mock.ExpectQuery(`(?s)SELECT id, created_at.*status = 'processing'.*updated_at <= \?.*LIMIT \?`).
+	mock.ExpectQuery(`(?s)SELECT id, created_at, reference_image_url.*status = 'processing'.*updated_at <= \?.*LIMIT \?`).
 		WithArgs(cutoff, 500).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at"}))
+		WillReturnRows(sqlmock.NewRows([]string{"id", "created_at", "reference_image_url"}))
 
 	ids, err := NewRepository(database.Wrap(rawDB)).FailTimedOutProcessing(context.Background(), cutoff, now, "任务处理超时（超过 5 分钟）", 500)
 	if err != nil {

@@ -11,7 +11,6 @@ import (
 	"aipi-go/internal/database"
 	"aipi-go/internal/settings"
 	"aipi-go/internal/tasks"
-	"aipi-go/internal/users"
 )
 
 const (
@@ -55,7 +54,7 @@ type scopeLimiter struct {
 	cond   *sync.Cond
 }
 
-func NewQueue(db *database.DB, logger *slog.Logger, workers int, hub *tasks.Hub, userHub *users.Hub) *Queue {
+func NewQueue(db *database.DB, logger *slog.Logger, workers int) *Queue {
 	unlimited := workers <= 0
 	bufferSize := 1024
 	if !unlimited {
@@ -65,7 +64,7 @@ func NewQueue(db *database.DB, logger *slog.Logger, workers int, hub *tasks.Hub,
 		jobs:      make(chan Job, bufferSize),
 		workers:   workers,
 		unlimited: unlimited,
-		service:   NewService(db, logger, hub, userHub),
+		service:   NewService(db, logger),
 		logger:    logger,
 		settings:  settings.NewRepository(db),
 		shutdown:  make(chan struct{}),
@@ -376,19 +375,15 @@ func (q *Queue) scopeLimiter(scope string, limit int) *scopeLimiter {
 }
 
 type Service struct {
-	db      *database.DB
-	logger  *slog.Logger
-	tasks   *tasks.Repository
-	hub     *tasks.Hub
-	userHub *users.Hub
+	db     *database.DB
+	logger *slog.Logger
+	tasks  *tasks.Repository
 }
 
-func NewService(db *database.DB, logger *slog.Logger, hub *tasks.Hub, userHub *users.Hub) *Service {
+func NewService(db *database.DB, logger *slog.Logger) *Service {
 	return &Service{
-		db:      db,
-		logger:  logger,
-		tasks:   tasks.NewRepository(db),
-		hub:     hub,
-		userHub: userHub,
+		db:     db,
+		logger: logger,
+		tasks:  tasks.NewRepository(db),
 	}
 }

@@ -46,7 +46,6 @@ func (r *Router) verifyEmail(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	user = r.settleInviteRewards(req.Context(), user)
-	r.publishCurrentUser(context.Background(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"data": r.frontUserWithSubscription(req.Context(), user)})
 }
 
@@ -230,7 +229,6 @@ func (r *Router) verifyEmailChange(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	r.publishCurrentUser(context.Background(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"data": r.frontUserWithSubscription(req.Context(), user)})
 }
 

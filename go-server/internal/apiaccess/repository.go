@@ -229,9 +229,15 @@ func (r *Repository) ListKeys(ctx context.Context, userID string) ([]AccessKey, 
 
 // ListKeysPage bounds the user-facing key list at the database layer.
 func (r *Repository) ListKeysPage(ctx context.Context, userID string, page int, pageSize int) ([]AccessKey, int, error) {
-	if page < 1 { page = 1 }
-	if pageSize < 1 { pageSize = 20 }
-	if pageSize > 100 { pageSize = 100 }
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 20
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
 	userID = strings.TrimSpace(userID)
 	var total int
 	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM api_access_keys WHERE user_id = ? AND deleted_at IS NULL`, userID).Scan(&total); err != nil {
@@ -246,7 +252,9 @@ func (r *Repository) ListKeysPage(ctx context.Context, userID string, page int, 
 		ORDER BY api_access_keys.created_at DESC, api_access_keys.id DESC
 		LIMIT ? OFFSET ?
 	`, userID, pageSize, (page-1)*pageSize)
-	if err != nil { return nil, 0, err }
+	if err != nil {
+		return nil, 0, err
+	}
 	defer rows.Close()
 	items, err := scanAccessKeys(rows)
 	return items, total, err
@@ -1206,6 +1214,7 @@ func usageLogSelect() string {
 			COALESCE(api_access_logs.charged_credits, 0),
 			COALESCE(api_access_logs.model_cost_credits, 0),
 			COALESCE(generation_tasks.duration_seconds, 0),
+			generation_tasks.result_json,
 			` + usageLogTaskUsageSelect() + `,
 			api_access_logs.created_at,
 			api_access_logs.finished_at
@@ -1722,7 +1731,7 @@ type usageLogScanner interface {
 
 func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	var item UsageLog
-	var userEmail, keyName, keyPrefix, taskID, requestParams, taskUsage, errorMessage, errorCode, errorDetails sql.NullString
+	var userEmail, keyName, keyPrefix, taskID, requestParams, taskResult, taskUsage, errorMessage, errorCode, errorDetails sql.NullString
 	var finishedAt sql.NullTime
 	if err := row.Scan(
 		&item.ID,
@@ -1749,6 +1758,7 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 		&item.ChargedCredits,
 		&item.ModelCostCredits,
 		&item.DurationSeconds,
+		&taskResult,
 		&taskUsage,
 		&item.CreatedAt,
 		&finishedAt,
@@ -1774,6 +1784,11 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	}
 	if taskUsage.Valid && strings.TrimSpace(taskUsage.String) != "" {
 		if err := json.Unmarshal([]byte(taskUsage.String), &item.TaskUsage); err != nil {
+			return nil, err
+		}
+	}
+	if taskResult.Valid && strings.TrimSpace(taskResult.String) != "" {
+		if err := json.Unmarshal([]byte(taskResult.String), &item.TaskResult); err != nil {
 			return nil, err
 		}
 	}

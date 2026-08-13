@@ -41,10 +41,10 @@ func ShouldRecord(req *http.Request) bool {
 		return false
 	}
 	path := req.URL.Path
-	if path == "/api/health" || path == "/api/admin/request-monitor" || path == "/api/admin/mail-preview" {
+	if path == "/api/health" || path == "/api/admin/request-monitor" || path == "/api/admin/mail-preview" || path == "/api/admin/image-cleanup/status" {
 		return false
 	}
-	return strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/v1/") || strings.HasPrefix(path, "/oauth/")
+	return strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/v1/")
 }
 
 func Capture(req *http.Request) CapturedRequest {

@@ -9,10 +9,7 @@ import (
 type Config struct {
 	Port             int
 	CorsOrigins      []string
-	OAuthClients     []OAuthClient
 	RequestBodyLimit int64
-	ServeStatic      bool
-	PublicDir        string
 	LogDir           string
 	LogLevel         string
 	SystemUpdateDir  string
@@ -20,13 +17,6 @@ type Config struct {
 	GitHubWorkflow   string
 	GitHubAPIBaseURL string
 	Database         DatabaseConfig
-}
-
-type OAuthClient struct {
-	ID          string
-	Secret      string
-	RedirectURI string
-	Name        string
 }
 
 type DatabaseConfig struct {
@@ -47,10 +37,7 @@ func Load() Config {
 	return Config{
 		Port:             envInt("PORT", 3001),
 		CorsOrigins:      envList("CORS_ORIGIN", "http://localhost:5173"),
-		OAuthClients:     envOAuthClients("OAUTH_CLIENTS"),
 		RequestBodyLimit: envBytes("REQUEST_BODY_LIMIT", 80*1024*1024),
-		ServeStatic:      envBool("SERVE_STATIC", true),
-		PublicDir:        envString("PUBLIC_DIR", "public"),
 		LogDir:           envString("LOG_DIR", "logs"),
 		LogLevel:         strings.ToLower(envString("LOG_LEVEL", "info")),
 		SystemUpdateDir:  envString("SYSTEM_UPDATE_DIR", ""),
@@ -66,36 +53,10 @@ func Load() Config {
 			Password:     envString("DB_PASSWORD", envString("MYSQL_PASSWORD", "")),
 			Name:         envString("DB_NAME", envString("MYSQL_DATABASE", "ai_pai")),
 			SSLMode:      envString("DB_SSLMODE", "disable"),
-			MaxOpenConns: envInt("DB_MAX_OPEN_CONNS", envInt("MYSQL_MAX_OPEN_CONNS", 80)),
-			MaxIdleConns: envInt("DB_MAX_IDLE_CONNS", envInt("MYSQL_MAX_IDLE_CONNS", 40)),
+			MaxOpenConns: envInt("DB_MAX_OPEN_CONNS", envInt("MYSQL_MAX_OPEN_CONNS", 120)),
+			MaxIdleConns: envInt("DB_MAX_IDLE_CONNS", envInt("MYSQL_MAX_IDLE_CONNS", 60)),
 		},
 	}
-}
-
-func envOAuthClients(key string) []OAuthClient {
-	raw := strings.TrimSpace(os.Getenv(key))
-	if raw == "" {
-		return nil
-	}
-	records := strings.FieldsFunc(raw, func(r rune) bool { return r == '\n' || r == ';' })
-	clients := []OAuthClient{}
-	for _, record := range records {
-		parts := strings.Split(record, "|")
-		if len(parts) < 3 {
-			continue
-		}
-		client := OAuthClient{
-			ID:          strings.TrimSpace(parts[0]),
-			Secret:      strings.TrimSpace(parts[1]),
-			RedirectURI: strings.TrimSpace(parts[2]),
-			Name:        strings.TrimSpace(parts[0]),
-		}
-		if len(parts) >= 4 && strings.TrimSpace(parts[3]) != "" {
-			client.Name = strings.TrimSpace(parts[3])
-		}
-		clients = append(clients, client)
-	}
-	return clients
 }
 
 func envString(key string, fallback string) string {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"aipi-go/internal/providers"
+	"aipi-go/internal/resultdata"
 )
 
 type ExtractedImage struct {
@@ -33,6 +34,24 @@ func normalizedImageResult(images []ExtractedImage, usage map[string]int) map[st
 		result["usage"] = usage
 	}
 	return result
+}
+
+// ResultWithoutBase64 preserves response metadata and URLs while recursively
+// removing inline image bytes before persistence.
+func ResultWithoutBase64(value any) any {
+	if images, ok := value.([]ExtractedImage); ok {
+		generic := make([]any, 0, len(images))
+		for _, image := range images {
+			if strings.TrimSpace(image.URL) != "" {
+				generic = append(generic, map[string]any{"type": "url", "url": image.URL})
+			}
+		}
+		if len(generic) == 0 {
+			return nil
+		}
+		return resultdata.WithoutInlineImages(generic)
+	}
+	return resultdata.WithoutInlineImages(value)
 }
 
 // ExtractImageUsage normalizes image and chat token names without inventing

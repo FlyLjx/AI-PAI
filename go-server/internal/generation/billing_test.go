@@ -60,9 +60,9 @@ func TestFinishSuccessWithBillingUsesReservedTaskCost(t *testing.T) {
 	mock.ExpectQuery(`SELECT id FROM users WHERE id = \? FOR UPDATE`).
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("user-1"))
-	mock.ExpectQuery(`SELECT user_id, status, cost_credits FROM generation_tasks WHERE id = \? FOR UPDATE`).
+	mock.ExpectQuery(`SELECT user_id, status, cost_credits, reference_image_url FROM generation_tasks WHERE id = \? FOR UPDATE`).
 		WithArgs("task-1").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "status", "cost_credits"}).AddRow("user-1", "processing", 0.3))
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "status", "cost_credits", "reference_image_url"}).AddRow("user-1", "processing", 0.3, nil))
 	mock.ExpectQuery(`SELECT credits FROM users WHERE id = \?`).
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"credits"}).AddRow(0.3))
@@ -73,7 +73,7 @@ func TestFinishSuccessWithBillingUsesReservedTaskCost(t *testing.T) {
 		WithArgs(sqlmock.AnyArg(), "user-1", 0.3, 0.0, "API 调用：测试模型").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(`UPDATE generation_tasks SET status = 'success'`).
-		WithArgs(1, 0.3, 0.12, 0.0, 2.0, `{"data":[]}`, "task-1").
+		WithArgs(1, 0.3, 0.12, 0.0, 2.0, nil, nil, "task-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -83,7 +83,9 @@ func TestFinishSuccessWithBillingUsesReservedTaskCost(t *testing.T) {
 		ModelCostCredits: 0.12,
 		DurationSeconds:  2,
 		Remark:           "API 调用：测试模型",
-		Result:           map[string]any{"data": []any{}},
+		Result: map[string]any{"data": []any{
+			map[string]any{"b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB"},
+		}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -108,14 +110,14 @@ func TestFinishSuccessWithBillingRecordsModelCostWhenUserChargeIsZero(t *testing
 	mock.ExpectQuery(`SELECT id FROM users WHERE id = \? FOR UPDATE`).
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("user-1"))
-	mock.ExpectQuery(`SELECT user_id, status, cost_credits FROM generation_tasks WHERE id = \? FOR UPDATE`).
+	mock.ExpectQuery(`SELECT user_id, status, cost_credits, reference_image_url FROM generation_tasks WHERE id = \? FOR UPDATE`).
 		WithArgs("task-free").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "status", "cost_credits"}).AddRow("user-1", "processing", 0.0))
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "status", "cost_credits", "reference_image_url"}).AddRow("user-1", "processing", 0.0, nil))
 	mock.ExpectQuery(`SELECT credits FROM users WHERE id = \?`).
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"credits"}).AddRow(0.0))
 	mock.ExpectExec(`UPDATE generation_tasks SET status = 'success'`).
-		WithArgs(1, 0.0, 0.125, 0.0, 2.0, `{"data":[]}`, "task-free").
+		WithArgs(1, 0.0, 0.125, 0.0, 2.0, nil, nil, "task-free").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -150,9 +152,9 @@ func TestFinishSuccessWithBillingIsIdempotentForSuccessfulTask(t *testing.T) {
 	mock.ExpectQuery(`SELECT id FROM users WHERE id = \? FOR UPDATE`).
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("user-1"))
-	mock.ExpectQuery(`SELECT user_id, status, cost_credits FROM generation_tasks WHERE id = \? FOR UPDATE`).
+	mock.ExpectQuery(`SELECT user_id, status, cost_credits, reference_image_url FROM generation_tasks WHERE id = \? FOR UPDATE`).
 		WithArgs("task-1").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "status", "cost_credits"}).AddRow("user-1", "success", 0.3))
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "status", "cost_credits", "reference_image_url"}).AddRow("user-1", "success", 0.3, nil))
 	mock.ExpectCommit()
 
 	if err := service.finishSuccessWithBilling(context.Background(), BillingSuccessInput{TaskID: "task-1"}); err != nil {
@@ -178,9 +180,9 @@ func TestFinishSuccessWithBillingRollsBackWhenBalanceChanged(t *testing.T) {
 	mock.ExpectQuery(`SELECT id FROM users WHERE id = \? FOR UPDATE`).
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"id"}).AddRow("user-1"))
-	mock.ExpectQuery(`SELECT user_id, status, cost_credits FROM generation_tasks WHERE id = \? FOR UPDATE`).
+	mock.ExpectQuery(`SELECT user_id, status, cost_credits, reference_image_url FROM generation_tasks WHERE id = \? FOR UPDATE`).
 		WithArgs("task-1").
-		WillReturnRows(sqlmock.NewRows([]string{"user_id", "status", "cost_credits"}).AddRow("user-1", "processing", 0.3))
+		WillReturnRows(sqlmock.NewRows([]string{"user_id", "status", "cost_credits", "reference_image_url"}).AddRow("user-1", "processing", 0.3, nil))
 	mock.ExpectQuery(`SELECT credits FROM users WHERE id = \?`).
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"credits"}).AddRow(0.2))

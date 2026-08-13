@@ -111,9 +111,6 @@ var Defaults = Settings{
 	"adminUpstreamCheckIntervalMinutes":    float64(5),
 	"upstreamMaintenanceEnabled":           false,
 	"registerEmailVerification":            false,
-	"accountPoolEndpoint":                  "https://free-api.yccc.me/api/accounts",
-	"accountPoolApiKey":                    "",
-	"accountPoolAuthHeader":                "Authorization",
 }
 
 var publicKeys = map[string]bool{

@@ -25,6 +25,27 @@ func EnsureSchema(db *sql.DB) error {
 			return err
 		}
 	}
+	// These features were removed; dropping their standalone tables is safe and idempotent.
+	for _, table := range []string{
+		"subscription_lottery_records",
+		"subscription_lottery_prizes",
+		"oauth_authorization_codes",
+		"oauth_access_tokens",
+	} {
+		if _, err := db.ExecContext(ctx, "DROP TABLE IF EXISTS "+table); err != nil {
+			return err
+		}
+	}
+	if err := dropColumnsIfExist(ctx, db, "generation_tasks", []string{
+		"favorite_enabled",
+		"public_status",
+		"public_requested_at",
+		"public_reviewed_at",
+		"display_enabled",
+		"display_note",
+	}); err != nil {
+		return err
+	}
 	if _, err := db.ExecContext(ctx, Rebind(`
 		CREATE TABLE IF NOT EXISTS user_model_price_overrides (
 			id VARCHAR(36) PRIMARY KEY,
@@ -156,15 +177,6 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "user_invites", "review_note", "VARCHAR(255) NULL", "reviewed_by"); err != nil {
 		return err
 	}
-	if err := addColumnIfMissing(ctx, db, "subscription_lottery_prizes", "prize_type", "VARCHAR(20) NOT NULL DEFAULT 'subscription'", "name"); err != nil {
-		return err
-	}
-	if err := addColumnIfMissing(ctx, db, "subscription_lottery_prizes", "monthly_stock", "INTEGER NOT NULL DEFAULT 0", "daily_stock"); err != nil {
-		return err
-	}
-	if err := addColumnIfMissing(ctx, db, "subscription_lottery_records", "prize_type", "VARCHAR(20) NOT NULL DEFAULT 'subscription'", "prize_id"); err != nil {
-		return err
-	}
 	if err := addColumnIfMissing(ctx, db, "api_access_keys", "key_plain", "VARCHAR(255) NULL", "key_hash"); err != nil {
 		return err
 	}
@@ -207,7 +219,6 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_generation_tasks_user_status", `CREATE INDEX idx_generation_tasks_user_status ON generation_tasks (user_id, status)`},
 		{"idx_generation_tasks_user_created_status", `CREATE INDEX idx_generation_tasks_user_created_status ON generation_tasks (user_id, created_at, status)`},
 		{"idx_generation_tasks_created_at_user_id", `CREATE INDEX idx_generation_tasks_created_at_user_id ON generation_tasks (created_at, user_id)`},
-		{"idx_generation_tasks_public_status_display_enabled_created_at", `CREATE INDEX idx_generation_tasks_public_status_display_enabled_created_at ON generation_tasks (public_status, display_enabled, created_at)`},
 		{"idx_generation_result_images_task_created", `CREATE INDEX idx_generation_result_images_task_created ON generation_result_images (task_id, created_at, id)`},
 		{"idx_recharge_orders_status_created_at", `CREATE INDEX idx_recharge_orders_status_created_at ON recharge_orders (status, created_at)`},
 		{"idx_recharge_orders_status_paid_at", `CREATE INDEX idx_recharge_orders_status_paid_at ON recharge_orders (status, paid_at)`},
@@ -244,10 +255,6 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_api_access_logs_created_status", `CREATE INDEX idx_api_access_logs_created_status ON api_access_logs (created_at, status)`},
 		{"idx_api_access_logs_key_status", `CREATE INDEX idx_api_access_logs_key_status ON api_access_logs (api_key_id, status)`},
 		{"idx_api_access_logs_response_status_created", `CREATE INDEX idx_api_access_logs_response_status_created ON api_access_logs (response_status_code, created_at)`},
-		{"idx_subscription_lottery_prizes_status_sort", `CREATE INDEX idx_subscription_lottery_prizes_status_sort ON subscription_lottery_prizes (status, sort_order)`},
-		{"idx_subscription_lottery_records_user_created", `CREATE INDEX idx_subscription_lottery_records_user_created ON subscription_lottery_records (user_id, created_at)`},
-		{"idx_subscription_lottery_records_prize_date", `CREATE INDEX idx_subscription_lottery_records_prize_date ON subscription_lottery_records (prize_id, draw_date)`},
-		{"uq_subscription_lottery_user_date", `CREATE UNIQUE INDEX uq_subscription_lottery_user_date ON subscription_lottery_records (user_id, draw_date)`},
 	}
 	for _, index := range indexes {
 		if err := addIndexIfMissing(ctx, db, index.name, index.statement); err != nil {
@@ -502,6 +509,24 @@ func addColumnIfMissing(ctx context.Context, db *sql.DB, table string, column st
 	return err
 }
 
+func dropColumnsIfExist(ctx context.Context, db *sql.DB, table string, columns []string) error {
+	clauses := make([]string, 0, len(columns))
+	for _, column := range columns {
+		var exists int
+		if err := db.QueryRowContext(ctx, Rebind(columnExistsSQL()), columnExistsArgs(table, column)...).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			clauses = append(clauses, "DROP COLUMN "+column)
+		}
+	}
+	if len(clauses) == 0 {
+		return nil
+	}
+	_, err := db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s %s", table, strings.Join(clauses, ", ")))
+	return err
+}
+
 func normalizeAPIAccessKeyConcurrencyDefaults(ctx context.Context, db *sql.DB) error {
 	defaultStatement := `ALTER TABLE api_access_keys MODIFY COLUMN concurrency_limit INTEGER NOT NULL DEFAULT 10`
 	if CurrentDialect() == DialectPostgres {
@@ -605,12 +630,6 @@ func schemaBootstrapStatements() []string {
 				status VARCHAR(16) NOT NULL DEFAULT 'queued',
 				error_message TEXT NULL,
 				result_json JSONB NULL,
-				favorite_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-				public_status VARCHAR(16) NOT NULL DEFAULT 'private',
-				public_requested_at TIMESTAMP NULL,
-				public_reviewed_at TIMESTAMP NULL,
-				display_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-				display_note VARCHAR(500) NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
@@ -795,29 +814,6 @@ func schemaBootstrapStatements() []string {
 				used_at TIMESTAMP NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
-			`CREATE TABLE IF NOT EXISTS subscription_lottery_prizes (
-				id VARCHAR(36) PRIMARY KEY,
-				name VARCHAR(80) NOT NULL,
-				prize_type VARCHAR(20) NOT NULL DEFAULT 'subscription',
-				plan_id VARCHAR(36) NOT NULL,
-				weight INTEGER NOT NULL DEFAULT 1,
-				daily_stock INTEGER NOT NULL DEFAULT 0,
-				monthly_stock INTEGER NOT NULL DEFAULT 0,
-				sort_order INTEGER NOT NULL DEFAULT 0,
-				status VARCHAR(16) NOT NULL DEFAULT 'active',
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE TABLE IF NOT EXISTS subscription_lottery_records (
-				id VARCHAR(36) PRIMARY KEY,
-				user_id VARCHAR(36) NOT NULL,
-				prize_id VARCHAR(36) NOT NULL,
-				prize_type VARCHAR(20) NOT NULL DEFAULT 'subscription',
-				plan_id VARCHAR(36) NOT NULL,
-				draw_date DATE NOT NULL,
-				user_ip VARCHAR(64) NULL,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
 			`CREATE TABLE IF NOT EXISTS announcements (
 				id VARCHAR(36) PRIMARY KEY,
 				title VARCHAR(120) NOT NULL,
@@ -844,28 +840,6 @@ func schemaBootstrapStatements() []string {
 				PRIMARY KEY (announcement_id, user_id)
 			)`,
 			`CREATE INDEX IF NOT EXISTS idx_announcement_receipts_user_id ON announcement_receipts (user_id)`,
-			`CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
-				code VARCHAR(120) PRIMARY KEY,
-				client_id VARCHAR(120) NOT NULL,
-				user_id VARCHAR(36) NOT NULL,
-				redirect_uri VARCHAR(500) NOT NULL,
-				scope VARCHAR(200) NULL,
-				expires_at TIMESTAMP NOT NULL,
-				used_at TIMESTAMP NULL,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_oauth_codes_client_user ON oauth_authorization_codes (client_id, user_id)`,
-			`CREATE INDEX IF NOT EXISTS idx_oauth_codes_expires_at ON oauth_authorization_codes (expires_at)`,
-			`CREATE TABLE IF NOT EXISTS oauth_access_tokens (
-				token_hash CHAR(64) PRIMARY KEY,
-				client_id VARCHAR(120) NOT NULL,
-				user_id VARCHAR(36) NOT NULL,
-				scope VARCHAR(200) NULL,
-				expires_at TIMESTAMP NOT NULL,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_oauth_tokens_user_id ON oauth_access_tokens (user_id)`,
-			`CREATE INDEX IF NOT EXISTS idx_oauth_tokens_expires_at ON oauth_access_tokens (expires_at)`,
 			`CREATE TABLE IF NOT EXISTS user_email_tokens (
 				token_hash CHAR(64) PRIMARY KEY,
 				user_id VARCHAR(36) NOT NULL,
@@ -935,8 +909,6 @@ func schemaBootstrapStatements() []string {
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_id ON generation_tasks (user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_capability ON generation_tasks (capability)`,
 			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_created_id ON generation_tasks (user_id, created_at, id)`,
-			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_user_favorite ON generation_tasks (user_id, favorite_enabled, updated_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_generation_tasks_public_status ON generation_tasks (public_status, updated_at)`,
 			`CREATE INDEX IF NOT EXISTS idx_generation_result_images_task_id ON generation_result_images (task_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_credit_logs_user_id ON credit_logs (user_id)`,
 			`CREATE INDEX IF NOT EXISTS idx_credit_logs_created_at ON credit_logs (created_at)`,
@@ -1086,33 +1058,6 @@ func schemaBootstrapStatements() []string {
 			INDEX idx_api_access_logs_task_id (task_id),
 			INDEX idx_api_access_logs_status_created (status, created_at)
 		)`,
-		`CREATE TABLE IF NOT EXISTS subscription_lottery_prizes (
-			id VARCHAR(36) PRIMARY KEY,
-			name VARCHAR(80) NOT NULL,
-			prize_type VARCHAR(20) NOT NULL DEFAULT 'subscription',
-			plan_id VARCHAR(36) NOT NULL,
-			weight INTEGER NOT NULL DEFAULT 1,
-			daily_stock INTEGER NOT NULL DEFAULT 0,
-			monthly_stock INTEGER NOT NULL DEFAULT 0,
-			sort_order INTEGER NOT NULL DEFAULT 0,
-			status VARCHAR(16) NOT NULL DEFAULT 'active',
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			INDEX idx_subscription_lottery_prizes_status_sort (status, sort_order)
-		)`,
-		`CREATE TABLE IF NOT EXISTS subscription_lottery_records (
-			id VARCHAR(36) PRIMARY KEY,
-			user_id VARCHAR(36) NOT NULL,
-			prize_id VARCHAR(36) NOT NULL,
-			prize_type VARCHAR(20) NOT NULL DEFAULT 'subscription',
-			plan_id VARCHAR(36) NOT NULL,
-			draw_date DATE NOT NULL,
-			user_ip VARCHAR(64) NULL,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE KEY uq_subscription_lottery_user_date (user_id, draw_date),
-			INDEX idx_subscription_lottery_records_user_created (user_id, created_at),
-			INDEX idx_subscription_lottery_records_prize_date (prize_id, draw_date)
-		)`,
 		`CREATE TABLE IF NOT EXISTS announcement_receipts (
 			announcement_id VARCHAR(36) NOT NULL,
 			user_id VARCHAR(36) NOT NULL,
@@ -1120,28 +1065,6 @@ func schemaBootstrapStatements() []string {
 			reward_claimed_at DATETIME NULL,
 			PRIMARY KEY (announcement_id, user_id),
 			INDEX idx_announcement_receipts_user_id (user_id)
-		)`,
-		`CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
-			code VARCHAR(120) PRIMARY KEY,
-			client_id VARCHAR(120) NOT NULL,
-			user_id VARCHAR(36) NOT NULL,
-			redirect_uri VARCHAR(500) NOT NULL,
-			scope VARCHAR(200) NULL,
-			expires_at DATETIME NOT NULL,
-			used_at DATETIME NULL,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			INDEX idx_oauth_codes_client_user (client_id, user_id),
-			INDEX idx_oauth_codes_expires_at (expires_at)
-		)`,
-		`CREATE TABLE IF NOT EXISTS oauth_access_tokens (
-			token_hash CHAR(64) PRIMARY KEY,
-			client_id VARCHAR(120) NOT NULL,
-			user_id VARCHAR(36) NOT NULL,
-			scope VARCHAR(200) NULL,
-			expires_at DATETIME NOT NULL,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			INDEX idx_oauth_tokens_user_id (user_id),
-			INDEX idx_oauth_tokens_expires_at (expires_at)
 		)`,
 		`CREATE TABLE IF NOT EXISTS user_email_tokens (
 			token_hash CHAR(64) PRIMARY KEY,

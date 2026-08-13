@@ -49,6 +49,7 @@ func TestShouldRecordSkipsInternalRequests(t *testing.T) {
 		{method: "GET", path: "/api/health"},
 		{method: "GET", path: "/api/admin/request-monitor"},
 		{method: "POST", path: "/api/admin/mail-preview"},
+		{method: "GET", path: "/api/admin/image-cleanup/status"},
 	}
 	for _, request := range requests {
 		if ShouldRecord(httptest.NewRequest(request.method, "http://example.test"+request.path, nil)) {

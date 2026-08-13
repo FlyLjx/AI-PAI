@@ -159,50 +159,6 @@ type InviteDeleteResult struct {
 	RevokedDays         int    `json:"revokedDays,omitempty"`
 }
 
-type LotteryPrize struct {
-	ID            string  `json:"id"`
-	Name          string  `json:"name"`
-	PrizeType     string  `json:"prizeType"`
-	PlanID        string  `json:"planId"`
-	PlanName      *string `json:"planName,omitempty"`
-	DurationDays  int     `json:"durationDays,omitempty"`
-	QuotaImages   int     `json:"quotaImages,omitempty"`
-	Weight        int     `json:"weight"`
-	DailyStock    int     `json:"dailyStock"`
-	TodayUsed     int     `json:"todayUsed"`
-	MonthlyStock  int     `json:"monthlyStock"`
-	MonthUsed     int     `json:"monthUsed"`
-	RemainingText string  `json:"remainingText,omitempty"`
-	MonthlyText   string  `json:"monthlyText,omitempty"`
-	SortOrder     int     `json:"sortOrder"`
-	Status        string  `json:"status"`
-	CreatedAt     string  `json:"createdAt"`
-	UpdatedAt     string  `json:"updatedAt"`
-}
-
-type LotteryRecord struct {
-	ID           string  `json:"id"`
-	UserID       string  `json:"userId"`
-	UserEmail    *string `json:"userEmail,omitempty"`
-	PrizeID      string  `json:"prizeId"`
-	PrizeName    *string `json:"prizeName,omitempty"`
-	PrizeType    string  `json:"prizeType"`
-	PlanID       string  `json:"planId"`
-	PlanName     *string `json:"planName,omitempty"`
-	DurationDays int     `json:"durationDays,omitempty"`
-	DrawDate     string  `json:"drawDate"`
-	UserIP       *string `json:"userIp,omitempty"`
-	CreatedAt    string  `json:"createdAt"`
-}
-
-type LotteryDrawResult struct {
-	DrawnToday bool          `json:"drawnToday"`
-	Record     LotteryRecord `json:"record"`
-	Prize      LotteryPrize  `json:"prize"`
-	Won        bool          `json:"won"`
-	Message    string        `json:"message"`
-}
-
 type RechargeOrder struct {
 	ID                 string                `json:"id"`
 	UserID             string                `json:"userId"`

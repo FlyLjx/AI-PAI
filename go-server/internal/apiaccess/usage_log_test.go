@@ -27,6 +27,12 @@ func TestToPublicLogIncludesRequestAndSuccessResponseParameters(t *testing.T) {
 			"model": "image-model",
 			"n":     2,
 		},
+		TaskResult: map[string]any{
+			"data": []any{
+				map[string]any{"url": "https://upstream.example.test/result-1.png"},
+				map[string]any{"url": "https://upstream.example.test/result-2.png"},
+			},
+		},
 		TaskUsage: map[string]any{
 			"input_tokens":  float64(55531),
 			"output_tokens": float64(24576),
@@ -49,7 +55,7 @@ func TestToPublicLogIncludesRequestAndSuccessResponseParameters(t *testing.T) {
 	if !ok || len(data) != 2 {
 		t.Fatalf("unexpected response data: %#v", publicLog.ResponseParams["data"])
 	}
-	if data[0]["url"] != "/api/tasks/task-1/images/0" || data[1]["url"] != "/api/tasks/task-1/images/1" {
+	if data[0]["url"] != "https://upstream.example.test/result-1.png" || data[1]["url"] != "https://upstream.example.test/result-2.png" {
 		t.Fatalf("unexpected response URLs: %#v", data)
 	}
 	usage, ok := publicLog.ResponseParams["usage"].(map[string]int)
@@ -200,6 +206,7 @@ func TestToPublicLogBuildsChatCompletionForImageChatCompatibility(t *testing.T) 
 		Model:      "gpt-image-2",
 		Status:     "success",
 		ImageCount: 1,
+		TaskResult: map[string]any{"data": []any{map[string]any{"url": "https://upstream.example.test/chat.png"}}},
 		TaskUsage: map[string]any{
 			"input_tokens":  9690,
 			"output_tokens": 6563,
@@ -217,7 +224,7 @@ func TestToPublicLogBuildsChatCompletionForImageChatCompatibility(t *testing.T) 
 		t.Fatalf("unexpected chat choices: %#v", publicLog.ResponseParams["choices"])
 	}
 	message, ok := choices[0]["message"].(map[string]any)
-	if !ok || message["content"] != "![image](/api/tasks/task-chat/images/0)" {
+	if !ok || message["content"] != "![image](https://upstream.example.test/chat.png)" {
 		t.Fatalf("unexpected chat message: %#v", choices[0]["message"])
 	}
 	usage, ok := publicLog.ResponseParams["usage"].(map[string]int)
@@ -323,7 +330,7 @@ func TestBuildLogWhereSupportsAdminLogFilters(t *testing.T) {
 	}
 }
 
-func TestUsageLogSelectReadsOnlyTaskUsage(t *testing.T) {
+func TestUsageLogSelectReadsSanitizedTaskResultAndUsage(t *testing.T) {
 	previousDialect := database.CurrentDialect()
 	defer database.SetDialect(string(previousDialect))
 
@@ -332,8 +339,8 @@ func TestUsageLogSelectReadsOnlyTaskUsage(t *testing.T) {
 	if !strings.Contains(postgresQuery, "generation_tasks.result_json -> 'usage'") {
 		t.Fatalf("postgres usage query missing JSONB extraction: %s", postgresQuery)
 	}
-	if strings.Contains(postgresQuery, "generation_tasks.result_json,") {
-		t.Fatalf("postgres usage query should not load the complete task result: %s", postgresQuery)
+	if !strings.Contains(postgresQuery, "generation_tasks.result_json,") {
+		t.Fatalf("postgres usage query should load the sanitized task result: %s", postgresQuery)
 	}
 
 	database.SetDialect("mysql")

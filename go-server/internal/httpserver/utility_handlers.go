@@ -130,61 +130,6 @@ func upstreamStabilityFallback(message string, upstreamStatusCode int) map[strin
 	}
 }
 
-func (r *Router) accountPoolAccounts(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 15*time.Second)
-	defer cancel()
-	values, err := settings.NewRepository(r.db).Get(ctx)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	endpoint := strings.TrimSpace(anyString(values["accountPoolEndpoint"]))
-	if endpoint == "" {
-		writeJSON(w, http.StatusOK, map[string]any{"data": []any{}, "message": "未配置号池地址"})
-		return
-	}
-	upstreamReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	apiKey := strings.TrimSpace(anyString(values["accountPoolApiKey"]))
-	header := strings.TrimSpace(anyString(values["accountPoolAuthHeader"]))
-	if header == "" {
-		header = "Authorization"
-	}
-	if apiKey != "" {
-		upstreamReq.Header.Set(header, apiKey)
-		if strings.EqualFold(header, "Authorization") && !strings.HasPrefix(strings.ToLower(apiKey), "bearer ") {
-			upstreamReq.Header.Set(header, "Bearer "+apiKey)
-		}
-	}
-	resp, err := http.DefaultClient.Do(upstreamReq)
-	if err != nil {
-		writeError(w, newAppError(http.StatusBadGateway, "号池接口连接失败："+err.Error()))
-		return
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024*1024))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		writeError(w, newAppError(resp.StatusCode, "号池接口调用失败："+string(body)))
-		return
-	}
-	var payload any
-	if json.Unmarshal(body, &payload) != nil {
-		payload = string(body)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": payload})
-}
-
 func (r *Router) mailBroadcast(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		writeMethodNotAllowed(w)

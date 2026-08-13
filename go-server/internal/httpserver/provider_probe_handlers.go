@@ -25,36 +25,6 @@ type remoteModel struct {
 
 const providerProbeMaxAttempts = 3
 
-func (r *Router) providerModelDetails(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	var input providerInput
-	if err := decodeCompatJSON(req, &input); err != nil {
-		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-		return
-	}
-	input.BaseURL = strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
-	input.APIKey = providers.NormalizeAPIKey(input.APIKey)
-	if input.BaseURL == "" || input.APIKey == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "请填写 Base URL 和 API Key"))
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
-	defer cancel()
-	items, err := r.fetchProviderModelDetails(ctx, input.BaseURL, input.APIKey)
-	if err != nil {
-		writeError(w, providerProbeError(err))
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": items})
-}
-
 func providerProbeError(err error) error {
 	var appErr appError
 	if strings.Contains(err.Error(), "上游") || strings.Contains(err.Error(), "模型接口") || strings.Contains(err.Error(), "获取模型") {

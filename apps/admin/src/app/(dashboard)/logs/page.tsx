@@ -8,7 +8,7 @@ import { ConfirmDialog } from '@/components/common/ConfirmDialog';
 import { EmptyState } from '@/components/common/EmptyState';
 import { AdminMetricCard } from '@/components/common/AdminMetricCard';
 import { PageHeader } from '@/components/common/PageHeader';
-import { type SystemLogDetail, type SystemLogFile, portalApi } from '@/lib/admin-api';
+import { type ImageCleanupStatus, type SystemLogDetail, type SystemLogFile, portalApi } from '@/lib/admin-api';
 import { formatDate } from '@/lib/common/utils';
 
 const CATEGORY_OPTIONS = [
@@ -24,6 +24,14 @@ function bytes(value: number) {
   if (size < 1024) return `${size} B`;
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / 1024 / 1024).toFixed(2)} MB`;
+}
+
+function cleanupPhase(status: ImageCleanupStatus) {
+  if (status.state === 'completed') return '已完成';
+  if (status.state === 'failed') return '清理失败';
+  if (status.state === 'canceled') return '已停止';
+  if (status.state === 'running') return status.phase === 'cache' ? '清理本地缓存' : '清理任务数据';
+  return '等待执行';
 }
 
 function normalizeRetentionDays(value: unknown) {
@@ -57,6 +65,8 @@ export default function AdminLogsPage() {
   const [cleanupSettingsLoading, setCleanupSettingsLoading] = useState(true);
   const [cleanupSettingsSaving, setCleanupSettingsSaving] = useState(false);
   const [cleanupSettingsError, setCleanupSettingsError] = useState('');
+  const [imageCleanup, setImageCleanup] = useState<ImageCleanupStatus | null>(null);
+  const [imageCleanupLoading, setImageCleanupLoading] = useState(false);
   const contentRef = useRef<HTMLPreElement>(null);
 
   const loadDetail = useCallback(async (name: string) => {
@@ -111,12 +121,30 @@ export default function AdminLogsPage() {
     }
   }, []);
 
+  const loadImageCleanup = useCallback(async (silent = false) => {
+    if (!silent) setImageCleanupLoading(true);
+    try {
+      const response = await portalApi.imageCleanupStatus();
+      setImageCleanup(response.data);
+    } catch (requestError) {
+      if (!silent) toast.error(requestError instanceof Error ? requestError.message : '图片清理状态加载失败');
+    } finally {
+      if (!silent) setImageCleanupLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
-    const timer = window.setTimeout(() => void Promise.all([loadFiles(false), loadCleanupSettings()]), 0);
+    const timer = window.setTimeout(() => void Promise.all([loadFiles(false), loadCleanupSettings(), loadImageCleanup()]), 0);
     return () => window.clearTimeout(timer);
     // Only the initial file selection should run on mount.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadCleanupSettings]);
+  }, [loadCleanupSettings, loadImageCleanup]);
+
+  useEffect(() => {
+    if (imageCleanup?.state !== 'running') return;
+    const timer = window.setInterval(() => void loadImageCleanup(true), 2500);
+    return () => window.clearInterval(timer);
+  }, [imageCleanup?.state, loadImageCleanup]);
 
   useEffect(() => {
     if (detailLoading || !detail?.content) return;
@@ -195,7 +223,7 @@ export default function AdminLogsPage() {
   return (
     <div className="space-y-5">
       <PageHeader title="系统日志" description="查看 Go 服务运行日志、API 调用日志和错误文件。">
-        <button type="button" onClick={() => void Promise.all([loadFiles(), loadCleanupSettings()])} disabled={loading || detailLoading || cleanupSettingsLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading || detailLoading || cleanupSettingsLoading ? 'animate-spin' : ''}`} />刷新</button>
+        <button type="button" onClick={() => void Promise.all([loadFiles(), loadCleanupSettings(), loadImageCleanup()])} disabled={loading || detailLoading || cleanupSettingsLoading || imageCleanupLoading} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold hover:border-[#12B76A] disabled:opacity-50"><RefreshCw className={`h-4 w-4 ${loading || detailLoading || cleanupSettingsLoading || imageCleanupLoading ? 'animate-spin' : ''}`} />刷新</button>
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -206,6 +234,15 @@ export default function AdminLogsPage() {
           { title: 'API / 调用', value: summary.api, note: '中转请求日志', icon: Activity, tone: 'green' as const },
         ].map((metric) => <AdminMetricCard key={metric.title} title={metric.title} value={metric.value} note={metric.note} icon={metric.icon} tone={metric.tone} />)}
       </div>
+
+      {imageCleanup && <section aria-label="历史图片清理状态" className="border-y border-[#DCE4DF] bg-white px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div><strong className="text-xs">历史图片数据清理</strong><p className="mt-1 text-[10px] text-zinc-500">{cleanupPhase(imageCleanup)}{imageCleanup.error ? `：${imageCleanup.error}` : ''}</p></div>
+          <div className="flex flex-wrap items-center gap-4 text-[10px] text-zinc-500"><span>任务 {imageCleanup.processedRows.toLocaleString('zh-CN')} / {imageCleanup.totalRows.toLocaleString('zh-CN')}</span><span>数据库释放 {bytes(imageCleanup.releasedDatabaseBytes)}</span><span>缓存目录 {imageCleanup.deletedCacheDirectories.toLocaleString('zh-CN')}</span><span>缓存释放 {bytes(imageCleanup.releasedCacheBytes)}</span></div>
+        </div>
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#E8F0EA]"><div className={`h-full rounded-full transition-all ${imageCleanup.state === 'failed' ? 'bg-red-500' : imageCleanup.state === 'completed' ? 'bg-[#12B76A]' : 'bg-[#65C18C]'}`} style={{ width: `${Math.min(100, imageCleanup.totalRows > 0 ? (imageCleanup.processedRows / imageCleanup.totalRows) * 100 : imageCleanup.state === 'completed' ? 100 : 8)}%` }} /></div>
+        {imageCleanup.startedAt && <div className="mt-1.5 text-[10px] text-zinc-400">开始：{formatDate(imageCleanup.startedAt)}{imageCleanup.completedAt ? ` · 结束：${formatDate(imageCleanup.completedAt)}` : ''}</div>}
+      </section>}
 
       <section aria-label="日志自动清理" className="flex flex-col gap-3 border-y border-[#DCE4DF] bg-white px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">

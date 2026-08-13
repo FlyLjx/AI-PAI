@@ -22,9 +22,7 @@ import {
   APIError,
   getSession,
   portalApi,
-  type UsageAnalytics,
   type UsageLog,
-  type UsageModelStat,
   type UsageSummary,
 } from '@/lib/portal-api';
 import { formatCNY, formatDate } from '@/lib/common/utils';
@@ -50,8 +48,8 @@ const PAGE_SIZE_OPTIONS: readonly AppSelectOption[] = [
 ];
 
 const USAGE_TABLE_HEADERS = [
-  { key: 'image', label: '返回图片' },
   { key: 'endpoint', label: '接口地址' },
+  { key: 'task-id', label: '任务 ID' },
   { key: 'type', label: '请求类型' },
   { key: 'model', label: '渠道 / 模型' },
   { key: 'resolution', label: '分辨率' },
@@ -59,18 +57,6 @@ const USAGE_TABLE_HEADERS = [
   { key: 'time', label: '请求时间' },
   { key: 'status', label: '状态' },
 ];
-
-const MODEL_STATUS_HEADERS = [
-  { key: 'model', label: '模型' },
-  { key: 'resolution', label: '分辨率' },
-  { key: 'success-rate', label: '成功率' },
-  { key: 'requests', label: '请求数' },
-];
-
-const EMPTY_ANALYTICS: UsageAnalytics = {
-  models: [],
-  hourly: Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, success: 0, failed: 0 })),
-};
 
 function errorMessage(error: unknown): string {
   return error instanceof APIError || error instanceof Error ? error.message : '调用记录加载失败';
@@ -174,34 +160,6 @@ function requestType(log: UsageLog): string {
   return String(log.endpoint || '').toLowerCase().includes('/edits') ? '图生图' : '文生图';
 }
 
-function successRate(success: number, failed: number): number {
-  const counted = success + failed;
-  return counted > 0 ? (success / counted) * 100 : 0;
-}
-
-function fallbackAnalytics(logs: UsageLog[]): UsageAnalytics {
-  const modelMap = new Map<string, UsageModelStat>();
-  const hourly = Array.from({ length: 24 }, (_, hour) => ({ hour, total: 0, success: 0, failed: 0 }));
-  logs.forEach((log) => {
-    const model = log.model || '未知模型';
-    const size = log.size || '-';
-    const key = `${model}\u0000${size}`;
-    const current = modelMap.get(key) || { model, size, total: 0, success: 0, failed: 0, successRate: 0 };
-    current.total += 1;
-    if (['success', 'succeeded'].includes(log.status.toLowerCase())) current.success += 1;
-    if (isCountedFailure(log)) current.failed += 1;
-    current.successRate = successRate(current.success, current.failed);
-    modelMap.set(key, current);
-    const hour = new Date(log.createdAt).getHours();
-    if (hour >= 0 && hour < 24) {
-      hourly[hour].total += 1;
-      if (['success', 'succeeded'].includes(log.status.toLowerCase())) hourly[hour].success += 1;
-      if (isCountedFailure(log)) hourly[hour].failed += 1;
-    }
-  });
-  return { models: Array.from(modelMap.values()).sort((a, b) => b.total - a.total), hourly };
-}
-
 function UsageMetricCard({
   label,
   value,
@@ -234,21 +192,9 @@ function UsageMetricCard({
   );
 }
 
-function LogThumbnail({ log }: { log: UsageLog }) {
-  const [failed, setFailed] = useState(false);
-  const src = log.taskId ? `/api/tasks/${log.taskId}/images/0` : '';
-  if (!src || failed) {
-    return <span className="usage-thumbnail placeholder"><ImageIcon size={18} /></span>;
-  }
-  // The image URL is an authenticated local task route, so Next Image cannot optimize it safely here.
-  // eslint-disable-next-line @next/next/no-img-element
-  return <img className="usage-thumbnail" src={src} alt="返回图片缩略图" onError={() => setFailed(true)} />;
-}
-
 export default function UsagePage() {
   const [logs, setLogs] = useState<UsageLog[]>([]);
   const [summary, setSummary] = useState<UsageSummary>({ total: 0, counted: 0, success: 0, failed: 0, imageCount: 0 });
-  const [analytics, setAnalytics] = useState<UsageAnalytics>(EMPTY_ANALYTICS);
   const [balance, setBalance] = useState<number | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -258,7 +204,6 @@ export default function UsagePage() {
   const [draftKeyword, setDraftKeyword] = useState('');
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
-  const [analyticsLoading, setAnalyticsLoading] = useState(true);
   const [error, setError] = useState('');
   const [detailLog, setDetailLog] = useState<UsageLog | null>(null);
   const [detailTab, setDetailTab] = useState<'request' | 'response'>('request');
@@ -273,16 +218,14 @@ export default function UsagePage() {
     const range = periodRange(periodDays);
     setBalance(Number(current.credits || 0));
     setLoading(true);
-    setAnalyticsLoading(true);
     setError('');
     try {
       const summaryRequest = keyword || status
         ? portalApi.usage(current, 1, 1, '', '', range.startDate, range.endDate)
         : null;
-      const [response, summaryResponse, analyticsResponse] = await Promise.all([
+      const [response, summaryResponse] = await Promise.all([
         portalApi.usage(current, page, pageSize, keyword, status, range.startDate, range.endDate),
         summaryRequest,
-        portalApi.usageAnalytics(current, range.startDate, range.endDate).catch(() => null),
       ]);
       const items = response.data || [];
       const responseTotal = response.pagination?.total || 0;
@@ -296,12 +239,10 @@ export default function UsagePage() {
       setLogs(items);
       setTotal(responseTotal);
       setSummary(summaryResponse?.summary || response.summary || fallbackSummary);
-      setAnalytics(analyticsResponse?.data || fallbackAnalytics(items));
     } catch (loadError) {
       setError(errorMessage(loadError));
     } finally {
       setLoading(false);
-      setAnalyticsLoading(false);
     }
   }, [keyword, page, pageSize, periodDays, status]);
 
@@ -326,9 +267,6 @@ export default function UsagePage() {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const periodLabel = `${periodDays} 天`;
-  const modelStats = analytics.models.slice(0, 5);
-  const hourly = analytics.hourly.length === 24 ? analytics.hourly : EMPTY_ANALYTICS.hourly;
-  const maxHourly = Math.max(1, ...hourly.map((point) => Number(point.total || 0)));
   const rangeText = `近 ${periodLabel} · 共 ${summary.total.toLocaleString()} 次请求`;
 
   const applyFilters = (event: React.FormEvent<HTMLFormElement>) => {
@@ -446,8 +384,8 @@ export default function UsagePage() {
                       onKeyDown={(event) => handleRowKeyDown(event, log)}
                       title="点击查看调用明细"
                     >
-                      <td><LogThumbnail log={log} /></td>
                       <td><code className="usage-endpoint">{log.endpoint || '-'}</code></td>
+                      <td><code className="usage-task-id" title={log.taskId || undefined}>{log.taskId || '-'}</code></td>
                       <td><span className="usage-request-type">{requestType(log)}</span></td>
                       <td>
                         <div className="usage-model-cell">
@@ -467,7 +405,6 @@ export default function UsagePage() {
                   return (
                     <article key={log.id} className="usage-mobile-item" onClick={() => openDetail(log)}>
                       <div className="usage-mobile-item-head">
-                        <LogThumbnail log={log} />
                         <div className="usage-mobile-item-copy">
                           <strong>{log.model || '-'}</strong>
                           <code>{log.endpoint || '-'}</code>
@@ -475,7 +412,7 @@ export default function UsagePage() {
                         <span className={`usage-status-text ${meta.className}`}><i />{meta.label}</span>
                       </div>
                       <div className="usage-mobile-item-meta">
-                        <span>{requestType(log)}</span><span>{log.size || '-'}</span><span className="usage-mobile-charge">扣费 {chargeLabel(log)}</span><time>{formatDate(log.createdAt)}</time>
+                        <span className="usage-mobile-task-id" title={log.taskId || undefined}>任务 {log.taskId || '-'}</span><span>{requestType(log)}</span><span>{log.size || '-'}</span><span className="usage-mobile-charge">扣费 {chargeLabel(log)}</span><time>{formatDate(log.createdAt)}</time>
                       </div>
                     </article>
                   );
@@ -485,48 +422,6 @@ export default function UsagePage() {
           </section>
         </main>
 
-        <aside className="usage-side">
-          <section className="usage-side-card" aria-labelledby="usage-model-title">
-            <header>
-              <div><h2 id="usage-model-title">接口状态（本账户）</h2><p>成功率仅统计本账户近 {periodLabel} 调用</p></div>
-            </header>
-            <DataTable
-              embedded
-              className="usage-model-data-table"
-              headers={MODEL_STATUS_HEADERS}
-              data={modelStats}
-              loading={analyticsLoading}
-              loadingState={<div className="usage-side-empty">正在统计...</div>}
-              emptyState={<div className="usage-side-empty">暂无数据</div>}
-              tableWrapClassName="usage-model-table-wrap"
-              tableClassName="usage-model-table"
-              renderRow={(item) => (
-                <tr key={`${item.model}-${item.size}`}>
-                  <td title={item.model}>{item.model || '-'}</td>
-                  <td>{item.size || '-'}</td>
-                  <td><span className="usage-rate"><i />{Number(item.successRate || successRate(item.success, item.failed)).toFixed(1)}%</span></td>
-                  <td>{Number(item.total || 0).toLocaleString()}</td>
-                </tr>
-              )}
-            />
-          </section>
-
-          <section className="usage-side-card usage-distribution-card" aria-labelledby="usage-distribution-title">
-            <header>
-              <div><h2 id="usage-distribution-title">24 小时分布</h2><p>按小时聚合近 {periodLabel} 请求</p></div>
-              <span className="usage-chart-legend"><i />请求数</span>
-            </header>
-            <div className="usage-hourly-list">
-              {hourly.map((point) => (
-                <div className="usage-hourly-row" key={point.hour}>
-                  <span>{String(point.hour).padStart(2, '0')}:00</span>
-                  <div className="usage-hourly-track"><i style={{ width: `${Math.max(3, (Number(point.total || 0) / maxHourly) * 100)}%` }} /></div>
-                  <strong>{Number(point.total || 0).toLocaleString()}</strong>
-                </div>
-              ))}
-            </div>
-          </section>
-        </aside>
       </div>
 
       {detailLog && (() => {

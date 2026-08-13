@@ -1,10 +1,13 @@
 package imagecache
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"time"
+
+	"aipi-go/internal/cleanupstatus"
 )
 
 const maxTaskImageRetentionDays = 3650
@@ -18,6 +21,91 @@ type TaskImageCleanupResult struct {
 	Deleted  []string
 	Skipped  []string
 	Failures []TaskImageCleanupFailure
+}
+
+// PurgeTaskImages removes legacy per-task cache directories. Current image
+// responses use upstream URLs or in-memory base64 and never read this cache.
+func PurgeTaskImages() (TaskImageCleanupResult, error) {
+	return PurgeTaskImagesIn(Directory())
+}
+
+// PurgeTaskImagesInContext is the interruptible form used by the startup
+// cleanup worker so shutdown and requests are never held behind deletion.
+func PurgeTaskImagesInContext(ctx context.Context, dir string, pause time.Duration) (TaskImageCleanupResult, error) {
+	result := TaskImageCleanupResult{Deleted: []string{}, Skipped: []string{}, Failures: []TaskImageCleanupFailure{}}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return result, nil
+		}
+		return result, err
+	}
+	for _, entry := range entries {
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			result.Skipped = append(result.Skipped, entry.Name())
+			continue
+		}
+		taskDir := filepath.Join(dir, entry.Name())
+		released := directorySize(taskDir)
+		if err := os.RemoveAll(taskDir); err != nil {
+			result.Failures = append(result.Failures, TaskImageCleanupFailure{Name: entry.Name(), Error: err.Error()})
+			continue
+		}
+		result.Deleted = append(result.Deleted, entry.Name())
+		if tracker := cleanupstatus.FromContext(ctx); tracker != nil {
+			tracker.AddCache(1, released)
+		}
+		if pause > 0 {
+			timer := time.NewTimer(pause)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return result, ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return result, nil
+}
+
+func directorySize(dir string) int64 {
+	var size int64
+	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.Type()&os.ModeSymlink != 0 || entry.IsDir() {
+			return nil
+		}
+		if info, infoErr := entry.Info(); infoErr == nil {
+			size += info.Size()
+		}
+		return nil
+	})
+	return size
+}
+
+func PurgeTaskImagesIn(dir string) (TaskImageCleanupResult, error) {
+	result := TaskImageCleanupResult{Deleted: []string{}, Skipped: []string{}, Failures: []TaskImageCleanupFailure{}}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return result, nil
+		}
+		return result, err
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			result.Skipped = append(result.Skipped, entry.Name())
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+			result.Failures = append(result.Failures, TaskImageCleanupFailure{Name: entry.Name(), Error: err.Error()})
+			continue
+		}
+		result.Deleted = append(result.Deleted, entry.Name())
+	}
+	return result, nil
 }
 
 // CleanupTaskImagesOlderThan removes task image directories whose contents

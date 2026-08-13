@@ -10,6 +10,7 @@ import (
 
 	"aipi-go/internal/appclock"
 	"aipi-go/internal/database"
+	"aipi-go/internal/resultdata"
 )
 
 type Repository struct {
@@ -17,6 +18,11 @@ type Repository struct {
 }
 
 const maxTaskErrorMessageBytes = 8 << 10
+
+const taskHasResultImageSQL = `(generation_tasks.result_json IS NOT NULL OR EXISTS (
+	SELECT 1 FROM generation_result_images
+	WHERE generation_result_images.task_id = generation_tasks.id
+))`
 
 func NewRepository(db *database.DB) *Repository {
 	return &Repository{db: db}
@@ -68,15 +74,12 @@ func insertTask(ctx context.Context, store taskStore, task Task) error {
 	_, err := store.ExecContext(ctx, `
 		INSERT INTO generation_tasks
 			(id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip,
-			 subscription_quota_units, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json,
-			 favorite_enabled, public_status, display_enabled, display_note)
+			 subscription_quota_units, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json)
 		VALUES
 			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-			 ?, ?, ?, ?, ?, ?, ?, ?,
-			 ?, ?, ?, ?)
+			 ?, ?, ?, ?, ?, ?, ?, ?)
 	`, task.ID, task.UserID, task.ModelID, task.ProviderID, task.Capability, task.Prompt, task.ReferenceImageURL, task.SizeTier, task.Size, task.OutputFormat, task.TransparentBackground, task.Quantity, task.UserIP,
-		task.SubscriptionQuotaUnits, task.CostCredits, task.ModelCostCredits, task.RemainingCredits, task.DurationSeconds, task.Status, task.ErrorMessage, resultJSON,
-		task.FavoriteEnabled, task.PublicStatus, task.DisplayEnabled, task.DisplayNote)
+		task.SubscriptionQuotaUnits, task.CostCredits, task.ModelCostCredits, task.RemainingCredits, task.DurationSeconds, task.Status, task.ErrorMessage, resultJSON)
 	return err
 }
 
@@ -88,12 +91,68 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*Task, error) {
 		WHERE generation_tasks.id = ?
 		LIMIT 1
 	`, id)
-	return scanTask(row)
+	task, err := scanTask(row)
+	if err != nil {
+		return nil, err
+	}
+	if err := r.attachStoredResultURLs(ctx, []*Task{task}); err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+func (r *Repository) attachStoredResultURLsToTasks(ctx context.Context, tasks []Task) error {
+	pointers := make([]*Task, 0, len(tasks))
+	for index := range tasks {
+		pointers = append(pointers, &tasks[index])
+	}
+	return r.attachStoredResultURLs(ctx, pointers)
+}
+
+func (r *Repository) attachStoredResultURLs(ctx context.Context, tasks []*Task) error {
+	byID := make(map[string]*Task, len(tasks))
+	ids := make([]string, 0, len(tasks))
+	for _, task := range tasks {
+		if task == nil || task.Status != StatusSuccess || strings.TrimSpace(task.ID) == "" {
+			continue
+		}
+		byID[task.ID] = task
+		ids = append(ids, task.ID)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		placeholders[index] = "?"
+		args[index] = id
+	}
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT task_id, image_url
+		FROM generation_result_images
+		WHERE task_id IN (`+strings.Join(placeholders, ",")+`)
+		ORDER BY task_id, created_at, id
+	`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var taskID, imageURL string
+		if err := rows.Scan(&taskID, &imageURL); err != nil {
+			return err
+		}
+		if task := byID[taskID]; task != nil && strings.TrimSpace(imageURL) != "" {
+			task.StoredResultURLs = append(task.StoredResultURLs, imageURL)
+		}
+	}
+	return rows.Err()
 }
 
 func (r *Repository) FindAll(ctx context.Context, input ListInput) ([]Task, int, error) {
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	where, args := buildTaskWhere(input.Keyword, input.Status, input.Display)
+	where, args := buildTaskWhere(input.Keyword, input.Status)
 	total, err := r.count(ctx, where, args)
 	if err != nil {
 		return nil, 0, err
@@ -112,12 +171,18 @@ func (r *Repository) FindAll(ctx context.Context, input ListInput) ([]Task, int,
 	}
 	defer rows.Close()
 	items, err := scanTasks(rows)
-	return items, total, err
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+	return items, total, r.attachStoredResultURLsToTasks(ctx, items)
 }
 
 func (r *Repository) FindAdminList(ctx context.Context, input ListInput) ([]AdminTaskListItem, int, error) {
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	where, args := buildTaskWhere(input.Keyword, input.Status, input.Display)
+	where, args := buildTaskWhere(input.Keyword, input.Status)
 	total, err := r.count(ctx, where, args)
 	if err != nil {
 		return nil, 0, err
@@ -170,27 +235,13 @@ func (r *Repository) FindAdminList(ctx context.Context, input ListInput) ([]Admi
 	return items, total, rows.Err()
 }
 
-func (r *Repository) FindAllForExport(ctx context.Context) ([]Task, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT `+taskSelectColumnsWithoutResultJSON()+`
-		FROM generation_tasks
-		`+taskJoins+`
-		ORDER BY generation_tasks.created_at DESC, generation_tasks.id DESC
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanTasks(rows)
-}
-
 func (r *Repository) FindImages(ctx context.Context, input ListInput) ([]Task, int, error) {
 	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	where, args := buildTaskWhere(input.Keyword, "", input.Display)
+	where, args := buildTaskWhere(input.Keyword, "")
 	if where == "" {
-		where = "WHERE generation_tasks.status = 'success' AND generation_tasks.result_json IS NOT NULL"
+		where = "WHERE generation_tasks.status = 'success' AND " + taskHasResultImageSQL
 	} else {
-		where += " AND generation_tasks.status = 'success' AND generation_tasks.result_json IS NOT NULL"
+		where += " AND generation_tasks.status = 'success' AND " + taskHasResultImageSQL
 	}
 	total, err := r.count(ctx, where, args)
 	if err != nil {
@@ -210,7 +261,13 @@ func (r *Repository) FindImages(ctx context.Context, input ListInput) ([]Task, i
 	}
 	defer rows.Close()
 	items, err := scanTasks(rows)
-	return items, total, err
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+	return items, total, r.attachStoredResultURLsToTasks(ctx, items)
 }
 
 func (r *Repository) FindByUserID(ctx context.Context, userID string, page int, pageSize int) ([]Task, int, error) {
@@ -229,7 +286,7 @@ func (r *Repository) FindByUserID(ctx context.Context, userID string, page int, 
 		return nil, 0, err
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT `+taskSelectColumns+`
+		SELECT `+taskSelectColumnsWithoutResultJSON()+`
 		FROM generation_tasks
 		`+taskJoins+`
 		WHERE user_id = ?
@@ -240,60 +297,14 @@ func (r *Repository) FindByUserID(ctx context.Context, userID string, page int, 
 		return nil, 0, err
 	}
 	defer rows.Close()
-	items := []Task{}
-	items, err = scanTasks(rows)
-	return items, total, err
-}
-
-func (r *Repository) FindFavoritesByUserID(ctx context.Context, userID string, input ListInput) ([]Task, int, error) {
-	_, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	conditions := []string{
-		"generation_tasks.user_id = ?",
-		"generation_tasks.favorite_enabled = TRUE",
-		"generation_tasks.status = 'success'",
-		"generation_tasks.result_json IS NOT NULL",
-	}
-	args := []any{userID}
-	appendKeywordWhere(&conditions, &args, input.Keyword)
-	where := "WHERE " + strings.Join(conditions, " AND ")
-	total, err := r.count(ctx, where, args)
-	if err != nil {
-		return nil, 0, err
-	}
-	queryArgs := append(args, pageSize, offset)
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT `+taskSelectColumns+`
-		FROM generation_tasks
-		`+taskJoins+`
-		`+where+`
-		ORDER BY generation_tasks.updated_at DESC, generation_tasks.created_at DESC
-		LIMIT ? OFFSET ?
-	`, queryArgs...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
 	items, err := scanTasks(rows)
-	return items, total, err
-}
-
-func (r *Repository) FindPublicDisplay(ctx context.Context) ([]Task, error) {
-	rows, err := r.db.QueryContext(ctx, `
-		SELECT `+taskSelectColumns+`
-		FROM generation_tasks
-		`+taskJoins+`
-		WHERE generation_tasks.public_status = 'approved'
-			AND generation_tasks.display_enabled = TRUE
-			AND generation_tasks.status = 'success'
-			AND generation_tasks.result_json IS NOT NULL
-		ORDER BY generation_tasks.updated_at DESC, generation_tasks.created_at DESC
-		LIMIT 60
-	`)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	defer rows.Close()
-	return scanTasks(rows)
+	if err := rows.Close(); err != nil {
+		return nil, 0, err
+	}
+	return items, total, nil
 }
 
 func (r *Repository) UpdateStatus(ctx context.Context, id string, status Status) (*Task, error) {
@@ -370,15 +381,33 @@ func (r *Repository) FinishSuccess(ctx context.Context, id string, result any, d
 	return r.FindByID(ctx, id)
 }
 
+func (r *Repository) ReplaceResultJSON(ctx context.Context, id string, result any) error {
+	var encoded any
+	if result != nil {
+		bytes, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		encoded = string(bytes)
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE generation_tasks SET result_json = ? WHERE id = ?`, encoded, id)
+	return err
+}
+
 func (r *Repository) FinishFailed(ctx context.Context, id string, message string, durationSeconds float64) (*Task, error) {
 	message = truncateUTF8(message, maxTaskErrorMessageBytes)
-	_, err := r.db.ExecContext(ctx, `
+	referenceImageURL, err := r.terminalReferenceValue(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	_, err = r.db.ExecContext(ctx, `
 		UPDATE generation_tasks
 		SET status = 'failed',
 			error_message = ?,
+			reference_image_url = ?,
 			duration_seconds = ?
 		WHERE id = ? AND status = 'processing'
-	`, message, durationSeconds, id)
+	`, message, referenceImageURL, durationSeconds, id)
 	if err != nil {
 		return nil, err
 	}
@@ -387,6 +416,10 @@ func (r *Repository) FinishFailed(ctx context.Context, id string, message string
 
 func (r *Repository) FinishFailedWithDetails(ctx context.Context, id string, message string, durationSeconds float64, details any) (*Task, error) {
 	message = truncateUTF8(message, maxTaskErrorMessageBytes)
+	referenceImageURL, err := r.terminalReferenceValue(ctx, id)
+	if err != nil {
+		return nil, err
+	}
 	resultJSON, err := errorDetailsResultJSON(details)
 	if err != nil {
 		return nil, err
@@ -396,9 +429,10 @@ func (r *Repository) FinishFailedWithDetails(ctx context.Context, id string, mes
 		SET status = 'failed',
 			error_message = ?,
 			result_json = ?,
+			reference_image_url = ?,
 			duration_seconds = ?
 		WHERE id = ? AND status = 'processing'
-	`, message, resultJSON, durationSeconds, id)
+	`, message, resultJSON, referenceImageURL, durationSeconds, id)
 	if err != nil {
 		return nil, err
 	}
@@ -436,6 +470,23 @@ func ErrorDetailsFromResult(result any) (any, bool) {
 	return details, ok && details != nil
 }
 
+func (r *Repository) terminalReferenceValue(ctx context.Context, id string) (any, error) {
+	var raw sql.NullString
+	if err := r.db.QueryRowContext(ctx, `
+		SELECT reference_image_url FROM generation_tasks WHERE id = ?
+	`, id).Scan(&raw); err != nil {
+		return nil, err
+	}
+	if !raw.Valid {
+		return nil, nil
+	}
+	cleaned, _ := resultdata.ReferenceURLsOnly(raw.String)
+	if cleaned == nil {
+		return nil, nil
+	}
+	return *cleaned, nil
+}
+
 func (r *Repository) FailTimedOut(ctx context.Context, cutoff time.Time, now time.Time, message string, limit int) ([]string, error) {
 	return r.failTimedOut(ctx, cutoff, now, message, limit, false)
 }
@@ -458,7 +509,7 @@ func (r *Repository) failTimedOut(ctx context.Context, cutoff time.Time, now tim
 		where = `status = 'processing'`
 	}
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, created_at
+		SELECT id, created_at, reference_image_url
 		FROM generation_tasks
 		WHERE `+where+`
 			AND updated_at <= ?
@@ -469,13 +520,14 @@ func (r *Repository) failTimedOut(ctx context.Context, cutoff time.Time, now tim
 		return nil, err
 	}
 	type candidate struct {
-		id        string
-		createdAt time.Time
+		id             string
+		createdAt      time.Time
+		referenceImage sql.NullString
 	}
 	candidates := make([]candidate, 0)
 	for rows.Next() {
 		var item candidate
-		if err := rows.Scan(&item.id, &item.createdAt); err != nil {
+		if err := rows.Scan(&item.id, &item.createdAt, &item.referenceImage); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -495,16 +547,23 @@ func (r *Repository) failTimedOut(ctx context.Context, cutoff time.Time, now tim
 		if durationSeconds < 0 {
 			durationSeconds = 0
 		}
+		var referenceImageURL any
+		if item.referenceImage.Valid {
+			if cleaned, _ := resultdata.ReferenceURLsOnly(item.referenceImage.String); cleaned != nil {
+				referenceImageURL = *cleaned
+			}
+		}
 		result, err := r.db.ExecContext(ctx, `
 			UPDATE generation_tasks
 			SET status = 'failed',
 				error_message = ?,
 				duration_seconds = ?,
+				reference_image_url = ?,
 				updated_at = CURRENT_TIMESTAMP
 			WHERE id = ?
 				AND `+where+`
 				AND updated_at <= ?
-		`, message, durationSeconds, item.id, cutoff)
+		`, message, durationSeconds, referenceImageURL, item.id, cutoff)
 		if err != nil {
 			return failedIDs, err
 		}
@@ -529,13 +588,18 @@ func (r *Repository) TouchWaiting(ctx context.Context) error {
 }
 
 func (r *Repository) Cancel(ctx context.Context, id string) (*Task, error) {
-	_, err := r.db.ExecContext(ctx, `
+	referenceImageURL, err := r.terminalReferenceValue(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	_, err = r.db.ExecContext(ctx, `
 		UPDATE generation_tasks
 		SET status = 'canceled',
-			error_message = '任务已取消'
+			error_message = '任务已取消',
+			reference_image_url = ?
 		WHERE id = ?
 			AND status IN ('queued', 'processing', 'pending')
-	`, id)
+	`, referenceImageURL, id)
 	if err != nil {
 		return nil, err
 	}
@@ -581,126 +645,6 @@ func (r *Repository) Stats(ctx context.Context) (Stats, error) {
 		}
 	}
 	return stats, rows.Err()
-}
-
-func (r *Repository) UpdateDisplay(ctx context.Context, id string, displayEnabled bool, displayNote string) (*Task, error) {
-	task, err := r.FindByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if task.Status != StatusSuccess || len(ResultURLs(task.ResultJSON)) == 0 {
-		return nil, ErrNoResultImage
-	}
-	publicStatus := "private"
-	if displayEnabled {
-		publicStatus = "approved"
-	}
-	var note any
-	if strings.TrimSpace(displayNote) != "" {
-		note = strings.TrimSpace(displayNote)
-	}
-	_, err = r.db.ExecContext(ctx, `
-		UPDATE generation_tasks
-		SET display_enabled = ?,
-			public_status = ?,
-			public_reviewed_at = NOW(),
-			display_note = ?
-		WHERE id = ?
-	`, displayEnabled, publicStatus, note, id)
-	if err != nil {
-		return nil, err
-	}
-	return r.FindByID(ctx, id)
-}
-
-func (r *Repository) ReviewPublic(ctx context.Context, id string, status string, displayNote string) (*Task, error) {
-	task, err := r.FindByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if task.Status != StatusSuccess || len(ResultURLs(task.ResultJSON)) == 0 {
-		return nil, ErrNoResultImage
-	}
-	if status != "approved" && status != "rejected" {
-		return nil, ErrInvalidPublicStatus
-	}
-	displayEnabled := status == "approved"
-	note := strings.TrimSpace(displayNote)
-	if note == "" {
-		if task.DisplayNote != nil {
-			note = *task.DisplayNote
-		} else {
-			note = task.Prompt
-		}
-	}
-	_, err = r.db.ExecContext(ctx, `
-		UPDATE generation_tasks
-		SET public_status = ?,
-			public_reviewed_at = NOW(),
-			display_enabled = ?,
-			display_note = ?
-		WHERE id = ?
-	`, status, displayEnabled, note, id)
-	if err != nil {
-		return nil, err
-	}
-	return r.FindByID(ctx, id)
-}
-
-func (r *Repository) UpdateFavorite(ctx context.Context, id string, userID string, favoriteEnabled bool) (*Task, error) {
-	task, err := r.FindByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if userID != "" && task.UserID != userID {
-		return nil, ErrForbiddenTask
-	}
-	if task.Status != StatusSuccess || len(ResultURLs(task.ResultJSON)) == 0 {
-		return nil, ErrNoResultImage
-	}
-	_, err = r.db.ExecContext(ctx, `
-		UPDATE generation_tasks
-		SET favorite_enabled = ?
-		WHERE id = ?
-	`, favoriteEnabled, id)
-	if err != nil {
-		return nil, err
-	}
-	return r.FindByID(ctx, id)
-}
-
-func (r *Repository) RequestPublic(ctx context.Context, id string, userID string, displayNote string) (*Task, error) {
-	task, err := r.FindByID(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	if userID != "" && task.UserID != userID {
-		return nil, ErrForbiddenTask
-	}
-	if task.Status != StatusSuccess || len(ResultURLs(task.ResultJSON)) == 0 {
-		return nil, ErrNoResultImage
-	}
-	note := strings.TrimSpace(displayNote)
-	if note == "" {
-		if task.DisplayNote != nil {
-			note = *task.DisplayNote
-		} else {
-			note = task.Prompt
-		}
-	}
-	_, err = r.db.ExecContext(ctx, `
-		UPDATE generation_tasks
-		SET public_status = 'pending',
-			public_requested_at = NOW(),
-			public_reviewed_at = NULL,
-			display_enabled = FALSE,
-			display_note = ?
-		WHERE id = ?
-	`, note, id)
-	if err != nil {
-		return nil, err
-	}
-	return r.FindByID(ctx, id)
 }
 
 func (r *Repository) ImageURLByIndex(ctx context.Context, id string, index int) (string, error) {
@@ -755,7 +699,6 @@ type ListInput struct {
 	PageSize int
 	Keyword  string
 	Status   string
-	Display  string
 }
 
 const taskSelectColumns = `
@@ -779,12 +722,6 @@ const taskSelectColumns = `
 	generation_tasks.status,
 	generation_tasks.error_message,
 	generation_tasks.result_json,
-	generation_tasks.favorite_enabled,
-	generation_tasks.public_status,
-	generation_tasks.public_requested_at,
-	generation_tasks.public_reviewed_at,
-	generation_tasks.display_enabled,
-	generation_tasks.display_note,
 	generation_tasks.created_at,
 	generation_tasks.updated_at,
 	users.email AS user_email,
@@ -834,22 +771,12 @@ func normalizePage(page int, pageSize int) (int, int, int) {
 	return page, pageSize, (page - 1) * pageSize
 }
 
-func buildTaskWhere(keyword string, status string, display string) (string, []any) {
+func buildTaskWhere(keyword string, status string) (string, []any) {
 	conditions := []string{}
 	args := []any{}
 	if status != "" && status != "all" {
 		conditions = append(conditions, "generation_tasks.status = ?")
 		args = append(args, status)
-	}
-	switch display {
-	case "public":
-		conditions = append(conditions, "generation_tasks.public_status = 'approved'")
-	case "private":
-		conditions = append(conditions, "generation_tasks.public_status = 'private'")
-	case "pending":
-		conditions = append(conditions, "generation_tasks.public_status = 'pending'")
-	case "rejected":
-		conditions = append(conditions, "generation_tasks.public_status = 'rejected'")
 	}
 	if strings.TrimSpace(keyword) != "" {
 		conditions = append(conditions, "(generation_tasks.prompt LIKE ? OR users.email LIKE ? OR ai_models.model_name LIKE ? OR ai_models.display_name LIKE ?)")
@@ -862,23 +789,13 @@ func buildTaskWhere(keyword string, status string, display string) (string, []an
 	return "WHERE " + strings.Join(conditions, " AND "), args
 }
 
-func appendKeywordWhere(conditions *[]string, args *[]any, keyword string) {
-	if strings.TrimSpace(keyword) == "" {
-		return
-	}
-	*conditions = append(*conditions, "(generation_tasks.prompt LIKE ? OR generation_tasks.display_note LIKE ? OR users.email LIKE ? OR ai_models.model_name LIKE ? OR ai_models.display_name LIKE ?)")
-	like := "%" + strings.TrimSpace(keyword) + "%"
-	*args = append(*args, like, like, like, like, like)
-}
-
 type taskScanner interface {
 	Scan(dest ...any) error
 }
 
 func scanTask(row taskScanner) (*Task, error) {
 	var task Task
-	var referenceURL, size, outputFormat, errorMessage, resultJSON, displayNote sql.NullString
-	var publicRequestedAt, publicReviewedAt sql.NullTime
+	var referenceURL, size, outputFormat, errorMessage, resultJSON sql.NullString
 	var userEmail, modelName, modelDisplayName, providerName, providerBaseURL sql.NullString
 	var status string
 	if err := row.Scan(
@@ -902,12 +819,6 @@ func scanTask(row taskScanner) (*Task, error) {
 		&status,
 		&errorMessage,
 		&resultJSON,
-		&task.FavoriteEnabled,
-		&task.PublicStatus,
-		&publicRequestedAt,
-		&publicReviewedAt,
-		&task.DisplayEnabled,
-		&displayNote,
 		&task.CreatedAt,
 		&task.UpdatedAt,
 		&userEmail,
@@ -940,17 +851,6 @@ func scanTask(row taskScanner) (*Task, error) {
 		if err := json.Unmarshal([]byte(resultJSON.String), &payload); err == nil {
 			task.ResultJSON = payload
 		}
-	}
-	if displayNote.Valid {
-		task.DisplayNote = &displayNote.String
-	}
-	if publicRequestedAt.Valid {
-		value := appclock.DatabaseTime(publicRequestedAt.Time)
-		task.PublicRequestedAt = &value
-	}
-	if publicReviewedAt.Valid {
-		value := appclock.DatabaseTime(publicReviewedAt.Time)
-		task.PublicReviewedAt = &value
 	}
 	if userEmail.Valid {
 		task.UserEmail = &userEmail.String

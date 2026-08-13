@@ -285,10 +285,6 @@ func (r *Router) inviteByID(w http.ResponseWriter, req *http.Request) {
 			writeError(w, err)
 			return
 		}
-		if result != nil && result.Status == "rewarded" {
-			r.publishCurrentUser(context.Background(), result.InviterID)
-			r.publishCurrentUser(context.Background(), result.InviteeID)
-		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": result})
 		return
 	}
@@ -304,209 +300,7 @@ func (r *Router) inviteByID(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if result != nil && result.Deleted && result.InviterID != "" {
-		r.publishCurrentUser(context.Background(), result.InviterID)
-	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": result})
-}
-
-func (r *Router) subscriptionLottery(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	userID := strings.TrimSpace(req.URL.Query().Get("userId"))
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	repo := operations.NewRepository(r.db)
-	prizes, err := repo.LotteryPrizes(ctx, true)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	var todayRecord *operations.LotteryRecord
-	if userID != "" {
-		record, err := repo.TodayLotteryRecord(ctx, userID)
-		if err == nil {
-			todayRecord = record
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			writeError(w, err)
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-		"prizes":      prizes,
-		"todayRecord": todayRecord,
-	}})
-}
-
-func (r *Router) subscriptionLotteryDraw(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodPost {
-		writeMethodNotAllowed(w)
-		return
-	}
-	var input struct {
-		UserID string `json:"userId"`
-	}
-	if err := decodeCompatJSON(req, &input); err != nil {
-		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-		return
-	}
-	input.UserID = strings.TrimSpace(input.UserID)
-	if input.UserID == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "缺少用户信息"))
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 12*time.Second)
-	defer cancel()
-	result, err := operations.NewRepository(r.db).DrawSubscriptionLottery(ctx, input.UserID, requestIP(req))
-	if errors.Is(err, operations.ErrNoLotteryPrize) {
-		writeError(w, newAppError(http.StatusBadRequest, "暂无可用抽奖奖品"))
-		return
-	}
-	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, newAppError(http.StatusNotFound, "用户不存在或已被禁用"))
-		return
-	}
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	user, err := users.NewRepository(r.db).FindByID(ctx, input.UserID)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	publicUser := r.publicUserWithSubscription(ctx, user)
-	if !result.DrawnToday {
-		r.publishCurrentUser(context.Background(), input.UserID)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-		"result": result,
-		"user":   publicUser,
-	}})
-}
-
-func (r *Router) lotteryPrizes(w http.ResponseWriter, req *http.Request) {
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	repo := operations.NewRepository(r.db)
-	switch req.Method {
-	case http.MethodGet:
-		items, err := repo.LotteryPrizes(ctx, false)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": items})
-	case http.MethodPost:
-		var input operations.LotteryPrize
-		if err := decodeCompatJSON(req, &input); err != nil {
-			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-			return
-		}
-		if err := r.validateLotteryPrizeInput(ctx, input); err != nil {
-			writeError(w, err)
-			return
-		}
-		item, err := repo.CreateLotteryPrize(ctx, input)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusCreated, map[string]any{"data": item})
-	default:
-		writeMethodNotAllowed(w)
-	}
-}
-
-func (r *Router) lotteryPrizeByID(w http.ResponseWriter, req *http.Request) {
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	id := strings.Trim(strings.TrimPrefix(req.URL.Path, "/api/lottery/prizes/"), "/")
-	if id == "" {
-		writeError(w, newAppError(http.StatusNotFound, "抽奖奖品不存在"))
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	repo := operations.NewRepository(r.db)
-	switch req.Method {
-	case http.MethodPatch:
-		var input operations.LotteryPrize
-		if err := decodeCompatJSON(req, &input); err != nil {
-			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-			return
-		}
-		if err := r.validateLotteryPrizeInput(ctx, input); err != nil {
-			writeError(w, err)
-			return
-		}
-		item, err := repo.UpdateLotteryPrize(ctx, id, input)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": item})
-	case http.MethodDelete:
-		deleted, err := repo.DeleteLotteryPrize(ctx, id)
-		if err != nil {
-			writeError(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"deleted": deleted}})
-	default:
-		writeMethodNotAllowed(w)
-	}
-}
-
-func (r *Router) lotteryRecords(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	items, total, err := operations.NewRepository(r.db).LotteryRecords(ctx, operationPage(req))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, paginated(items, total, req))
-}
-
-func (r *Router) validateLotteryPrizeInput(ctx context.Context, input operations.LotteryPrize) error {
-	switch strings.ToLower(strings.TrimSpace(input.PrizeType)) {
-	case "thanks", "none", "no_prize":
-		return newAppError(http.StatusBadRequest, "谢谢惠顾由系统自动生成，无需配置")
-	}
-	if strings.TrimSpace(input.Name) == "" {
-		return newAppError(http.StatusBadRequest, "请填写奖品名称")
-	}
-	if strings.TrimSpace(input.PlanID) == "" {
-		return newAppError(http.StatusBadRequest, "请选择订阅套餐")
-	}
-	plan, err := operations.NewRepository(r.db).FindPlan(ctx, input.PlanID)
-	if errors.Is(err, sql.ErrNoRows) || plan == nil || plan.Status != "active" {
-		return newAppError(http.StatusBadRequest, "订阅套餐不存在或未启用")
-	}
-	if err != nil {
-		return err
-	}
-	if plan.DurationDays <= 0 {
-		return newAppError(http.StatusBadRequest, "订阅套餐有效期不正确")
-	}
-	return nil
 }
 
 func (r *Router) recharge(w http.ResponseWriter, req *http.Request) {
@@ -687,10 +481,6 @@ func (r *Router) alipayNotify(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	if changed {
-		r.publishCurrentUser(context.Background(), order.UserID)
-		if order.InviteRebate != nil {
-			r.publishCurrentUser(context.Background(), order.InviteRebate.InviterID)
-		}
 		r.notifyRechargeSuccess(order)
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -903,10 +693,6 @@ func (r *Router) syncRechargeOrder(w http.ResponseWriter, req *http.Request, id 
 		return
 	}
 	if changed {
-		r.publishCurrentUser(context.Background(), paidOrder.UserID)
-		if paidOrder.InviteRebate != nil {
-			r.publishCurrentUser(context.Background(), paidOrder.InviteRebate.InviterID)
-		}
 		r.notifyRechargeSuccess(paidOrder)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"data": paidOrder})

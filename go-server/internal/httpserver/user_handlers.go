@@ -87,19 +87,6 @@ func (r *Router) frontUserWithSubscription(ctx context.Context, user *users.User
 	return publicUser
 }
 
-func (r *Router) publishCurrentUser(ctx context.Context, userID string) {
-	if r.userHub == nil || strings.TrimSpace(userID) == "" {
-		return
-	}
-	userCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	user, err := users.NewRepository(r.db).FindByID(userCtx, strings.TrimSpace(userID))
-	if err != nil || user == nil {
-		return
-	}
-	r.userHub.PublishUserData(user.ID, r.frontUserWithSubscription(userCtx, user))
-}
-
 func (r *Router) userProfile(w http.ResponseWriter, req *http.Request) {
 	path := strings.Trim(strings.TrimPrefix(req.URL.Path, "/api/users/"), "/")
 	if strings.HasSuffix(path, "/public-details") {
@@ -217,9 +204,9 @@ func (r *Router) userDetails(w http.ResponseWriter, req *http.Request, id string
 		writeError(w, err)
 		return
 	}
-	publicTasks := make([]tasks.PublicTask, 0, len(taskItems))
+	publicTasks := make([]tasks.TaskHistoryItem, 0, len(taskItems))
 	for index := range taskItems {
-		publicTasks = append(publicTasks, tasks.ToPublic(&taskItems[index]))
+		publicTasks = append(publicTasks, tasks.ToHistory(&taskItems[index]))
 	}
 	publicUser := r.publicUserWithSubscription(ctx, user)
 	if public {
@@ -342,7 +329,6 @@ func (r *Router) verifyUserEmailByAdmin(w http.ResponseWriter, req *http.Request
 	}
 	updated = r.settleInviteRewards(ctx, updated)
 	data := r.publicUserWithSubscription(ctx, updated)
-	r.publishCurrentUser(context.Background(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
@@ -394,7 +380,6 @@ func (r *Router) updateUserBalance(w http.ResponseWriter, req *http.Request, id 
 		writeError(w, err)
 		return
 	}
-	r.publishCurrentUser(context.Background(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"data": users.ToPublicUser(updated)})
 }
 
@@ -628,7 +613,6 @@ func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request,
 			return
 		}
 		data := r.publicUserWithSubscription(ctx, user)
-		r.publishCurrentUser(context.Background(), id)
 		writeJSON(w, http.StatusOK, map[string]any{"data": data})
 		return
 	}
@@ -686,7 +670,6 @@ func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request,
 		return
 	}
 	data := r.publicUserWithSubscription(ctx, user)
-	r.publishCurrentUser(context.Background(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
 }
 
@@ -730,27 +713,7 @@ func (r *Router) updateUserSubscriptionQuota(w http.ResponseWriter, req *http.Re
 		return
 	}
 	data := r.publicUserWithSubscription(ctx, user)
-	r.publishCurrentUser(context.Background(), id)
 	writeJSON(w, http.StatusOK, map[string]any{"data": data})
-}
-
-func (r *Router) userActivityRanking(w http.ResponseWriter, req *http.Request) {
-	if req.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	items, err := users.NewRepository(r.db).ActivityRanking(ctx, queryInt(req, "days", 7), queryInt(req, "limit", 10))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": items})
 }
 
 func (r *Router) adminConsumptionRanking(w http.ResponseWriter, req *http.Request) {

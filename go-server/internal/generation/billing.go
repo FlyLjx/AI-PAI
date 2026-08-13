@@ -15,7 +15,7 @@ import (
 
 	"aipi-go/internal/database"
 	"aipi-go/internal/pricing"
-	"aipi-go/internal/users"
+	"aipi-go/internal/resultdata"
 )
 
 var (
@@ -55,6 +55,7 @@ func (s *Service) finishSuccessWithBillingOnce(ctx context.Context, input Billin
 	var taskUserID string
 	var taskStatus string
 	var costCredits float64
+	var referenceImageURL sql.NullString
 	if err := tx.QueryRowContext(ctx, `
 		SELECT user_id, status, cost_credits
 		FROM generation_tasks
@@ -71,11 +72,11 @@ func (s *Service) finishSuccessWithBillingOnce(ctx context.Context, input Billin
 		return err
 	}
 	if err := tx.QueryRowContext(ctx, `
-		SELECT user_id, status, cost_credits
+		SELECT user_id, status, cost_credits, reference_image_url
 		FROM generation_tasks
 		WHERE id = ?
 		FOR UPDATE
-	`, input.TaskID).Scan(&taskUserID, &taskStatus, &costCredits); err != nil {
+	`, input.TaskID).Scan(&taskUserID, &taskStatus, &costCredits, &referenceImageURL); err != nil {
 		return err
 	}
 	if taskStatus == "success" {
@@ -115,7 +116,18 @@ func (s *Service) finishSuccessWithBillingOnce(ctx context.Context, input Billin
 			return err
 		}
 	}
-	resultBytes, _ := json.Marshal(input.Result)
+	durableResult := ResultWithoutBase64(input.Result)
+	var storedResult any
+	if durableResult != nil {
+		resultBytes, _ := json.Marshal(durableResult)
+		storedResult = string(resultBytes)
+	}
+	var storedReference any
+	if referenceImageURL.Valid {
+		if cleaned, _ := resultdata.ReferenceURLsOnly(referenceImageURL.String); cleaned != nil {
+			storedReference = *cleaned
+		}
+	}
 	result, err := tx.ExecContext(ctx, `
 		UPDATE generation_tasks
 		SET status = 'success',
@@ -125,9 +137,10 @@ func (s *Service) finishSuccessWithBillingOnce(ctx context.Context, input Billin
 			remaining_credits = ?,
 			duration_seconds = ?,
 			result_json = ?,
+			reference_image_url = ?,
 			error_message = NULL
 		WHERE id = ? AND status = 'processing'
-	`, actualQuantity, costCredits, input.ModelCostCredits, remaining, input.DurationSeconds, string(resultBytes), input.TaskID)
+	`, actualQuantity, costCredits, input.ModelCostCredits, remaining, input.DurationSeconds, storedResult, storedReference, input.TaskID)
 	if err != nil {
 		return err
 	}
@@ -148,11 +161,6 @@ func (s *Service) finishSuccessWithBillingOnce(ctx context.Context, input Billin
 	if s.tasks != nil {
 		if err := s.tasks.ReconcileGenerationBalanceReservation(context.Background(), taskUserID); err != nil && s.logger != nil {
 			s.logger.Warn("generation balance reservation reconcile failed", "taskId", input.TaskID, "userId", taskUserID, "error", err)
-		}
-	}
-	if s.userHub != nil && costCredits > 0 {
-		if user, err := users.NewRepository(s.db).FindByID(context.Background(), taskUserID); err == nil {
-			s.userHub.PublishUser(user)
 		}
 	}
 	return nil

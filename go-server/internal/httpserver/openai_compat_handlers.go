@@ -250,7 +250,6 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 				RemainingCredits:       0,
 				DurationSeconds:        0,
 				Status:                 tasks.StatusQueued,
-				PublicStatus:           "private",
 			}
 			var err error
 			savedTask, err = tasks.NewRepository(r.db).CreateWithTx(ctx, tx, task)
@@ -336,12 +335,11 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		ImageResponseFormat: input.ResponseFormat,
 		ImageQuality:        input.Quality,
 	})
-	preferProxyResults := resultMode == "proxy"
 	preferBase64Results := compatWantsBase64ImageResponse(input.ResponseFormat)
 
 	resultCh := make(chan compatTaskResult, 1)
 	go func() {
-		resultCh <- r.finalizeCompatTaskLog(accessLogID, savedTask.ID, preferProxyResults, preferBase64Results)
+		resultCh <- r.finalizeCompatTaskLog(accessLogID, savedTask.ID, preferBase64Results)
 	}()
 
 	var result compatTaskResult
@@ -667,7 +665,8 @@ func (r *Router) dynamicAPIKeyConcurrencyLimit(key apiaccess.AccessKey) int {
 	return apiaccess.DynamicConcurrencyLimitWithConfig(key.ConcurrencyLimit, windowRequestCount, config)
 }
 
-func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, preferProxyResults bool, preferBase64Results bool) compatTaskResult {
+func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, preferBase64Results bool) compatTaskResult {
+	defer generation.ForgetResult(taskID)
 	ctx, cancel := context.WithTimeout(context.Background(), compatTaskLogWaitTimeout)
 	defer cancel()
 	finalTask, err := r.waitForCompatTask(ctx, taskID)
@@ -681,12 +680,13 @@ func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, prefer
 			err:        err,
 		}
 	}
+	resultPayload := generation.ResultForTask(taskID, finalTask.ResultJSON)
 	if finalTask.Status != tasks.StatusSuccess {
 		message := "图片生成失败"
 		if finalTask.ErrorMessage != nil && *finalTask.ErrorMessage != "" {
 			message = *finalTask.ErrorMessage
 		}
-		details := r.compatTaskErrorDetails(accessLogID, message, finalTask.ResultJSON)
+		details := r.compatTaskErrorDetails(accessLogID, message, resultPayload)
 		statusCode, errorType := details.StatusCode, details.Type
 		if statusCode == 0 {
 			statusCode, errorType = compatTaskFailureResponse(message)
@@ -705,7 +705,9 @@ func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, prefer
 			err:        errors.New(message),
 		}
 	}
-	urls, err := compatResultValuesForAPI(ctx, finalTask, preferProxyResults, preferBase64Results)
+	finalTask.ResultJSON = resultPayload
+	urls, err := compatResultValuesForAPI(ctx, finalTask, preferBase64Results)
+	usage := generation.ExtractImageUsage(resultPayload)
 	if err != nil {
 		message := err.Error()
 		details := apierrors.Parse(http.StatusInternalServerError, nil, []byte(message))
@@ -731,7 +733,7 @@ func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, prefer
 		}
 	}
 	r.finishCompatAccessLog(accessLogID, "success", len(urls), "", apierrors.Details{StatusCode: http.StatusOK})
-	return compatTaskResult{urls: urls, usage: generation.ExtractImageUsage(finalTask.ResultJSON)}
+	return compatTaskResult{urls: urls, usage: usage}
 }
 
 func (r *Router) compatTaskErrorDetails(accessLogID string, fallback string, result any) apierrors.Details {
@@ -769,7 +771,7 @@ func (r *Router) compatTaskErrorDetails(accessLogID string, fallback string, res
 	return apierrors.Details{}
 }
 
-func compatResultValuesForAPI(ctx context.Context, task *tasks.Task, preferProxyResults bool, preferBase64Results bool) ([]string, error) {
+func compatResultValuesForAPI(ctx context.Context, task *tasks.Task, preferBase64Results bool) ([]string, error) {
 	if task == nil {
 		return nil, nil
 	}
@@ -792,10 +794,10 @@ func compatResultValuesForAPI(ctx context.Context, task *tasks.Task, preferProxy
 		}
 		return values, nil
 	}
-	return compatResultURLsForAPI(task, preferProxyResults, false), nil
+	return compatResultURLsForAPI(task, false), nil
 }
 
-func compatResultURLsForAPI(task *tasks.Task, preferProxyResults bool, preferBase64Results bool) []string {
+func compatResultURLsForAPI(task *tasks.Task, preferBase64Results bool) []string {
 	if task == nil {
 		return nil
 	}
@@ -809,9 +811,6 @@ func compatResultURLsForAPI(task *tasks.Task, preferProxyResults bool, preferBas
 		return values
 	}
 	publicTask := tasks.ToPublic(task)
-	if preferProxyResults && len(publicTask.ResultURLs) > 0 {
-		return publicTask.ResultURLs
-	}
 	if len(publicTask.DirectResultURLs) > 0 {
 		return publicTask.DirectResultURLs
 	}

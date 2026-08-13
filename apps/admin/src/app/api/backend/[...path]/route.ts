@@ -42,6 +42,7 @@ const ADMIN_ROUTES: Rule[] = [
   { pattern: /^\/api\/admin\/upstream-maintenance$/, methods: ['GET', 'PATCH'] },
   { pattern: /^\/api\/admin\/system-update$/, methods: ['GET', 'POST'] },
   { pattern: /^\/api\/admin\/data-export$/, methods: ['GET'] },
+  { pattern: /^\/api\/admin\/image-cleanup\/status$/, methods: ['GET'] },
   { pattern: /^\/api\/announcements$/, methods: ['GET', 'POST'] },
   { pattern: /^\/api\/announcements\/[^/]+$/, methods: ['PATCH', 'DELETE'] },
   { pattern: /^\/api\/tasks\/[^/]+\/cancel$/, methods: ['POST'] },

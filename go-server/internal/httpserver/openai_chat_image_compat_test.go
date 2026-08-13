@@ -143,13 +143,13 @@ func TestCompatResultURLsForAPIPrefersUpstreamDirectURL(t *testing.T) {
 		UpdatedAt: time.Unix(1784430000, 0),
 	}
 
-	urls := compatResultURLsForAPI(finalTask, false, false)
+	urls := compatResultURLsForAPI(finalTask, false)
 	if len(urls) != 1 || urls[0] != "https://upstream.example.test/generated/out.png" {
 		t.Fatalf("compat URLs = %#v, want upstream direct URL", urls)
 	}
 }
 
-func TestCompatResultURLsForAPISupportsFirstPartyProxyURL(t *testing.T) {
+func TestCompatResultURLsForAPIAlwaysUsesUpstreamURL(t *testing.T) {
 	providerBaseURL := "https://upstream.example.test/v1"
 	finalTask := &tasks.Task{
 		ID:              "task-1",
@@ -162,9 +162,9 @@ func TestCompatResultURLsForAPISupportsFirstPartyProxyURL(t *testing.T) {
 		UpdatedAt: time.Unix(1784430000, 0),
 	}
 
-	urls := compatResultURLsForAPI(finalTask, true, false)
-	if len(urls) != 1 || urls[0] != "/api/tasks/task-1/images/0" {
-		t.Fatalf("compat proxy URLs = %#v, want first-party task image URL", urls)
+	urls := compatResultURLsForAPI(finalTask, false)
+	if len(urls) != 1 || urls[0] != "https://cdn.example.test/generated/out.png" {
+		t.Fatalf("compat URLs = %#v, want upstream direct URL", urls)
 	}
 }
 
@@ -179,7 +179,7 @@ func TestCompatResultURLsForAPISupportsBase64Response(t *testing.T) {
 		UpdatedAt: time.Unix(1784430000, 0),
 	}
 
-	urls := compatResultURLsForAPI(finalTask, false, true)
+	urls := compatResultURLsForAPI(finalTask, true)
 	if len(urls) != 1 || !strings.HasPrefix(urls[0], "iVBOR") {
 		t.Fatalf("compat b64 values = %#v, want raw b64 image", urls)
 	}
@@ -207,7 +207,7 @@ func TestCompatResultValuesForAPIConvertsURLToBase64WhenRequested(t *testing.T) 
 		UpdatedAt: time.Unix(1784430000, 0),
 	}
 
-	values, err := compatResultValuesForAPI(context.Background(), finalTask, false, true)
+	values, err := compatResultValuesForAPI(context.Background(), finalTask, true)
 	if err != nil {
 		t.Fatal(err)
 	}

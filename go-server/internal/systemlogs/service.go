@@ -2,7 +2,6 @@ package systemlogs
 
 import (
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -118,47 +117,6 @@ func (s Service) Read(name string, maxBytes int64) (Detail, error) {
 		Content:   string(bytes[:n]),
 		Offset:    start + int64(n),
 		Truncated: start > 0,
-	}, nil
-}
-
-func (s Service) ReadSince(name string, offset int64, maxBytes int64) (Detail, error) {
-	path, err := s.safePath(name)
-	if err != nil {
-		return Detail{}, err
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return Detail{}, err
-	}
-	if maxBytes <= 0 {
-		maxBytes = 200000
-	}
-	if offset < 0 {
-		offset = 0
-	}
-	if offset > info.Size() {
-		offset = info.Size()
-	}
-	start := offset
-	if info.Size()-start > maxBytes {
-		start = info.Size() - maxBytes
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return Detail{}, err
-	}
-	defer file.Close()
-	if _, err := file.Seek(start, io.SeekStart); err != nil {
-		return Detail{}, err
-	}
-	bytes := make([]byte, info.Size()-start)
-	n, _ := file.Read(bytes)
-	return Detail{
-		Name:      filepath.Base(path),
-		Size:      info.Size(),
-		Content:   string(bytes[:n]),
-		Offset:    info.Size(),
-		Truncated: start > offset,
 	}, nil
 }
 

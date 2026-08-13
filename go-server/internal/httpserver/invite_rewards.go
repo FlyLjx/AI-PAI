@@ -70,8 +70,6 @@ func (r *Router) finalizeInviteRewards(ctx context.Context, userID string) (*ope
 		return result, err
 	}
 	if result.Status == "rewarded" {
-		r.publishCurrentUser(context.Background(), result.InviterID)
-		r.publishCurrentUser(context.Background(), result.InviteeID)
 	}
 	return result, nil
 }

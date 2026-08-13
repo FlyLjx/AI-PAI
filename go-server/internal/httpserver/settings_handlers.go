@@ -67,45 +67,6 @@ func (r *Router) publicSettings(w http.ResponseWriter, req *http.Request) {
 	r.getSettings(w, req, true)
 }
 
-func (r *Router) accountPoolSettings(w http.ResponseWriter, req *http.Request) {
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
-	defer cancel()
-	repo := settings.NewRepository(r.db)
-	if req.Method == http.MethodPatch {
-		var input settings.Settings
-		if err := decodeCompatJSON(req, &input); err != nil {
-			writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
-			return
-		}
-		if _, err := repo.Update(ctx, input); err != nil {
-			writeError(w, err)
-			return
-		}
-	}
-	if req.Method != http.MethodGet && req.Method != http.MethodPatch {
-		writeMethodNotAllowed(w)
-		return
-	}
-	data, err := repo.Get(ctx)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	r.cacheTaskProcessingTimeout(settings.TaskTimeout(data))
-	if r.queue != nil {
-		r.queue.SetTaskProcessingTimeout(settings.TaskTimeout(data))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{
-		"accountPoolEndpoint":   data["accountPoolEndpoint"],
-		"accountPoolApiKey":     data["accountPoolApiKey"],
-		"accountPoolAuthHeader": data["accountPoolAuthHeader"],
-	}})
-}
-
 func (r *Router) testSettingEndpoint(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		writeMethodNotAllowed(w)
@@ -122,41 +83,11 @@ func (r *Router) testSettingEndpoint(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if strings.HasSuffix(req.URL.Path, "/test-email") {
-		r.sendTestEmail(w, req, values)
-		return
-	}
 	if strings.HasSuffix(req.URL.Path, "/test-bark") {
 		r.sendTestBark(w, req, values)
 		return
 	}
 	writeError(w, newAppError(http.StatusNotFound, "测试接口不存在"))
-}
-
-func (r *Router) sendTestEmail(w http.ResponseWriter, req *http.Request, values settings.Settings) {
-	var input struct {
-		Email string `json:"email"`
-	}
-	_ = decodeCompatJSON(req, &input)
-	email := strings.TrimSpace(input.Email)
-	if email == "" {
-		email = strings.TrimSpace(anyString(values["emailFromAddress"]))
-	}
-	if email == "" {
-		email = strings.TrimSpace(anyString(values["emailUser"]))
-	}
-	if email == "" {
-		writeError(w, newAppError(http.StatusBadRequest, "请填写测试收件邮箱"))
-		return
-	}
-	smtpConfig := smtpSettingsFromMap(values)
-	siteName := emailBrandName(anyString(values["siteName"]))
-	body := "这是一封来自 " + siteName + " 的测试邮件。\n\n如果你收到这封邮件，说明 SMTP 配置可用，账户验证与服务通知可以正常发送。"
-	if err := r.deliverMail(req.Context(), "smtp_test", smtpConfig, email, siteName+" 邮件服务测试", body); err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"sent": true, "email": email}})
 }
 
 func (r *Router) sendTestBark(w http.ResponseWriter, req *http.Request, values settings.Settings) {

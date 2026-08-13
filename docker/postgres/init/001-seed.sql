@@ -40,17 +40,10 @@ DROP INDEX IF EXISTS public.idx_recharge_orders_user_id;
 DROP INDEX IF EXISTS public.idx_recharge_orders_status_created_at;
 DROP INDEX IF EXISTS public.idx_recharge_orders_status;
 DROP INDEX IF EXISTS public.idx_recharge_orders_out_trade_no;
-DROP INDEX IF EXISTS public.idx_oauth_tokens_user_id;
-DROP INDEX IF EXISTS public.idx_oauth_tokens_expires_at;
-DROP INDEX IF EXISTS public.idx_oauth_codes_expires_at;
-DROP INDEX IF EXISTS public.idx_oauth_codes_client_user;
 DROP INDEX IF EXISTS public.idx_generation_tasks_user_id_created_at;
 DROP INDEX IF EXISTS public.idx_generation_tasks_user_id;
-DROP INDEX IF EXISTS public.idx_generation_tasks_user_favorite;
 DROP INDEX IF EXISTS public.idx_generation_tasks_user_created_id;
 DROP INDEX IF EXISTS public.idx_generation_tasks_status_created_at;
-DROP INDEX IF EXISTS public.idx_generation_tasks_public_status_display_enabled_created_at;
-DROP INDEX IF EXISTS public.idx_generation_tasks_public_status;
 DROP INDEX IF EXISTS public.idx_generation_tasks_created_at_user_id;
 DROP INDEX IF EXISTS public.idx_generation_tasks_created_at;
 DROP INDEX IF EXISTS public.idx_generation_tasks_capability;
@@ -82,8 +75,6 @@ ALTER TABLE IF EXISTS ONLY public.redeem_codes DROP CONSTRAINT IF EXISTS redeem_
 ALTER TABLE IF EXISTS ONLY public.redeem_codes DROP CONSTRAINT IF EXISTS redeem_codes_code_key;
 ALTER TABLE IF EXISTS ONLY public.recharge_orders DROP CONSTRAINT IF EXISTS recharge_orders_pkey;
 ALTER TABLE IF EXISTS ONLY public.recharge_orders DROP CONSTRAINT IF EXISTS recharge_orders_out_trade_no_key;
-ALTER TABLE IF EXISTS ONLY public.oauth_authorization_codes DROP CONSTRAINT IF EXISTS oauth_authorization_codes_pkey;
-ALTER TABLE IF EXISTS ONLY public.oauth_access_tokens DROP CONSTRAINT IF EXISTS oauth_access_tokens_pkey;
 ALTER TABLE IF EXISTS ONLY public.generation_tasks DROP CONSTRAINT IF EXISTS generation_tasks_pkey;
 ALTER TABLE IF EXISTS ONLY public.credit_logs DROP CONSTRAINT IF EXISTS credit_logs_pkey;
 ALTER TABLE IF EXISTS ONLY public.api_providers DROP CONSTRAINT IF EXISTS api_providers_pkey;
@@ -102,8 +93,6 @@ DROP TABLE IF EXISTS public.system_settings;
 DROP TABLE IF EXISTS public.subscription_plans;
 DROP TABLE IF EXISTS public.redeem_codes;
 DROP TABLE IF EXISTS public.recharge_orders;
-DROP TABLE IF EXISTS public.oauth_authorization_codes;
-DROP TABLE IF EXISTS public.oauth_access_tokens;
 DROP TABLE IF EXISTS public.generation_tasks;
 DROP TABLE IF EXISTS public.credit_logs;
 DROP TABLE IF EXISTS public.api_providers;
@@ -238,45 +227,9 @@ CREATE TABLE public.generation_tasks (
     status character varying(16) DEFAULT 'queued'::character varying NOT NULL,
     error_message text,
     result_json jsonb,
-    favorite_enabled boolean DEFAULT false NOT NULL,
-    public_status character varying(16) DEFAULT 'private'::character varying NOT NULL,
-    public_requested_at timestamp without time zone,
-    public_reviewed_at timestamp without time zone,
-    display_enabled boolean DEFAULT false NOT NULL,
-    display_note character varying(500),
     created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     updated_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL,
     user_deleted_at timestamp without time zone
-);
-
-
---
--- Name: oauth_access_tokens; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.oauth_access_tokens (
-    token_hash character(64) NOT NULL,
-    client_id character varying(120) NOT NULL,
-    user_id character varying(36) NOT NULL,
-    scope character varying(200),
-    expires_at timestamp without time zone NOT NULL,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
-
-
---
--- Name: oauth_authorization_codes; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.oauth_authorization_codes (
-    code character varying(120) NOT NULL,
-    client_id character varying(120) NOT NULL,
-    user_id character varying(36) NOT NULL,
-    redirect_uri character varying(500) NOT NULL,
-    scope character varying(200),
-    expires_at timestamp without time zone NOT NULL,
-    used_at timestamp without time zone,
-    created_at timestamp without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
 );
 
 
@@ -522,23 +475,7 @@ COPY public.credit_logs (id, user_id, type, amount, balance_after, remark, creat
 -- Data for Name: generation_tasks; Type: TABLE DATA; Schema: public; Owner: -
 --
 
-COPY public.generation_tasks (id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json, favorite_enabled, public_status, public_requested_at, public_reviewed_at, display_enabled, display_note, created_at, updated_at, user_deleted_at) FROM stdin;
-\.
-
-
---
--- Data for Name: oauth_access_tokens; Type: TABLE DATA; Schema: public; Owner: -
---
-
-COPY public.oauth_access_tokens (token_hash, client_id, user_id, scope, expires_at, created_at) FROM stdin;
-\.
-
-
---
--- Data for Name: oauth_authorization_codes; Type: TABLE DATA; Schema: public; Owner: -
---
-
-COPY public.oauth_authorization_codes (code, client_id, user_id, redirect_uri, scope, expires_at, used_at, created_at) FROM stdin;
+COPY public.generation_tasks (id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json, created_at, updated_at, user_deleted_at) FROM stdin;
 \.
 
 
@@ -684,22 +621,6 @@ ALTER TABLE ONLY public.credit_logs
 
 ALTER TABLE ONLY public.generation_tasks
     ADD CONSTRAINT generation_tasks_pkey PRIMARY KEY (id);
-
-
---
--- Name: oauth_access_tokens oauth_access_tokens_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oauth_access_tokens
-    ADD CONSTRAINT oauth_access_tokens_pkey PRIMARY KEY (token_hash);
-
-
---
--- Name: oauth_authorization_codes oauth_authorization_codes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.oauth_authorization_codes
-    ADD CONSTRAINT oauth_authorization_codes_pkey PRIMARY KEY (code);
 
 
 --
@@ -939,20 +860,6 @@ CREATE INDEX idx_generation_tasks_created_at_user_id ON public.generation_tasks 
 
 
 --
--- Name: idx_generation_tasks_public_status; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_generation_tasks_public_status ON public.generation_tasks USING btree (public_status, updated_at);
-
-
---
--- Name: idx_generation_tasks_public_status_display_enabled_created_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_generation_tasks_public_status_display_enabled_created_at ON public.generation_tasks USING btree (public_status, display_enabled, created_at);
-
-
---
 -- Name: idx_generation_tasks_status_created_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -967,13 +874,6 @@ CREATE INDEX idx_generation_tasks_user_created_id ON public.generation_tasks USI
 
 
 --
--- Name: idx_generation_tasks_user_favorite; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_generation_tasks_user_favorite ON public.generation_tasks USING btree (user_id, favorite_enabled, updated_at);
-
-
---
 -- Name: idx_generation_tasks_user_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -985,34 +885,6 @@ CREATE INDEX idx_generation_tasks_user_id ON public.generation_tasks USING btree
 --
 
 CREATE INDEX idx_generation_tasks_user_id_created_at ON public.generation_tasks USING btree (user_id, created_at);
-
-
---
--- Name: idx_oauth_codes_client_user; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_oauth_codes_client_user ON public.oauth_authorization_codes USING btree (client_id, user_id);
-
-
---
--- Name: idx_oauth_codes_expires_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_oauth_codes_expires_at ON public.oauth_authorization_codes USING btree (expires_at);
-
-
---
--- Name: idx_oauth_tokens_expires_at; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_oauth_tokens_expires_at ON public.oauth_access_tokens USING btree (expires_at);
-
-
---
--- Name: idx_oauth_tokens_user_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_oauth_tokens_user_id ON public.oauth_access_tokens USING btree (user_id);
 
 
 --

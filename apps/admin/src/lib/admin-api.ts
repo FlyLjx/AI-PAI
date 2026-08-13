@@ -307,6 +307,20 @@ export type SystemLogDetail = {
   truncated: boolean;
 };
 
+export type ImageCleanupStatus = {
+  state: 'idle' | 'running' | 'completed' | 'failed' | 'canceled' | string;
+  phase: string;
+  totalRows: number;
+  processedRows: number;
+  releasedDatabaseBytes: number;
+  deletedCacheDirectories: number;
+  releasedCacheBytes: number;
+  startedAt?: string;
+  updatedAt?: string;
+  completedAt?: string;
+  error?: string;
+};
+
 export type MailDeliveryLog = {
   id: string;
   category: string;
@@ -697,5 +711,6 @@ export const portalApi = {
   },
   logs: () => api<SystemLogFile[]>('/api/system-logs'),
   systemLogDetail: (name: string, maxBytes = 300000) => api<SystemLogDetail>(`/api/system-logs/detail${query({ name, maxBytes })}`),
+  imageCleanupStatus: (signal?: AbortSignal) => api<ImageCleanupStatus>('/api/admin/image-cleanup/status', { signal }),
   deleteSystemLog: (name: string) => api(`/api/system-logs/${encodeURIComponent(name)}`, { method: 'DELETE' }),
 };

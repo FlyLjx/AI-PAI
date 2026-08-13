@@ -5,6 +5,7 @@ services:
     image: postgres:16
     container_name: ai-pai-postgres
     restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-160}"]
     environment:
       POSTGRES_DB: ${DB_NAME:-ai_pai}
       POSTGRES_USER: ${DB_USER:-ai_pai}
@@ -39,7 +40,8 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-ai_pai_change_me}
       DB_NAME: ${DB_NAME:-ai_pai}
       DB_SSLMODE: ${DB_SSLMODE:-disable}
-      SERVE_STATIC: "false"
+      DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-120}
+      DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-60}
       LOG_DIR: /app/logs
       SYSTEM_UPDATE_DIR: /app/update
       GITHUB_UPDATE_REPOSITORY: ${GITHUB_UPDATE_REPOSITORY:-FlyLjx/AI-PAI}

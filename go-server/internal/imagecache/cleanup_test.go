@@ -1,11 +1,14 @@
 package imagecache
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"aipi-go/internal/cleanupstatus"
 )
 
 func TestCleanupTaskImagesOlderThanInRemovesExpiredTaskDirectories(t *testing.T) {
@@ -96,6 +99,68 @@ func TestCleanupTaskImagesOlderThanInRejectsInvalidRetention(t *testing.T) {
 		if _, err := CleanupTaskImagesOlderThanIn(t.TempDir(), time.Now(), retentionDays); err == nil {
 			t.Fatalf("retention %d was accepted", retentionDays)
 		}
+	}
+}
+
+func TestPurgeTaskImagesInRemovesTaskDirectoriesOnly(t *testing.T) {
+	dir := t.TempDir()
+	taskDir := filepath.Join(dir, "task-1")
+	if err := os.Mkdir(taskDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeCachedImage(t, taskDir, "0.png", time.Now())
+	marker := filepath.Join(dir, "keep.txt")
+	if err := os.WriteFile(marker, []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := PurgeTaskImagesIn(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Deleted) != 1 || result.Deleted[0] != "task-1" {
+		t.Fatalf("deleted = %#v", result.Deleted)
+	}
+	if _, err := os.Stat(taskDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("task directory still exists: %v", err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("non-directory marker was removed: %v", err)
+	}
+}
+
+func TestPurgeTaskImagesInContextCanBeCanceled(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"task-1", "task-2"} {
+		if err := os.Mkdir(filepath.Join(dir, name), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := PurgeTaskImagesInContext(ctx, dir, 0); !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context.Canceled", err)
+	}
+}
+
+func TestPurgeTaskImagesInContextReportsReleasedBytes(t *testing.T) {
+	dir := t.TempDir()
+	taskDir := filepath.Join(dir, "task-1")
+	if err := os.Mkdir(taskDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taskDir, "image.png"), []byte("123456"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	tracker := cleanupstatus.New()
+	tracker.Start(time.Now())
+	ctx := cleanupstatus.WithTracker(context.Background(), tracker)
+	if _, err := PurgeTaskImagesInContext(ctx, dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	status := tracker.Snapshot()
+	if status.DeletedCacheDirectories != 1 || status.ReleasedCacheBytes != 6 {
+		t.Fatalf("cache progress = %#v", status)
 	}
 }
 

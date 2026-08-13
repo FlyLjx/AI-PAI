@@ -16,7 +16,7 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
 
 FROM debian:bookworm-slim AS runtime
 WORKDIR /app
-ENV PORT=3001 SERVE_STATIC=false LOG_DIR=/app/logs TZ=Asia/Shanghai
+ENV PORT=3001 LOG_DIR=/app/logs TZ=Asia/Shanghai
 RUN mkdir -p /app/logs
 COPY --from=build /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY --from=build /usr/share/zoneinfo /usr/share/zoneinfo

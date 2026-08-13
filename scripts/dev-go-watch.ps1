@@ -69,8 +69,6 @@ clean_on_exit = true
 $airConfig | Set-Content -Encoding UTF8 -Path $airConfigPath
 
 $env:PORT = [string]$Port
-$env:SERVE_STATIC = if ($env:SERVE_STATIC) { $env:SERVE_STATIC } else { "false" }
-$env:PUBLIC_DIR = if ($env:PUBLIC_DIR) { $env:PUBLIC_DIR } else { Join-Path $repoRoot "public" }
 $env:LOG_DIR = if ($env:LOG_DIR) { $env:LOG_DIR } else { Join-Path $repoRoot "logs" }
 $env:DB_DRIVER = if ($env:DB_DRIVER) { $env:DB_DRIVER } else { "postgres" }
 $env:DB_HOST = if ($env:DB_HOST) { $env:DB_HOST } else { "127.0.0.1" }

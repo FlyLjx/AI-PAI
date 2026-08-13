@@ -163,7 +163,7 @@ func migrationSpecs() []tableSpec {
 		{name: "api_providers", columns: []string{"id", "name", "type", "capability", "base_url", "api_key", "status", "created_at", "updated_at"}},
 		{name: "ai_models", columns: []string{"id", "provider_id", "model_name", "display_name", "capability", "status", "deleted_at", "created_at", "updated_at", "price_1k", "price_2k", "price_4k", "append_size_to_prompt", "enabled_size_tiers", "sort_order", "cost_1k", "cost_2k", "cost_4k", "markup_percent", "price_change_percent"}, transforms: map[string]func(any) any{"append_size_to_prompt": boolValue, "enabled_size_tiers": jsonString}},
 		{name: "user_model_price_overrides", columns: []string{"id", "user_id", "model_id", "unit_price", "created_at", "updated_at"}},
-		{name: "generation_tasks", columns: []string{"id", "user_id", "model_id", "provider_id", "capability", "prompt", "reference_image_url", "size_tier", "size", "output_format", "transparent_background", "quantity", "user_ip", "cost_credits", "model_cost_credits", "remaining_credits", "duration_seconds", "status", "error_message", "result_json", "favorite_enabled", "public_status", "public_requested_at", "public_reviewed_at", "display_enabled", "display_note", "created_at", "updated_at"}, transforms: map[string]func(any) any{"reference_image_url": clearHeavyTaskField, "transparent_background": boolValue, "result_json": clearHeavyTaskField, "favorite_enabled": boolValue, "display_enabled": boolValue}},
+		{name: "generation_tasks", columns: []string{"id", "user_id", "model_id", "provider_id", "capability", "prompt", "reference_image_url", "size_tier", "size", "output_format", "transparent_background", "quantity", "user_ip", "cost_credits", "model_cost_credits", "remaining_credits", "duration_seconds", "status", "error_message", "result_json", "created_at", "updated_at"}, transforms: map[string]func(any) any{"reference_image_url": clearHeavyTaskField, "transparent_background": boolValue, "result_json": clearHeavyTaskField}},
 		{name: "credit_logs", columns: []string{"id", "user_id", "type", "amount", "balance_after", "remark", "created_at"}},
 		{name: "system_settings", columns: []string{"setting_key", "setting_value", "updated_at"}},
 		{name: "recharge_orders", columns: []string{"id", "user_id", "out_trade_no", "trade_no", "order_type", "subscription_plan_id", "amount", "credits", "status", "pay_url", "qr_code", "paid_at", "created_at", "updated_at"}},
@@ -175,8 +175,6 @@ func migrationSpecs() []tableSpec {
 		{name: "announcements", columns: []string{"id", "title", "content", "display_mode", "target_type", "status", "sort_order", "created_at", "updated_at"}},
 		{name: "announcement_users", columns: []string{"announcement_id", "user_id", "created_at"}},
 		{name: "announcement_receipts", columns: []string{"announcement_id", "user_id", "signed_at"}},
-		{name: "oauth_authorization_codes", columns: []string{"code", "client_id", "user_id", "redirect_uri", "scope", "expires_at", "used_at", "created_at"}},
-		{name: "oauth_access_tokens", columns: []string{"token_hash", "client_id", "user_id", "scope", "expires_at", "created_at"}},
 		{name: "user_email_tokens", columns: []string{"token_hash", "user_id", "purpose", "expires_at", "used_at", "created_at"}},
 		{name: "user_api_keys", columns: []string{"id", "user_id", "name", "key_prefix", "key_hash", "key_plain", "encrypted_key", "status", "last_used_at", "deleted_at", "created_at", "updated_at"}},
 	}
@@ -243,9 +241,7 @@ func conflictColumns(table string) []string {
 		return []string{"setting_key"}
 	case "announcement_users", "announcement_receipts":
 		return []string{"announcement_id", "user_id"}
-	case "oauth_authorization_codes":
-		return []string{"code"}
-	case "oauth_access_tokens", "user_email_tokens":
+	case "user_email_tokens":
 		return []string{"token_hash"}
 	case "user_model_price_overrides":
 		return []string{"user_id", "model_id"}
