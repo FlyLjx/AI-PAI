@@ -45,7 +45,7 @@ func TestGrantSubscriptionCarriesActiveRemainingQuota(t *testing.T) {
 	mock.ExpectExec(`UPDATE user_subscriptions`).
 		WithArgs("new-plan", subscriptionSnapshotMatcher{
 			quota: 141, name: "新套餐", providerID: "provider-new", modelID: "model-new",
-		}, now, expiresAt.AddDate(0, 0, 30), "user-1").
+		}, 141, now, expiresAt.AddDate(0, 0, 30), "user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -91,7 +91,7 @@ func TestGrantSubscriptionDoesNotCarryExpiredQuota(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"plan_id", "plan_snapshot", "status", "started_at", "expires_at"}).
 			AddRow("old-plan", oldSnapshot, "active", startedAt, expiresAt))
 	mock.ExpectExec(`UPDATE user_subscriptions`).
-		WithArgs("new-plan", subscriptionSnapshotMatcher{quota: 50, name: "新套餐"}, now, now.AddDate(0, 0, 30), "user-1").
+		WithArgs("new-plan", subscriptionSnapshotMatcher{quota: 50, name: "新套餐"}, 50, now, now.AddDate(0, 0, 30), "user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

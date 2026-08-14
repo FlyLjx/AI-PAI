@@ -10,7 +10,21 @@ import (
 )
 
 func (r *Router) currentSubscriptionEntitlement(ctx context.Context, userID string) (*operations.SubscriptionEntitlement, error) {
-	return operations.NewRepository(r.db).CurrentSubscription(ctx, userID)
+	userID = strings.TrimSpace(userID)
+	if userID == "" {
+		return nil, nil
+	}
+	value, err, _ := r.subscriptionEntitlementGroup.Do(userID, func() (any, error) {
+		return operations.NewRepository(r.db).CurrentSubscription(ctx, userID)
+	})
+	if err != nil {
+		return nil, err
+	}
+	if value == nil {
+		return nil, nil
+	}
+	entitlement, _ := value.(*operations.SubscriptionEntitlement)
+	return entitlement, nil
 }
 
 func subscriptionAccessAllowed(values settings.Settings, userID string) bool {

@@ -102,6 +102,32 @@ func (r *Router) reserveGenerationBalance(ctx context.Context, tx *database.Tx, 
 	return nil
 }
 
+func (r *Router) reserveSubscriptionQuota(ctx context.Context, tx *database.Tx, userID string, quantity int, unitsPerImage int) error {
+	if quantity < 1 || unitsPerImage < 1 {
+		return nil
+	}
+	amount := quantity * unitsPerImage
+	result, err := tx.ExecContext(ctx, `
+		UPDATE user_subscriptions
+		SET quota_remaining = quota_remaining - ?
+		WHERE user_id = ?
+			AND status = 'active'
+			AND expires_at > NOW()
+			AND quota_remaining >= ?
+	`, amount, userID, amount)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return newAppError(http.StatusPaymentRequired, "本周期生成额度不足，请续费或升级订阅")
+	}
+	return nil
+}
+
 func isRetryableGenerationLockError(err error) bool {
 	if err == nil {
 		return false

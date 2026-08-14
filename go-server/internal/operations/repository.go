@@ -852,10 +852,12 @@ func (r *Repository) AdjustSubscriptionQuota(ctx context.Context, userID string,
 	}
 
 	nextStartedAt := startedAt
+	nextRemaining := plan.QuotaImages
 	if input.ResetUsage {
 		nextStartedAt = now
 		if input.QuotaRemaining != nil {
 			plan.QuotaImages = *input.QuotaRemaining
+			nextRemaining = *input.QuotaRemaining
 		}
 	} else {
 		used, err := generationUsage(ctx, tx, userID, startedAt, expiresAt)
@@ -866,6 +868,7 @@ func (r *Repository) AdjustSubscriptionQuota(ctx context.Context, userID string,
 			return ErrInvalidSubscriptionQuota
 		}
 		plan.QuotaImages = used + *input.QuotaRemaining
+		nextRemaining = *input.QuotaRemaining
 	}
 	if plan.QuotaImages < 0 {
 		return ErrInvalidSubscriptionQuota
@@ -876,9 +879,9 @@ func (r *Repository) AdjustSubscriptionQuota(ctx context.Context, userID string,
 	}
 	if _, err := tx.ExecContext(ctx, `
 		UPDATE user_subscriptions
-		SET plan_snapshot=?, started_at=?, updated_at=CURRENT_TIMESTAMP
+		SET plan_snapshot=?, started_at=?, quota_remaining=?, updated_at=CURRENT_TIMESTAMP
 		WHERE user_id=?
-	`, nextSnapshot, nextStartedAt, userID); err != nil {
+	`, nextSnapshot, nextStartedAt, nextRemaining, userID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -900,11 +903,16 @@ func (r *Repository) CurrentSubscription(ctx context.Context, userID string) (*S
 		return nil, err
 	}
 	if err == nil && entitlement != nil {
-		used, err := r.GenerationUsage(ctx, userID, entitlement.periodStart, entitlement.periodEnd)
-		if err != nil {
+		var remaining int
+		if err := r.db.QueryRowContext(ctx, `
+			SELECT quota_remaining FROM user_subscriptions WHERE id = ?
+		`, entitlement.ID).Scan(&remaining); err != nil {
 			return nil, err
 		}
-		return entitlement.public(used), nil
+		if remaining < 0 {
+			remaining = 0
+		}
+		return entitlement.publicWithRemaining(remaining), nil
 	}
 	return nil, nil
 }
@@ -1161,6 +1169,26 @@ func (item *paidSubscriptionEntitlement) public(used int) *SubscriptionEntitleme
 	item.SubscriptionEntitlement.QuotaUsed = used
 	item.SubscriptionEntitlement.QuotaRemaining = remaining
 	item.SubscriptionEntitlement.EffectiveRemaining = remaining
+	item.SubscriptionEntitlement.QuotaUnlimited = false
+	return item.SubscriptionEntitlement
+}
+
+func (item *paidSubscriptionEntitlement) publicWithRemaining(remaining int) *SubscriptionEntitlement {
+	limit := item.plan.QuotaImages
+	if limit < 0 {
+		limit = 0
+	}
+	if remaining < 0 {
+		remaining = 0
+	}
+	if remaining > limit {
+		remaining = limit
+	}
+	item.SubscriptionEntitlement.QuotaImages = limit
+	item.SubscriptionEntitlement.QuotaLimit = limit
+	item.SubscriptionEntitlement.QuotaRemaining = remaining
+	item.SubscriptionEntitlement.EffectiveRemaining = remaining
+	item.SubscriptionEntitlement.QuotaUsed = limit - remaining
 	item.SubscriptionEntitlement.QuotaUnlimited = false
 	return item.SubscriptionEntitlement
 }
@@ -2163,16 +2191,16 @@ func grantSubscriptionPlanInTx(ctx context.Context, tx *database.Tx, userID stri
 	expiresAt := baseTime.AddDate(0, 0, durationDays)
 	if subscriptionMissing {
 		_, err = tx.ExecContext(ctx, `
-			INSERT INTO user_subscriptions (id, user_id, plan_id, plan_snapshot, status, started_at, expires_at)
-			VALUES (?, ?, ?, ?, 'active', ?, ?)
-		`, newOperationID(), userID, planID, snapshot, now, expiresAt)
+			INSERT INTO user_subscriptions (id, user_id, plan_id, plan_snapshot, quota_remaining, status, started_at, expires_at)
+			VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+		`, newOperationID(), userID, planID, snapshot, grantPlan.QuotaImages, now, expiresAt)
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `
 		UPDATE user_subscriptions
-		SET plan_id=?, plan_snapshot=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
+		SET plan_id=?, plan_snapshot=?, quota_remaining=?, status='active', started_at=?, expires_at=?, updated_at=CURRENT_TIMESTAMP
 		WHERE user_id=?
-	`, planID, snapshot, now, expiresAt, userID)
+	`, planID, snapshot, grantPlan.QuotaImages, now, expiresAt, userID)
 	return err
 }
 

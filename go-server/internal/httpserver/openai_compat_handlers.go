@@ -230,6 +230,10 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 	if admissionErr == nil {
 		admissionStage = "transaction"
 		admissionErr = r.withUserGenerationLock(ctx, auth.User.ID, func(tx *database.Tx) error {
+			admissionStage = "subscription_quota_reservation"
+			if err := r.reserveSubscriptionQuota(ctx, tx, auth.User.ID, input.N, subscriptionQuotaUnits); err != nil {
+				return err
+			}
 			admissionStage = "task_insert"
 			task := tasks.Task{
 				ID:                     newID(),

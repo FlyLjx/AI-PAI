@@ -114,6 +114,12 @@ func EnsureSchema(db *sql.DB) error {
 	if err := backfillUserSubscriptionPlanSnapshots(ctx, db); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "user_subscriptions", "quota_remaining", "INTEGER NOT NULL DEFAULT -1", "plan_snapshot"); err != nil {
+		return err
+	}
+	if err := backfillSubscriptionQuotaRemaining(ctx, db); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "announcements", "display_mode", "VARCHAR(20) NOT NULL DEFAULT 'popup'", "content"); err != nil {
 		return err
 	}
@@ -380,6 +386,70 @@ func backfillUserSubscriptionPlanSnapshots(ctx context.Context, db *sql.DB) erro
 			SET plan_snapshot=?
 			WHERE id=? AND plan_snapshot IS NULL
 		`), item.payload, item.subscriptionID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func backfillSubscriptionQuotaRemaining(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, Rebind(`
+		SELECT id, user_id, plan_snapshot, started_at, expires_at
+		FROM user_subscriptions
+		WHERE quota_remaining < 0
+	`))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	type subscription struct {
+		id, userID string
+		snapshot   sql.NullString
+		startedAt  time.Time
+		expiresAt  time.Time
+	}
+	items := []subscription{}
+	for rows.Next() {
+		var item subscription
+		if err := rows.Scan(&item.id, &item.userID, &item.snapshot, &item.startedAt, &item.expiresAt); err != nil {
+			return err
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range items {
+		var snapshot struct {
+			QuotaImages int `json:"quotaImages"`
+		}
+		_ = json.Unmarshal([]byte(item.snapshot.String), &snapshot)
+		quota := snapshot.QuotaImages
+		if quota < 0 {
+			quota = 0
+		}
+		var used int
+		if err := db.QueryRowContext(ctx, Rebind(`
+			SELECT COALESCE(SUM(generation_tasks.quantity * COALESCE(generation_tasks.subscription_quota_units, 1)), 0)
+			FROM generation_tasks
+			WHERE generation_tasks.user_id = ?
+				AND generation_tasks.status IN ('queued', 'pending', 'processing', 'success')
+				AND generation_tasks.created_at >= ?
+				AND generation_tasks.created_at < ?
+				AND NOT EXISTS (
+					SELECT 1 FROM api_access_logs
+					INNER JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+					WHERE api_access_logs.task_id = generation_tasks.id
+						AND api_access_keys.billing_mode = 'balance'
+				)
+		`), item.userID, item.startedAt, item.expiresAt).Scan(&used); err != nil {
+			return err
+		}
+		remaining := quota - used
+		if remaining < 0 {
+			remaining = 0
+		}
+		if _, err := db.ExecContext(ctx, Rebind(`UPDATE user_subscriptions SET quota_remaining = ? WHERE id = ?`), remaining, item.id); err != nil {
 			return err
 		}
 	}
@@ -723,6 +793,7 @@ func schemaBootstrapStatements() []string {
 				user_id VARCHAR(36) NOT NULL UNIQUE,
 				plan_id VARCHAR(36) NOT NULL,
 				plan_snapshot JSONB NULL,
+				quota_remaining INTEGER NOT NULL DEFAULT -1,
 				status VARCHAR(16) NOT NULL DEFAULT 'active',
 				started_at TIMESTAMP NOT NULL,
 				expires_at TIMESTAMP NOT NULL,

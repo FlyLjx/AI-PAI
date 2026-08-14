@@ -21,6 +21,7 @@ import (
 	"aipi-go/internal/database"
 	"aipi-go/internal/generation"
 	"aipi-go/internal/requestmonitor"
+	"golang.org/x/sync/singleflight"
 )
 
 type Router struct {
@@ -45,6 +46,11 @@ type Router struct {
 	taskTimeoutMu      sync.RWMutex
 	taskTimeoutCache   time.Duration
 	taskTimeoutCacheAt time.Time
+
+	// A subscription entitlement includes the current period's generation
+	// usage. Coalesce concurrent requests for the same user so a burst does
+	// not repeat the full usage scan for every request.
+	subscriptionEntitlementGroup singleflight.Group
 }
 
 func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger, trackers ...*cleanupstatus.Tracker) http.Handler {

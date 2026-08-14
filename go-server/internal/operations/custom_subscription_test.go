@@ -44,7 +44,7 @@ func TestGrantCustomSubscriptionCreatesEntitlementWithoutOrder(t *testing.T) {
 		WithArgs(userID).
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO user_subscriptions`).
-		WithArgs(sqlmock.AnyArg(), userID, planID, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), userID, planID, sqlmock.AnyArg(), 1234, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectCommit()
 

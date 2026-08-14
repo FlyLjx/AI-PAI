@@ -38,8 +38,8 @@ func TestAdjustSubscriptionQuotaSetsExactRemainingAmount(t *testing.T) {
 		WillReturnRows(sqlmock.NewRows([]string{"status", "quantity", "subscription_quota_units", "result_image_count", "result_json_fallback"}).
 			AddRow("processing", 2, 2, 0, nil).
 			AddRow("success", 3, 3, 2, nil))
-	mock.ExpectExec(`UPDATE user_subscriptions SET plan_snapshot=\?, started_at=\?, updated_at=CURRENT_TIMESTAMP WHERE user_id=\?`).
-		WithArgs(subscriptionSnapshotMatcher{quota: 35, name: "专业版"}, startedAt, "user-1").
+	mock.ExpectExec(`UPDATE user_subscriptions SET plan_snapshot=\?, started_at=\?, quota_remaining=\?, updated_at=CURRENT_TIMESTAMP WHERE user_id=\?`).
+		WithArgs(subscriptionSnapshotMatcher{quota: 35, name: "专业版"}, startedAt, 25, "user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 
@@ -77,8 +77,8 @@ func TestAdjustSubscriptionQuotaResetsUsageAndKeepsExpiry(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"plan_id", "plan_snapshot", "status", "started_at", "expires_at"}).
 			AddRow("plan-1", snapshot, "active", startedAt, expiresAt))
-	mock.ExpectExec(`UPDATE user_subscriptions SET plan_snapshot=\?, started_at=\?, updated_at=CURRENT_TIMESTAMP WHERE user_id=\?`).
-		WithArgs(subscriptionSnapshotMatcher{quota: 80, name: "专业版"}, sqlmock.AnyArg(), "user-1").
+	mock.ExpectExec(`UPDATE user_subscriptions SET plan_snapshot=\?, started_at=\?, quota_remaining=\?, updated_at=CURRENT_TIMESTAMP WHERE user_id=\?`).
+		WithArgs(subscriptionSnapshotMatcher{quota: 80, name: "专业版"}, sqlmock.AnyArg(), 80, "user-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
 	mock.ExpectCommit()
 

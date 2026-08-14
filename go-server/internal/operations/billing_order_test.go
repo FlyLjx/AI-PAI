@@ -190,7 +190,7 @@ func TestCompleteSubscriptionOrderGrantsQuotaAndBonusBalance(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnError(sql.ErrNoRows)
 	mock.ExpectExec(`INSERT INTO user_subscriptions`).
-		WithArgs(sqlmock.AnyArg(), "user-1", "plan-1", sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), "user-1", "plan-1", sqlmock.AnyArg(), 1000, sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	mock.ExpectExec(`UPDATE users SET credits=\? WHERE id=\?`).
 		WithArgs(7.0, "user-1").
