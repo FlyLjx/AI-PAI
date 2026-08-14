@@ -38,7 +38,6 @@ const ADMIN_ROUTES: Rule[] = [
   { pattern: /^\/api\/admin\/mail-broadcast$/, methods: ['POST'] },
   { pattern: /^\/api\/admin\/mail-preview$/, methods: ['POST'] },
   { pattern: /^\/api\/admin\/mail-logs$/, methods: ['GET'] },
-  { pattern: /^\/api\/admin\/request-monitor$/, methods: ['GET'] },
   { pattern: /^\/api\/admin\/upstream-maintenance$/, methods: ['GET', 'PATCH'] },
   { pattern: /^\/api\/admin\/system-update$/, methods: ['GET', 'POST'] },
   { pattern: /^\/api\/admin\/data-export$/, methods: ['GET'] },

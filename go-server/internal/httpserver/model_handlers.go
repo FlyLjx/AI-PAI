@@ -173,7 +173,7 @@ func (r *Router) syncModels(w http.ResponseWriter, req *http.Request) {
 		writeError(w, newAppError(http.StatusBadRequest, "请选择相同用途的接口进行模型同步"))
 		return
 	}
-	remoteModels, err := r.fetchProviderModelDetails(ctx, provider.BaseURL, provider.APIKey)
+	remoteModels, err := r.fetchProviderModelDetails(ctx, provider.EffectiveBaseURL(), provider.APIKey)
 	if err != nil {
 		writeError(w, providerProbeError(err))
 		return

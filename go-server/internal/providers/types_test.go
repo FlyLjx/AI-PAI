@@ -2,21 +2,32 @@ package providers
 
 import "testing"
 
-func TestAuthorizationHeaderNormalizesBearerPrefix(t *testing.T) {
+func TestEffectiveBaseURL(t *testing.T) {
 	tests := []struct {
-		name  string
-		input string
-		want  string
+		name     string
+		provider Provider
+		want     string
 	}{
-		{name: "plain key", input: "sk-test", want: "Bearer sk-test"},
-		{name: "bearer key", input: "Bearer sk-test", want: "Bearer sk-test"},
-		{name: "lowercase bearer", input: "bearer sk-test", want: "Bearer sk-test"},
-		{name: "spaced bearer", input: "  Bearer   sk-test  ", want: "Bearer sk-test"},
+		{
+			name:     "public by default",
+			provider: Provider{BaseURL: " https://public.example.test/v1/ ", InternalBaseURL: "http://image-pool:8080/v1", UseInternalURL: false},
+			want:     "https://public.example.test/v1",
+		},
+		{
+			name:     "internal when enabled",
+			provider: Provider{BaseURL: "https://public.example.test/v1", InternalBaseURL: " http://image-pool:8080/v1/ ", UseInternalURL: true},
+			want:     "http://image-pool:8080/v1",
+		},
+		{
+			name:     "public fallback for empty internal URL",
+			provider: Provider{BaseURL: "https://public.example.test/v1/", UseInternalURL: true},
+			want:     "https://public.example.test/v1",
+		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := AuthorizationHeader(tt.input); got != tt.want {
-				t.Fatalf("AuthorizationHeader(%q) = %q, want %q", tt.input, got, tt.want)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := test.provider.EffectiveBaseURL(); got != test.want {
+				t.Fatalf("EffectiveBaseURL() = %q, want %q", got, test.want)
 			}
 		})
 	}

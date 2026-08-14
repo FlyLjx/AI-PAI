@@ -1,12 +1,9 @@
 package httpserver
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"io"
 	"log/slog"
-	"net"
 	"net/http"
 	"runtime/debug"
 	"strings"
@@ -20,7 +17,6 @@ import (
 	"aipi-go/internal/config"
 	"aipi-go/internal/database"
 	"aipi-go/internal/generation"
-	"aipi-go/internal/requestmonitor"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -32,7 +28,6 @@ type Router struct {
 	tokens         auth.TokenManager
 	queue          *generation.Queue
 	notifications  *serviceNotificationManager
-	requestMonitor *requestmonitor.Recorder
 	cleanupTracker *cleanupstatus.Tracker
 
 	updateMu      sync.Mutex
@@ -67,9 +62,8 @@ func NewRouter(cfg config.Config, db *database.DB, logger *slog.Logger, trackers
 		notifications:  newServiceNotificationManager(db, logger),
 		cleanupTracker: cleanupTracker,
 	}
-	router.queue = generation.NewQueue(db, logger, 0)
+	router.queue = generation.NewQueue(db, logger, cfg.Redis, cfg.Generation)
 	router.initializeUpstreamMaintenancePause()
-	router.requestMonitor = requestmonitor.NewRecorder(db, logger)
 	router.queue.Start()
 	router.routes()
 	return router.withMiddleware(router.mux)
@@ -116,7 +110,6 @@ func (r *Router) routes() {
 	r.mux.HandleFunc("/api/admin/mail-broadcast", r.mailBroadcast)
 	r.mux.HandleFunc("/api/admin/mail-preview", r.mailPreview)
 	r.mux.HandleFunc("/api/admin/mail-logs", r.adminMailLogs)
-	r.mux.HandleFunc("/api/admin/request-monitor", r.adminRequestMonitor)
 	r.mux.HandleFunc("/api/admin/upstream-maintenance", r.upstreamMaintenance)
 	r.mux.HandleFunc("/api/admin/system-update", r.systemUpdate)
 	r.mux.HandleFunc("/api/admin/data-export", r.adminDataExport)
@@ -156,16 +149,18 @@ func (r *Router) routes() {
 func (r *Router) health(w http.ResponseWriter, _ *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	err := r.db.PingContext(ctx)
+	databaseErr := r.db.PingContext(ctx)
+	redisErr := r.queue.Ping(ctx)
 	status := "ok"
-	if err != nil {
+	if databaseErr != nil || redisErr != nil {
 		status = "degraded"
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data": map[string]any{
 			"status": status,
 			"build":  build.Info(),
-			"mysql":  errString(err),
+			"mysql":  errString(databaseErr),
+			"redis":  errString(redisErr),
 		},
 	})
 }
@@ -175,13 +170,6 @@ func (r *Router) withMiddleware(next http.Handler) http.Handler {
 		startedAt := time.Now()
 		if r.cfg.RequestBodyLimit > 0 {
 			req.Body = http.MaxBytesReader(w, req.Body, r.cfg.RequestBodyLimit)
-		}
-		shouldRecord := r.requestMonitor != nil && requestmonitor.ShouldRecord(req)
-		var captured requestmonitor.CapturedRequest
-		responseWriter := &trackedResponseWriter{ResponseWriter: w}
-		if shouldRecord {
-			captured = requestmonitor.Capture(req)
-			w = responseWriter
 		}
 		defer func() {
 			if recovered := recover(); recovered != nil {
@@ -193,21 +181,6 @@ func (r *Router) withMiddleware(next http.Handler) http.Handler {
 					"stack", string(debug.Stack()),
 				)
 				writeJSON(w, http.StatusInternalServerError, map[string]any{"message": "服务器内部错误"})
-			}
-			duration := time.Since(startedAt)
-			if shouldRecord {
-				statusCode := responseWriter.statusCode
-				if statusCode == 0 {
-					statusCode = http.StatusOK
-				}
-				r.requestMonitor.Submit(requestmonitor.Record{
-					Method: req.Method, Path: req.URL.Path,
-					QueryParams: captured.QueryParams, BodyParams: captured.BodyParams,
-					SourceIP: captured.SourceIP, SourceHost: captured.SourceHost,
-					Origin: captured.Origin, Referer: captured.Referer, UserAgent: captured.UserAgent,
-					StatusCode: statusCode, DurationMS: duration.Milliseconds(), ResponseBytes: responseWriter.responseBytes,
-					CreatedAt: startedAt,
-				})
 			}
 		}()
 		r.applyCORS(w, req)
@@ -223,60 +196,6 @@ func (r *Router) withMiddleware(next http.Handler) http.Handler {
 			"remoteAddr", req.RemoteAddr,
 		)
 	})
-}
-
-type trackedResponseWriter struct {
-	http.ResponseWriter
-	statusCode    int
-	responseBytes int64
-}
-
-func (writer *trackedResponseWriter) WriteHeader(statusCode int) {
-	if writer.statusCode != 0 {
-		return
-	}
-	writer.statusCode = statusCode
-	writer.ResponseWriter.WriteHeader(statusCode)
-}
-
-func (writer *trackedResponseWriter) Write(value []byte) (int, error) {
-	if writer.statusCode == 0 {
-		writer.WriteHeader(http.StatusOK)
-	}
-	written, err := writer.ResponseWriter.Write(value)
-	writer.responseBytes += int64(written)
-	return written, err
-}
-
-func (writer *trackedResponseWriter) ReadFrom(reader io.Reader) (int64, error) {
-	if writer.statusCode == 0 {
-		writer.WriteHeader(http.StatusOK)
-	}
-	written, err := io.Copy(writer.ResponseWriter, reader)
-	writer.responseBytes += written
-	return written, err
-}
-
-func (writer *trackedResponseWriter) Flush() {
-	if writer.statusCode == 0 {
-		writer.WriteHeader(http.StatusOK)
-	}
-	_ = http.NewResponseController(writer.ResponseWriter).Flush()
-}
-
-func (writer *trackedResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	return http.NewResponseController(writer.ResponseWriter).Hijack()
-}
-
-func (writer *trackedResponseWriter) Push(target string, options *http.PushOptions) error {
-	if pusher, ok := writer.ResponseWriter.(http.Pusher); ok {
-		return pusher.Push(target, options)
-	}
-	return http.ErrNotSupported
-}
-
-func (writer *trackedResponseWriter) Unwrap() http.ResponseWriter {
-	return writer.ResponseWriter
 }
 
 func (r *Router) applyCORS(w http.ResponseWriter, req *http.Request) {

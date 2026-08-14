@@ -52,3 +52,46 @@ func TestDashboardTaskTrendFillsMissingDatesAndGroupsRunningStates(t *testing.T)
 		t.Fatal(err)
 	}
 }
+
+func TestDashboardTaskHourlyTrendFillsMissingHoursAndGroupsRunningStates(t *testing.T) {
+	previousDialect := database.CurrentDialect()
+	database.SetDialect("mysql")
+	defer database.SetDialect(string(previousDialect))
+
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+
+	currentHour := time.Now().In(time.Local).Truncate(time.Hour)
+	firstHour := currentHour.Add(-2 * time.Hour).Format("2006-01-02 15:00")
+	lastHour := currentHour.Format("2006-01-02 15:00")
+	mock.ExpectQuery(`SELECT DATE_FORMAT\(created_at, '%Y-%m-%d %H:00'\) AS task_hour`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnRows(sqlmock.NewRows([]string{
+			"task_hour", "total", "queued", "pending", "processing", "success", "failed", "canceled", "counted_failed", "excluded",
+		}).
+			AddRow(firstHour, 8, 1, 1, 2, 3, 1, 0, 1, 0).
+			AddRow(lastHour, 5, 0, 1, 0, 2, 1, 1, 1, 0))
+
+	points, err := NewRepository(database.Wrap(rawDB)).DashboardTaskHourlyTrend(context.Background(), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(points) != 3 {
+		t.Fatalf("points = %d, want 3", len(points))
+	}
+	if points[0].Date != firstHour || points[0].Running != 4 || points[0].Success != 3 {
+		t.Fatalf("unexpected first point: %+v", points[0])
+	}
+	if points[1].Total != 0 || points[1].Running != 0 {
+		t.Fatalf("missing hour was not zero-filled: %+v", points[1])
+	}
+	if points[2].Date != lastHour || points[2].Canceled != 1 || points[2].CountedFailed != 1 {
+		t.Fatalf("unexpected last point: %+v", points[2])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}

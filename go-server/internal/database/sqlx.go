@@ -66,6 +66,13 @@ func DateExpr(column string) string {
 	return fmt.Sprintf("DATE(%s)", column)
 }
 
+func HourExpr(column string) string {
+	if CurrentDialect() == DialectPostgres {
+		return fmt.Sprintf("TO_CHAR(DATE_TRUNC('hour', %s), 'YYYY-MM-DD HH24:00')", column)
+	}
+	return fmt.Sprintf("DATE_FORMAT(%s, '%%Y-%%m-%%d %%H:00')", column)
+}
+
 func BoolCountExpr(condition string) string {
 	if CurrentDialect() == DialectPostgres {
 		return fmt.Sprintf("COALESCE(SUM(CASE WHEN %s THEN 1 ELSE 0 END),0)", condition)

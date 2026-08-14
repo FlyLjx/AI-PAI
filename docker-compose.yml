@@ -1,6 +1,19 @@
 name: ai-pai
 
 services:
+  redis:
+    image: redis:7-alpine
+    container_name: ai-pai-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
   postgres:
     image: postgres:16
     container_name: ai-pai-postgres
@@ -42,6 +55,11 @@ services:
       DB_SSLMODE: ${DB_SSLMODE:-disable}
       DB_MAX_OPEN_CONNS: ${DB_MAX_OPEN_CONNS:-120}
       DB_MAX_IDLE_CONNS: ${DB_MAX_IDLE_CONNS:-60}
+      REDIS_ADDR: ${REDIS_ADDR:-redis:6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      REDIS_DB: ${REDIS_DB:-0}
+      GENERATION_WORKERS: ${GENERATION_WORKERS:-120}
+      GENERATION_STREAM_SHARDS: ${GENERATION_STREAM_SHARDS:-64}
       LOG_DIR: /app/logs
       SYSTEM_UPDATE_DIR: /app/update
       GITHUB_UPDATE_REPOSITORY: ${GITHUB_UPDATE_REPOSITORY:-FlyLjx/AI-PAI}
@@ -50,6 +68,8 @@ services:
       PORT: 3001
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     expose:
       - "3001"
@@ -109,3 +129,4 @@ services:
 
 volumes:
   postgres_data:
+  redis_data:

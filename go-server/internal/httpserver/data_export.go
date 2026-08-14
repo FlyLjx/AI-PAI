@@ -39,7 +39,6 @@ var excludedExportData = []string{
 	"credit_logs",
 	"api_access_logs",
 	"email_delivery_logs",
-	"http_request_logs",
 	"user_registration_fingerprints",
 	"user_ip_evidence",
 	"registration_challenges",

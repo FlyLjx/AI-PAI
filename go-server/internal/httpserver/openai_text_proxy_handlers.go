@@ -251,7 +251,7 @@ func writeUpstreamResponse(w http.ResponseWriter, status int, contentType string
 }
 
 func openAIProxyEndpoint(provider providers.Provider, upstreamPath string) string {
-	baseURL := strings.TrimRight(provider.BaseURL, "/")
+	baseURL := provider.EffectiveBaseURL()
 	if !strings.HasSuffix(baseURL, "/v1") {
 		baseURL += "/v1"
 	}

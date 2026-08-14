@@ -16,3 +16,21 @@ func TestCompletedResultIsKeptInMemoryUntilForgotten(t *testing.T) {
 		t.Fatalf("forgotten result = %#v, want fallback", got)
 	}
 }
+
+func TestCompletedResultStoreTracksAndReleasesMemory(t *testing.T) {
+	ForgetResult("bounded-result")
+	RememberResult("bounded-result", map[string]any{"b64_json": "1234"})
+	completedResults.Lock()
+	bytesAfterStore := completedResults.bytes
+	completedResults.Unlock()
+	if bytesAfterStore <= 0 {
+		t.Fatal("stored byte count was not tracked")
+	}
+	ForgetResult("bounded-result")
+	completedResults.Lock()
+	_, exists := completedResults.items["bounded-result"]
+	completedResults.Unlock()
+	if exists {
+		t.Fatal("result was not released")
+	}
+}

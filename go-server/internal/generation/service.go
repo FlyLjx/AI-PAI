@@ -247,6 +247,7 @@ func (s *Service) FailTimedOut(ctx context.Context, cutoff time.Time, now time.T
 	for _, id := range ids {
 		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
 			s.reconcileTaskBalanceReservation(task)
+			_ = s.tasks.ReleaseSubscriptionQuotaForTerminalTask(ctx, task.ID)
 		}
 		if err := logRepository.FinishLogsForTaskWithDetails(ctx, id, "failed", 0, message, taskErrorDetails(ErrTaskTimedOut)); err != nil {
 			syncErr = errors.Join(syncErr, err)
@@ -268,6 +269,7 @@ func (s *Service) FailTimedOutProcessing(ctx context.Context, cutoff time.Time, 
 	for _, id := range ids {
 		if task, err := s.tasks.FindByID(ctx, id); err == nil && task != nil {
 			s.reconcileTaskBalanceReservation(task)
+			_ = s.tasks.ReleaseSubscriptionQuotaForTerminalTask(ctx, task.ID)
 		}
 		if err := logRepository.FinishLogsForTaskWithDetails(ctx, id, "failed", 0, message, taskErrorDetails(ErrTaskTimedOut)); err != nil {
 			syncErr = errors.Join(syncErr, err)

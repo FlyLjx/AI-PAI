@@ -56,9 +56,9 @@ func (r *Router) testProvider(w http.ResponseWriter, req *http.Request, id strin
 		return
 	}
 	startedAt := time.Now()
-	endpoint := providerModelsEndpoint(provider.BaseURL)
+	endpoint := providerModelsEndpoint(provider.EffectiveBaseURL())
 	authDiagnostics := providers.APIKeyDiagnostics(provider.APIKey)
-	items, err := r.fetchProviderModelDetails(ctx, provider.BaseURL, provider.APIKey)
+	items, err := r.fetchProviderModelDetails(ctx, provider.EffectiveBaseURL(), provider.APIKey)
 	duration := time.Since(startedAt).Milliseconds()
 	var statusCode any = http.StatusOK
 	if err != nil {

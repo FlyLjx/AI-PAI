@@ -16,7 +16,7 @@ const (
 	// before this transaction, and callers reserve the balance as their final
 	// statement so the per-user row lock is released by the following commit.
 	generationLockRetryCount = 3
-	generationEnqueueTimeout = 30 * time.Second
+	generationEnqueueTimeout = 2 * time.Minute
 )
 
 func (r *Router) withUserGenerationLock(ctx context.Context, userID string, fn func(tx *database.Tx) error) error {

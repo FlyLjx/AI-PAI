@@ -395,50 +395,6 @@ export type AnnouncementMutationInput = Omit<Announcement, 'id' | 'createdAt' | 
   sendEmail?: boolean;
 };
 
-export type RequestMonitorRange = '1h' | '24h' | '7d' | '30d';
-
-export type RequestMonitorLog = {
-  id: string;
-  method: string;
-  path: string;
-  queryParams: unknown;
-  bodyParams: unknown;
-  sourceIp: string;
-  sourceHost: string;
-  origin: string;
-  referer: string;
-  userAgent: string;
-  statusCode: number;
-  durationMs: number;
-  responseBytes: number;
-  createdAt: string;
-};
-
-export type RequestMonitorFrequency = {
-  name: string;
-  count: number;
-  errors: number;
-  averageDurationMs: number;
-};
-
-export type RequestMonitorSnapshot = {
-  range: RequestMonitorRange;
-  summary: {
-    total: number;
-    counted: number;
-    successful: number;
-    clientErrors: number;
-    serverErrors: number;
-    errorRate: number;
-    averageDurationMs: number;
-    uniqueSources: number;
-  };
-  trend: Array<{ time: string; total: number; successful: number; errors: number }>;
-  topEndpoints: RequestMonitorFrequency[];
-  topSources: RequestMonitorFrequency[];
-  items: RequestMonitorLog[];
-};
-
 export type ProviderModel = {
   name: string;
   cost1k: number;
@@ -692,7 +648,6 @@ export const portalApi = {
   createAnnouncement: (input: AnnouncementMutationInput) => api<Announcement>('/api/announcements', { method: 'POST', body: JSON.stringify(input) }),
   updateAnnouncement: (id: string, input: AnnouncementMutationInput) => api<Announcement>(`/api/announcements/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
   deleteAnnouncement: (id: string) => api(`/api/announcements/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  requestMonitor: (input: { range?: RequestMonitorRange; page?: number; pageSize?: number; keyword?: string; method?: string; status?: string; sortBy?: string; sortOrder?: SortOrder } = {}) => api<RequestMonitorSnapshot>(`/api/admin/request-monitor${query(input)}`),
   adminInvites: (page = 1, pageSize = 30, sortBy?: string, sortOrder?: SortOrder) => api<AdminInviteRecord[], AdminInviteSummary>(`/api/invites${query({ page, pageSize, sortBy, sortOrder })}`),
   reviewInvite: (id: string, action: 'approve' | 'reject', note = '') => api(`/api/invites/${encodeURIComponent(id)}/review`, { method: 'PATCH', body: JSON.stringify({ action, note }) }),
   cancelTask: (taskId: string) => api(`/api/tasks/${encodeURIComponent(taskId)}/cancel`, { method: 'POST' }),

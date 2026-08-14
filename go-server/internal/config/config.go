@@ -17,6 +17,19 @@ type Config struct {
 	GitHubWorkflow   string
 	GitHubAPIBaseURL string
 	Database         DatabaseConfig
+	Redis            RedisConfig
+	Generation       GenerationConfig
+}
+
+type RedisConfig struct {
+	Addr     string
+	Password string
+	DB       int
+}
+
+type GenerationConfig struct {
+	Workers      int
+	StreamShards int
 }
 
 type DatabaseConfig struct {
@@ -55,6 +68,15 @@ func Load() Config {
 			SSLMode:      envString("DB_SSLMODE", "disable"),
 			MaxOpenConns: envInt("DB_MAX_OPEN_CONNS", envInt("MYSQL_MAX_OPEN_CONNS", 120)),
 			MaxIdleConns: envInt("DB_MAX_IDLE_CONNS", envInt("MYSQL_MAX_IDLE_CONNS", 60)),
+		},
+		Redis: RedisConfig{
+			Addr:     envString("REDIS_ADDR", "127.0.0.1:6379"),
+			Password: envString("REDIS_PASSWORD", ""),
+			DB:       envInt("REDIS_DB", 0),
+		},
+		Generation: GenerationConfig{
+			Workers:      envInt("GENERATION_WORKERS", 120),
+			StreamShards: envInt("GENERATION_STREAM_SHARDS", 64),
 		},
 	}
 }

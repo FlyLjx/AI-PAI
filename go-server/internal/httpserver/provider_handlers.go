@@ -14,12 +14,14 @@ import (
 )
 
 type providerInput struct {
-	Name       string `json:"name"`
-	Type       string `json:"type"`
-	Capability string `json:"capability"`
-	BaseURL    string `json:"baseUrl"`
-	APIKey     string `json:"apiKey"`
-	Status     string `json:"status"`
+	Name            string `json:"name"`
+	Type            string `json:"type"`
+	Capability      string `json:"capability"`
+	BaseURL         string `json:"baseUrl"`
+	InternalBaseURL string `json:"internalBaseUrl"`
+	UseInternalURL  bool   `json:"useInternalUrl"`
+	APIKey          string `json:"apiKey"`
+	Status          string `json:"status"`
 }
 
 func (r *Router) listProviders(w http.ResponseWriter, req *http.Request) {
@@ -100,7 +102,7 @@ func (r *Router) providerModelsByID(w http.ResponseWriter, req *http.Request, id
 		return
 	}
 
-	remoteModels, err := r.fetchProviderModelDetails(ctx, provider.BaseURL, provider.APIKey)
+	remoteModels, err := r.fetchProviderModelDetails(ctx, provider.EffectiveBaseURL(), provider.APIKey)
 	if err != nil {
 		writeError(w, providerProbeError(err))
 		return
@@ -139,13 +141,15 @@ func (r *Router) createProvider(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	item, err := providers.NewRepository(r.db).Create(ctx, providers.Provider{
-		ID:         newID(),
-		Name:       input.Name,
-		Type:       input.Type,
-		Capability: input.Capability,
-		BaseURL:    input.BaseURL,
-		APIKey:     input.APIKey,
-		Status:     input.Status,
+		ID:              newID(),
+		Name:            input.Name,
+		Type:            input.Type,
+		Capability:      input.Capability,
+		BaseURL:         input.BaseURL,
+		InternalBaseURL: input.InternalBaseURL,
+		UseInternalURL:  input.UseInternalURL,
+		APIKey:          input.APIKey,
+		Status:          input.Status,
 	})
 	if err != nil {
 		writeError(w, err)
@@ -162,12 +166,14 @@ func (r *Router) updateProvider(w http.ResponseWriter, req *http.Request, id str
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
 	item, err := providers.NewRepository(r.db).Update(ctx, id, providers.Provider{
-		Name:       input.Name,
-		Type:       input.Type,
-		Capability: input.Capability,
-		BaseURL:    input.BaseURL,
-		APIKey:     input.APIKey,
-		Status:     input.Status,
+		Name:            input.Name,
+		Type:            input.Type,
+		Capability:      input.Capability,
+		BaseURL:         input.BaseURL,
+		InternalBaseURL: input.InternalBaseURL,
+		UseInternalURL:  input.UseInternalURL,
+		APIKey:          input.APIKey,
+		Status:          input.Status,
 	})
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, newAppError(http.StatusNotFound, "接口不存在"))
@@ -217,10 +223,15 @@ func (r *Router) parseProviderInput(w http.ResponseWriter, req *http.Request) (p
 	input.Type = strings.TrimSpace(input.Type)
 	input.Capability = defaultString(strings.TrimSpace(input.Capability), "chat_image")
 	input.BaseURL = strings.TrimRight(strings.TrimSpace(input.BaseURL), "/")
+	input.InternalBaseURL = strings.TrimRight(strings.TrimSpace(input.InternalBaseURL), "/")
 	input.APIKey = providers.NormalizeAPIKey(input.APIKey)
 	input.Status = defaultString(strings.TrimSpace(input.Status), "active")
 	if input.Name == "" || input.BaseURL == "" || input.APIKey == "" {
 		writeError(w, newAppError(http.StatusBadRequest, "请填写接口名称、地址和密钥"))
+		return providerInput{}, false
+	}
+	if input.UseInternalURL && input.InternalBaseURL == "" {
+		writeError(w, newAppError(http.StatusBadRequest, "启用内网地址前请填写内网 Base URL"))
 		return providerInput{}, false
 	}
 	if input.Type != "sub2api" && input.Type != "custom" && input.Type != "newapi" {

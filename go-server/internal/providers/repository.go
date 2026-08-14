@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"aipi-go/internal/database"
@@ -17,7 +18,7 @@ func NewRepository(db *database.DB) *Repository {
 
 func (r *Repository) FindAll(ctx context.Context) ([]Provider, error) {
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT id, name, type, capability, base_url, api_key, status, created_at, updated_at
+		SELECT id, name, type, capability, base_url, COALESCE(internal_base_url, ''), COALESCE(use_internal_url, FALSE), api_key, status, created_at, updated_at
 		FROM api_providers
 		ORDER BY created_at DESC
 	`)
@@ -35,6 +36,8 @@ func (r *Repository) FindAll(ctx context.Context) ([]Provider, error) {
 			&item.Type,
 			&item.Capability,
 			&item.BaseURL,
+			&item.InternalBaseURL,
+			&item.UseInternalURL,
 			&item.APIKey,
 			&item.Status,
 			&item.CreatedAt,
@@ -51,7 +54,7 @@ func (r *Repository) FindAll(ctx context.Context) ([]Provider, error) {
 
 func (r *Repository) FindByID(ctx context.Context, id string) (*Provider, error) {
 	row := r.db.QueryRowContext(ctx, `
-		SELECT id, name, type, capability, base_url, api_key, status, created_at, updated_at
+		SELECT id, name, type, capability, base_url, COALESCE(internal_base_url, ''), COALESCE(use_internal_url, FALSE), api_key, status, created_at, updated_at
 		FROM api_providers
 		WHERE id = ?
 		LIMIT 1
@@ -63,6 +66,8 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*Provider, error)
 		&item.Type,
 		&item.Capability,
 		&item.BaseURL,
+		&item.InternalBaseURL,
+		&item.UseInternalURL,
 		&item.APIKey,
 		&item.Status,
 		&item.CreatedAt,
@@ -78,10 +83,10 @@ func (r *Repository) FindByID(ctx context.Context, id string) (*Provider, error)
 func (r *Repository) Create(ctx context.Context, provider Provider) (*Provider, error) {
 	_, err := r.db.ExecContext(ctx, `
 		INSERT INTO api_providers
-			(id, name, type, capability, base_url, api_key, status)
+			(id, name, type, capability, base_url, internal_base_url, use_internal_url, api_key, status)
 		VALUES
-			(?, ?, ?, ?, ?, ?, ?)
-	`, provider.ID, provider.Name, provider.Type, provider.Capability, provider.BaseURL, provider.APIKey, provider.Status)
+			(?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, provider.ID, provider.Name, provider.Type, provider.Capability, provider.BaseURL, nullableProviderURL(provider.InternalBaseURL), provider.UseInternalURL, provider.APIKey, provider.Status)
 	if err != nil {
 		return nil, err
 	}
@@ -91,13 +96,21 @@ func (r *Repository) Create(ctx context.Context, provider Provider) (*Provider, 
 func (r *Repository) Update(ctx context.Context, id string, provider Provider) (*Provider, error) {
 	_, err := r.db.ExecContext(ctx, `
 		UPDATE api_providers
-		SET name = ?, type = ?, capability = ?, base_url = ?, api_key = ?, status = ?
+		SET name = ?, type = ?, capability = ?, base_url = ?, internal_base_url = ?, use_internal_url = ?, api_key = ?, status = ?
 		WHERE id = ?
-	`, provider.Name, provider.Type, provider.Capability, provider.BaseURL, provider.APIKey, provider.Status, id)
+	`, provider.Name, provider.Type, provider.Capability, provider.BaseURL, nullableProviderURL(provider.InternalBaseURL), provider.UseInternalURL, provider.APIKey, provider.Status, id)
 	if err != nil {
 		return nil, err
 	}
 	return r.FindByID(ctx, id)
+}
+
+func nullableProviderURL(value string) any {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return value
 }
 
 func (r *Repository) Delete(ctx context.Context, id string) (bool, error) {

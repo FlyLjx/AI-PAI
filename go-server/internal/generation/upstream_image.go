@@ -398,7 +398,7 @@ func sleepImageRetry(ctx context.Context, attempt int) error {
 }
 
 func imageEndpoint(provider providers.Provider, operation string) string {
-	baseURL := strings.TrimRight(provider.BaseURL, "/")
+	baseURL := provider.EffectiveBaseURL()
 	if provider.Type == "custom" || provider.Type == "newapi" {
 		if !strings.HasSuffix(baseURL, "/v1") {
 			baseURL += "/v1"

@@ -143,6 +143,7 @@ type DashboardData = {
   recentOrders?: RechargeRow[];
   recentTasks?: UsageRow[];
   taskTrend?: TaskTrendPoint[];
+  taskTrendHourly?: TaskTrendPoint[];
 };
 
 const TASK_TREND_COLORS = {
@@ -160,6 +161,16 @@ type UpstreamStatusTone = 'healthy' | 'warning' | 'danger' | 'pending';
 function shortDate(value: string): string {
   const [, month = '', day = ''] = value.split('-');
   return `${month}/${day}`;
+}
+
+function shortHour(value: string): string {
+  return value.split(' ')[1] || value;
+}
+
+function trendRangePoint(value: string, hourly: boolean): string {
+  if (!hourly) return value;
+  const [date = '', hour = ''] = value.split(' ');
+  return `${shortDate(date)} ${hour}`;
 }
 
 function percentage(value: number | undefined): string {
@@ -301,7 +312,10 @@ export default function AdminDashboardPage() {
     const header = recentOrderHeaders.find((item) => item.key === recentOrdersSort.key) || recentOrderHeaders[4];
     return sortItems(recentOrders, header, recentOrdersSort.direction);
   }, [recentOrders, recentOrdersSort.direction, recentOrdersSort.key]);
-  const taskTrend = useMemo(() => (data.taskTrend || []).slice(-trendDays), [data.taskTrend, trendDays]);
+  const hourlyTrend = trendDays === 1;
+  const taskTrend = useMemo(() => hourlyTrend
+    ? (data.taskTrendHourly || []).slice(-24)
+    : (data.taskTrend || []).slice(-trendDays), [data.taskTrend, data.taskTrendHourly, hourlyTrend, trendDays]);
   const taskTrendSummary = useMemo(() => taskTrend.reduce((summary, point) => ({
     total: summary.total + Number(point.total || 0),
     success: summary.success + Number(point.success || 0),
@@ -424,7 +438,7 @@ export default function AdminDashboardPage() {
                 <span className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-blue-50 text-[#1E5F91]"><ChartNoAxesCombined className="h-4 w-4" /></span>
                 <div>
                   <div className="flex flex-wrap items-center gap-2"><h2 id="task-trend-title" className="text-sm font-semibold text-[#17201B]">任务处理趋势</h2>{runningTasks > 0 && <span className="rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-700">{runningTasks} 个处理中</span>}</div>
-                  <p className="mt-0.5 text-[11px] text-zinc-500">{taskTrend[0]?.date || '-'} 至 {taskTrend.at(-1)?.date || '-'}</p>
+                  <p className="mt-0.5 text-[11px] text-zinc-500">{taskTrend[0]?.date ? trendRangePoint(taskTrend[0].date, hourlyTrend) : '-'} 至 {taskTrend.at(-1)?.date ? trendRangePoint(taskTrend.at(-1)!.date, hourlyTrend) : '-'}</p>
                 </div>
               </div>
               <div className="inline-flex self-start rounded-md border border-[#DCE4DF] bg-[#F7F8F6] p-0.5 sm:self-auto" role="group" aria-label="任务趋势时间范围">
@@ -443,9 +457,9 @@ export default function AdminDashboardPage() {
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart accessibilityLayer data={taskTrend} margin={ADMIN_CHART_MARGIN}>
                   <CartesianGrid stroke={ADMIN_CHART_GRID} vertical />
-                  <XAxis dataKey="date" tickFormatter={shortDate} tick={{ fill: ADMIN_CHART_AXIS, fontSize: 9 }} tickLine={false} axisLine={{ stroke: ADMIN_CHART_BORDER }} minTickGap={22} />
+                  <XAxis dataKey="date" tickFormatter={hourlyTrend ? shortHour : shortDate} tick={{ fill: ADMIN_CHART_AXIS, fontSize: 9 }} tickLine={false} axisLine={{ stroke: ADMIN_CHART_BORDER }} minTickGap={hourlyTrend ? 18 : 22} />
                   <YAxis allowDecimals={false} tick={{ fill: ADMIN_CHART_AXIS, fontSize: 9 }} tickLine={false} axisLine={false} width={44} />
-                  <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `日期 ${String(label)}`} contentStyle={{ border: `1px solid ${ADMIN_CHART_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
+                  <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `${hourlyTrend ? '时间' : '日期'} ${String(label)}`} contentStyle={{ border: `1px solid ${ADMIN_CHART_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
                   <Line type="monotone" dataKey="success" name="成功" stroke={TASK_TREND_COLORS.success} strokeWidth={2} dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.success, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
                   <Line type="monotone" dataKey="failed" name="失败" stroke={TASK_TREND_COLORS.failed} strokeWidth={1.8} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.failed, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
                   <Line type="monotone" dataKey="running" name="运行中" stroke={TASK_TREND_COLORS.running} strokeWidth={1.8} dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.running, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />

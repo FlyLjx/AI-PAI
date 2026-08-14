@@ -8,9 +8,11 @@ import (
 	"sync"
 	"time"
 
+	"aipi-go/internal/config"
 	"aipi-go/internal/database"
 	"aipi-go/internal/settings"
 	"aipi-go/internal/tasks"
+	"github.com/redis/go-redis/v9"
 )
 
 const (
@@ -22,22 +24,28 @@ const (
 )
 
 type Queue struct {
-	jobs      chan Job
-	workers   int
-	unlimited bool
-	service   *Service
-	logger    *slog.Logger
-	settings  *settings.Repository
-	started   bool
-	mu        sync.Mutex
-	shutdown  chan struct{}
-	scopes    map[string]*scopeLimiter
-	active    map[string]context.CancelFunc
-	paused    bool
-	pausedAt  time.Time
-	timeoutMu sync.RWMutex
-	timeout   time.Duration
-	timeoutAt time.Time
+	jobs         chan streamJob
+	incoming     chan streamJob
+	releases     chan string
+	workers      int
+	service      *Service
+	logger       *slog.Logger
+	settings     *settings.Repository
+	started      bool
+	mu           sync.Mutex
+	shutdown     chan struct{}
+	active       map[string]context.CancelFunc
+	paused       bool
+	pausedAt     time.Time
+	timeoutMu    sync.RWMutex
+	timeout      time.Duration
+	timeoutAt    time.Time
+	redis        *redis.Client
+	redisConfig  config.RedisConfig
+	queueConfig  config.GenerationConfig
+	dispatchWake chan struct{}
+	consumer     string
+	waiters      map[string]map[chan struct{}]struct{}
 }
 
 type Job struct {
@@ -48,40 +56,42 @@ type Job struct {
 	ImageQuality        string
 }
 
-type scopeLimiter struct {
-	active int
-	limit  int
-	cond   *sync.Cond
-}
-
-func NewQueue(db *database.DB, logger *slog.Logger, workers int) *Queue {
-	unlimited := workers <= 0
-	bufferSize := 1024
-	if !unlimited {
-		bufferSize = workers * 4
+func NewQueue(db *database.DB, logger *slog.Logger, redisConfig config.RedisConfig, queueConfig config.GenerationConfig) *Queue {
+	workers := queueConfig.Workers
+	if workers < 1 {
+		workers = 1
 	}
+	if queueConfig.StreamShards < 1 {
+		queueConfig.StreamShards = 1
+	}
+	bufferSize := workers * 2
 	return &Queue{
-		jobs:      make(chan Job, bufferSize),
-		workers:   workers,
-		unlimited: unlimited,
-		service:   NewService(db, logger),
-		logger:    logger,
-		settings:  settings.NewRepository(db),
-		shutdown:  make(chan struct{}),
+		jobs:         make(chan streamJob, bufferSize),
+		incoming:     make(chan streamJob, bufferSize),
+		releases:     make(chan string, bufferSize),
+		workers:      workers,
+		service:      NewService(db, logger),
+		logger:       logger,
+		settings:     settings.NewRepository(db),
+		shutdown:     make(chan struct{}),
+		redisConfig:  redisConfig,
+		queueConfig:  queueConfig,
+		dispatchWake: make(chan struct{}, 1),
+		waiters:      map[string]map[chan struct{}]struct{}{},
 	}
 }
 
 func (q *Queue) Start() {
 	q.mu.Lock()
-	defer q.mu.Unlock()
 	if q.started {
+		q.mu.Unlock()
 		return
 	}
 	q.started = true
+	q.mu.Unlock()
+	q.startRedisQueue()
 	go q.watchTimedOutTasks()
-	if q.unlimited {
-		return
-	}
+	go q.scheduleJobs()
 	for index := 0; index < q.workers; index++ {
 		go q.worker(index + 1)
 	}
@@ -111,11 +121,10 @@ func (q *Queue) EnqueueScopedWithOptions(taskID string, scope string, limit int,
 
 func (q *Queue) enqueue(job Job) {
 	q.Start()
-	if q.unlimited {
-		go q.process(job, "unlimited")
-		return
+	select {
+	case q.dispatchWake <- struct{}{}:
+	default:
 	}
-	q.jobs <- job
 }
 
 func APIKeyConcurrencyScope(apiKeyID string) string {
@@ -131,19 +140,31 @@ func (q *Queue) worker(workerID int) {
 		select {
 		case <-q.shutdown:
 			return
-		case job := <-q.jobs:
-			q.process(job, workerID)
+		case queued := <-q.jobs:
+			q.runStreamJob(queued, workerID)
+			select {
+			case q.releases <- strings.TrimSpace(queued.ConcurrencyScope):
+			case <-q.shutdown:
+				return
+			}
 		}
 	}
+}
+
+func (q *Queue) runStreamJob(queued streamJob, workerID int) {
+	defer func() {
+		if recovered := recover(); recovered != nil && q.logger != nil {
+			q.logger.Error("generation worker panic recovered", "worker", workerID, "taskId", queued.TaskID, "panic", recovered)
+		}
+	}()
+	q.process(queued.Job, workerID)
+	q.finishStreamJob(queued)
 }
 
 func (q *Queue) process(job Job, workerID any) {
 	if err := q.waitWhilePaused(); err != nil {
 		return
 	}
-	release := q.acquireScope(job.ConcurrencyScope, job.ConcurrencyLimit)
-	defer release()
-
 	processingTimeout := q.taskProcessingTimeout()
 	ctx, cancel := context.WithTimeout(context.Background(), processingTimeout)
 	q.registerActiveTask(job.TaskID, cancel)
@@ -231,6 +252,7 @@ func (q *Queue) sweepTimedOutTasks() {
 		cancel()
 		for _, id := range ids {
 			q.Cancel(id)
+			q.publishCompletion(id)
 		}
 		if err != nil {
 			q.logger.Error("generation timeout sweep failed", "error", err)
@@ -328,50 +350,6 @@ func (q *Queue) unregisterActiveTask(taskID string) {
 	q.mu.Lock()
 	delete(q.active, strings.TrimSpace(taskID))
 	q.mu.Unlock()
-}
-
-func (q *Queue) acquireScope(scope string, limit int) func() {
-	scope = strings.TrimSpace(scope)
-	if scope == "" {
-		return func() {}
-	}
-	if limit < 1 {
-		limit = 1
-	}
-	limiter := q.scopeLimiter(scope, limit)
-	q.mu.Lock()
-	if limit > limiter.limit {
-		limiter.cond.Broadcast()
-	}
-	limiter.limit = limit
-	for limiter.active >= limiter.limit {
-		limiter.cond.Wait()
-	}
-	limiter.active++
-	q.mu.Unlock()
-	return func() {
-		q.mu.Lock()
-		if limiter.active > 0 {
-			limiter.active--
-		}
-		limiter.cond.Broadcast()
-		q.mu.Unlock()
-	}
-}
-
-func (q *Queue) scopeLimiter(scope string, limit int) *scopeLimiter {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	if q.scopes == nil {
-		q.scopes = map[string]*scopeLimiter{}
-	}
-	if limiter, ok := q.scopes[scope]; ok {
-		return limiter
-	}
-	limiter := &scopeLimiter{limit: limit}
-	limiter.cond = sync.NewCond(&q.mu)
-	q.scopes[scope] = limiter
-	return limiter
 }
 
 type Service struct {

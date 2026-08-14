@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"net/http"
@@ -51,11 +52,11 @@ func TestProviderModelsByIDUsesSavedCredentialsAndFiltersCapability(t *testing.T
 
 	now := time.Now()
 	expectAdminUser(mock, now)
-	mock.ExpectQuery(`SELECT id, name, type, capability, base_url, api_key, status, created_at, updated_at FROM api_providers WHERE id = \? LIMIT 1`).
+	mock.ExpectQuery(`SELECT id, name, type, capability, base_url, COALESCE\(internal_base_url, ''\), COALESCE\(use_internal_url, FALSE\), api_key, status, created_at, updated_at FROM api_providers WHERE id = \? LIMIT 1`).
 		WithArgs("provider-1").
 		WillReturnRows(sqlmock.NewRows([]string{
-			"id", "name", "type", "capability", "base_url", "api_key", "status", "created_at", "updated_at",
-		}).AddRow("provider-1", "AI-PAI", "newapi", "chat_image", upstream.URL, "Bearer saved-secret", "active", now, now))
+			"id", "name", "type", "capability", "base_url", "internal_base_url", "use_internal_url", "api_key", "status", "created_at", "updated_at",
+		}).AddRow("provider-1", "AI-PAI", "newapi", "chat_image", "https://public.example.test", upstream.URL, true, "Bearer saved-secret", "active", now, now))
 
 	router := &Router{
 		db:     database.Wrap(rawDB),
@@ -107,7 +108,7 @@ func TestProviderModelsByIDReturnsNotFoundForMissingProvider(t *testing.T) {
 
 	now := time.Now()
 	expectAdminUser(mock, now)
-	mock.ExpectQuery(`SELECT id, name, type, capability, base_url, api_key, status, created_at, updated_at FROM api_providers WHERE id = \? LIMIT 1`).
+	mock.ExpectQuery(`SELECT id, name, type, capability, base_url, COALESCE\(internal_base_url, ''\), COALESCE\(use_internal_url, FALSE\), api_key, status, created_at, updated_at FROM api_providers WHERE id = \? LIMIT 1`).
 		WithArgs("missing").
 		WillReturnError(sql.ErrNoRows)
 
@@ -127,6 +128,39 @@ func TestProviderModelsByIDReturnsNotFoundForMissingProvider(t *testing.T) {
 
 	if recorder.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusNotFound, recorder.Body.String())
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestParseProviderInputRejectsEnabledInternalURLWithoutAddress(t *testing.T) {
+	database.SetDialect("mysql")
+	rawDB, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rawDB.Close()
+
+	now := time.Now()
+	expectAdminUser(mock, now)
+	router := &Router{
+		db:     database.Wrap(rawDB),
+		tokens: auth.NewTokenManager(config.DatabaseConfig{}),
+	}
+	token, err := router.tokens.CreateAdminToken("admin-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte(`{"name":"AI-PAI","type":"custom","capability":"chat_image","baseUrl":"https://public.example.test","internalBaseUrl":"","useInternalUrl":true,"apiKey":"secret","status":"active"}`)
+	req := httptest.NewRequest(http.MethodPost, "http://example.test/api/api-providers", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	recorder := httptest.NewRecorder()
+
+	router.createProvider(recorder, req)
+
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body = %s", recorder.Code, http.StatusBadRequest, recorder.Body.String())
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatal(err)

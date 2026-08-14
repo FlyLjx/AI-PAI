@@ -19,19 +19,24 @@ type Provider = {
   type: 'sub2api' | 'newapi' | 'custom';
   capability: 'chat_image';
   baseUrl: string;
+  internalBaseUrl: string;
+  useInternalUrl: boolean;
+  effectiveBaseUrl: string;
   apiKey: string;
   status: 'active' | 'disabled';
   createdAt?: string;
   updatedAt?: string;
 };
 
-type ProviderDraft = Omit<Provider, 'id' | 'createdAt' | 'updatedAt'>;
+type ProviderDraft = Omit<Provider, 'id' | 'createdAt' | 'updatedAt' | 'effectiveBaseUrl'>;
 
 const emptyDraft: ProviderDraft = {
   name: '',
   type: 'custom',
   capability: 'chat_image',
   baseUrl: '',
+  internalBaseUrl: '',
+  useInternalUrl: false,
   apiKey: '',
   status: 'active',
 };
@@ -104,7 +109,7 @@ export default function UpstreamAPIsPage() {
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase();
     return providers.filter((provider) => {
-      const matchesKeyword = !keyword || `${provider.name} ${provider.baseUrl} ${provider.type}`.toLowerCase().includes(keyword);
+      const matchesKeyword = !keyword || `${provider.name} ${provider.baseUrl} ${provider.internalBaseUrl || ''} ${provider.type}`.toLowerCase().includes(keyword);
       const matchesType = typeFilter === 'all' || provider.type === typeFilter;
       const matchesStatus = statusFilter === 'all' || provider.status === statusFilter;
       return matchesKeyword && matchesType && matchesStatus;
@@ -133,6 +138,8 @@ export default function UpstreamAPIsPage() {
       type: provider.type,
       capability: 'chat_image',
       baseUrl: provider.baseUrl,
+      internalBaseUrl: provider.internalBaseUrl || '',
+      useInternalUrl: Boolean(provider.useInternalUrl),
       apiKey: provider.apiKey,
       status: provider.status,
     });
@@ -148,6 +155,7 @@ export default function UpstreamAPIsPage() {
         ...draft,
         name: draft.name.trim(),
         baseUrl: draft.baseUrl.trim().replace(/\/$/, ''),
+        internalBaseUrl: draft.internalBaseUrl.trim().replace(/\/$/, ''),
         apiKey: draft.apiKey.trim(),
       };
       if (editing) await portalApi.updateProvider(editing.id, input);
@@ -170,6 +178,8 @@ export default function UpstreamAPIsPage() {
         type: provider.type,
         capability: provider.capability || 'chat_image',
         baseUrl: provider.baseUrl,
+        internalBaseUrl: provider.internalBaseUrl || '',
+        useInternalUrl: Boolean(provider.useInternalUrl),
         apiKey: provider.apiKey,
         status: nextStatus,
       });
@@ -372,7 +382,7 @@ export default function UpstreamAPIsPage() {
             <tr key={provider.id} className="hover:bg-[#FAFBFA]">
               <td className="px-4 py-3"><strong className="block max-w-[160px] truncate font-medium">{provider.name}</strong><small className="font-mono text-[10px] text-zinc-400">{provider.id}</small></td>
               <td className="px-4 py-3"><span className="rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[11px]">{typeLabel(provider.type)}</span></td>
-              <td className="max-w-[260px] truncate px-4 py-3 font-mono text-[11px] text-zinc-600" title={provider.baseUrl}>{provider.baseUrl}</td>
+              <td className="max-w-[280px] px-4 py-3"><span className="mb-1 inline-flex rounded border border-zinc-200 bg-zinc-50 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-500">{provider.useInternalUrl ? '内网' : '公网'}</span><p className="truncate font-mono text-[11px] text-zinc-600" title={provider.effectiveBaseUrl || provider.baseUrl}>{provider.effectiveBaseUrl || provider.baseUrl}</p></td>
               <td className="px-4 py-3 font-mono text-[11px] text-zinc-500">{maskKey(provider.apiKey)}</td>
               <td className="px-4 py-3"><StatusBadge status={provider.status === 'active' ? 'active' : 'disabled'} /></td>
               <td className="whitespace-nowrap px-4 py-3 text-zinc-500">{formatDate(provider.updatedAt || provider.createdAt || '')}</td>
@@ -382,7 +392,7 @@ export default function UpstreamAPIsPage() {
           renderMobileItem={(provider) => (
             <article key={provider.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{provider.name}</strong><small className="text-[10px] text-zinc-400">{typeLabel(provider.type)}</small></div><StatusBadge status={provider.status === 'active' ? 'active' : 'disabled'} /></div>
-              <p className="mt-3 truncate rounded bg-[#F6F8F6] px-2 py-1.5 font-mono text-[11px] text-zinc-600">{provider.baseUrl}</p>
+              <div className="mt-3 rounded bg-[#F6F8F6] px-2 py-1.5"><span className="text-[10px] font-semibold text-zinc-400">{provider.useInternalUrl ? '内网' : '公网'}</span><p className="truncate font-mono text-[11px] text-zinc-600">{provider.effectiveBaseUrl || provider.baseUrl}</p></div>
               <div className="mt-2 flex items-center justify-between"><small className="font-mono text-[10px] text-zinc-400">{maskKey(provider.apiKey)}</small>{rowActions(provider)}</div>
             </article>
           )}
@@ -396,7 +406,9 @@ export default function UpstreamAPIsPage() {
             <div className="grid grid-cols-1 gap-4 p-5 sm:grid-cols-2">
               <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">接口名称</span><input required value={draft.name} onChange={(event) => updateDraft('name', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
               <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">接口类型</span><AppSelect value={draft.type} onValueChange={(value) => updateDraft('type', value as Provider['type'])} options={[{ value: 'custom', label: '自定义兼容' }, { value: 'newapi', label: 'New API' }, { value: 'sub2api', label: 'Sub2API' }]} /></label>
-              <label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">Base URL</span><input required type="url" placeholder="https://api.example.com" value={draft.baseUrl} onChange={(event) => updateDraft('baseUrl', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
+              <label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">公网 Base URL</span><input required type="url" placeholder="https://api.example.com" value={draft.baseUrl} onChange={(event) => updateDraft('baseUrl', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
+              <label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">内网 Base URL</span><input type="url" placeholder="http://image-pool:8080" value={draft.internalBaseUrl} onChange={(event) => updateDraft('internalBaseUrl', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
+              <label className="sm:col-span-2 flex items-center justify-between rounded-md border border-[#DCE4DF] bg-[#F8FAF8] px-3 py-2.5"><span className="text-xs font-semibold text-zinc-600">优先使用内网地址</span><input type="checkbox" checked={draft.useInternalUrl} onChange={(event) => updateDraft('useInternalUrl', event.target.checked)} className="h-4 w-4 accent-[#047857]" /></label>
               <label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">API Key</span><textarea required rows={3} value={draft.apiKey} onChange={(event) => updateDraft('apiKey', event.target.value)} className="w-full resize-none rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
               <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">用途</span><AppSelect disabled value={draft.capability} options={[{ value: 'chat_image', label: '图片 API 中转' }]} /></label>
               <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">状态</span><AppSelect value={draft.status} onValueChange={(value) => updateDraft('status', value as Provider['status'])} options={[{ value: 'active', label: '启用' }, { value: 'disabled', label: '停用' }]} /></label>

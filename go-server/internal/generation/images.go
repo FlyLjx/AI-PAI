@@ -335,6 +335,13 @@ func rewriteUpstreamImageURL(provider providers.Provider, value string) string {
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return value
 	}
+	if internalURL, err := url.Parse(strings.TrimSpace(provider.InternalBaseURL)); err == nil &&
+		internalURL.Hostname() != "" &&
+		strings.EqualFold(parsed.Hostname(), internalURL.Hostname()) {
+		parsed.Scheme = providerURL.Scheme
+		parsed.Host = providerURL.Host
+		return parsed.String()
+	}
 	switch strings.ToLower(parsed.Hostname()) {
 	case "127.0.0.1", "localhost", "::1", "0.0.0.0":
 		parsed.Scheme = providerURL.Scheme

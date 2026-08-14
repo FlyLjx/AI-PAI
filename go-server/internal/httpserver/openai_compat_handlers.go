@@ -225,15 +225,13 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 	}
 	accessLogID := newID()
 	var savedTask *tasks.Task
+	concurrencyScope := generation.APIKeyConcurrencyScope(auth.APIKey.ID)
+	concurrencyLimit := r.dynamicAPIKeyConcurrencyLimit(auth.APIKey)
 	admissionStage = "billing_quote"
 	costCredits, subscriptionQuotaUnits, admissionErr := r.generationBillingQuote(ctx, auth.User.ID, *model, sizeTier, input.N, auth.APIKey.BillingMode)
 	if admissionErr == nil {
 		admissionStage = "transaction"
 		admissionErr = r.withUserGenerationLock(ctx, auth.User.ID, func(tx *database.Tx) error {
-			admissionStage = "subscription_quota_reservation"
-			if err := r.reserveSubscriptionQuota(ctx, tx, auth.User.ID, input.N, subscriptionQuotaUnits); err != nil {
-				return err
-			}
 			admissionStage = "task_insert"
 			task := tasks.Task{
 				ID:                     newID(),
@@ -278,6 +276,20 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 				Status:         "queued",
 			})
 			if err != nil {
+				return err
+			}
+			admissionStage = "outbox_insert"
+			if err := generation.InsertOutboxWithTx(ctx, tx, generation.Job{
+				TaskID:              savedTask.ID,
+				ConcurrencyScope:    concurrencyScope,
+				ConcurrencyLimit:    concurrencyLimit,
+				ImageResponseFormat: input.ResponseFormat,
+				ImageQuality:        input.Quality,
+			}, r.cfg.Generation.StreamShards); err != nil {
+				return err
+			}
+			admissionStage = "subscription_quota_reservation"
+			if err := r.reserveSubscriptionQuota(ctx, tx, auth.User.ID, input.N, subscriptionQuotaUnits); err != nil {
 				return err
 			}
 			admissionStage = "balance_reservation"
@@ -335,24 +347,21 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		writeOpenAIError(w, status, message, errorType)
 		return
 	}
-	r.queue.EnqueueScopedWithOptions(savedTask.ID, generation.APIKeyConcurrencyScope(auth.APIKey.ID), r.dynamicAPIKeyConcurrencyLimit(auth.APIKey), generation.ProcessOptions{
+	r.queue.EnqueueScopedWithOptions(savedTask.ID, concurrencyScope, concurrencyLimit, generation.ProcessOptions{
 		ImageResponseFormat: input.ResponseFormat,
 		ImageQuality:        input.Quality,
 	})
+	r.queue.RecordAcceptedRequest(auth.APIKey.ID, savedTask.ID, time.Now())
 	preferBase64Results := compatWantsBase64ImageResponse(input.ResponseFormat)
 
-	resultCh := make(chan compatTaskResult, 1)
-	go func() {
-		resultCh <- r.finalizeCompatTaskLog(accessLogID, savedTask.ID, preferBase64Results)
-	}()
-
-	var result compatTaskResult
 	clientWaitTimeout := compatTaskWaitTimeout(r.taskProcessingTimeout())
-	select {
-	case result = <-resultCh:
-	case <-req.Context().Done():
+	waitCtx, waitCancel := context.WithTimeout(req.Context(), clientWaitTimeout)
+	defer waitCancel()
+	result := r.finalizeCompatTaskLog(waitCtx, accessLogID, savedTask.ID, preferBase64Results)
+	if errors.Is(result.err, context.Canceled) && req.Context().Err() != nil {
 		return
-	case <-time.After(clientWaitTimeout):
+	}
+	if errors.Is(result.err, context.DeadlineExceeded) {
 		writeOpenAIErrorDetails(w, apierrors.Parse(http.StatusGatewayTimeout, nil, []byte("图片生成超时")))
 		return
 	}
@@ -659,22 +668,26 @@ func (r *Router) dynamicAPIKeyConcurrencyLimit(key apiaccess.AccessKey) int {
 	if !config.Enabled {
 		return baseLimit
 	}
-	windowRequestCount, err := apiaccess.NewRepository(r.db).RequestCountSince(ctx, key.ID, time.Now().Add(-config.Window()))
+	windowRequestCount, err := r.queue.RequestCountSince(ctx, key.ID, time.Now().Add(-config.Window()))
 	if err != nil {
-		if r.logger != nil {
-			r.logger.Warn("dynamic API key concurrency lookup failed", "apiKeyId", key.ID, "error", err)
+		windowRequestCount, err = apiaccess.NewRepository(r.db).RequestCountSince(ctx, key.ID, time.Now().Add(-config.Window()))
+		if err != nil {
+			if r.logger != nil {
+				r.logger.Warn("dynamic API key concurrency lookup failed", "apiKeyId", key.ID, "error", err)
+			}
+			return baseLimit
 		}
-		return baseLimit
 	}
 	return apiaccess.DynamicConcurrencyLimitWithConfig(key.ConcurrencyLimit, windowRequestCount, config)
 }
 
-func (r *Router) finalizeCompatTaskLog(accessLogID string, taskID string, preferBase64Results bool) compatTaskResult {
+func (r *Router) finalizeCompatTaskLog(ctx context.Context, accessLogID string, taskID string, preferBase64Results bool) compatTaskResult {
 	defer generation.ForgetResult(taskID)
-	ctx, cancel := context.WithTimeout(context.Background(), compatTaskLogWaitTimeout)
-	defer cancel()
 	finalTask, err := r.waitForCompatTask(ctx, taskID)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return compatTaskResult{err: err}
+		}
 		details := apierrors.Parse(http.StatusGatewayTimeout, nil, []byte(compatTaskWaitErrorMessage(err)))
 		r.finishCompatAccessLog(accessLogID, "failed", 0, details.Message, details)
 		return compatTaskResult{
@@ -849,28 +862,31 @@ func (r *Router) authenticateAPIKey(req *http.Request) (*apiaccess.Authenticated
 	if err != nil || authenticated == nil {
 		return authenticated, err
 	}
-	if err := users.NewRepository(r.db).RecordIPEvidence(ctx, authenticated.User.ID, users.IPSourceAPI, requestIP(req), authenticated.APIKey.ID); err != nil && r.logger != nil {
-		r.logger.Warn("API client IP recording failed", "userId", authenticated.User.ID, "apiKeyId", authenticated.APIKey.ID, "error", err)
+	ip := requestIP(req)
+	if r.queue.ShouldRecordIPEvidence(ctx, authenticated.User.ID, authenticated.APIKey.ID, ip) {
+		if err := users.NewRepository(r.db).RecordIPEvidence(ctx, authenticated.User.ID, users.IPSourceAPI, ip, authenticated.APIKey.ID); err != nil && r.logger != nil {
+			r.logger.Warn("API client IP recording failed", "userId", authenticated.User.ID, "apiKeyId", authenticated.APIKey.ID, "error", err)
+		}
 	}
 	return authenticated, nil
 }
 
 func (r *Router) waitForCompatTask(ctx context.Context, id string) (*tasks.Task, error) {
-	ticker := time.NewTicker(1200 * time.Millisecond)
-	defer ticker.Stop()
+	completed, unsubscribe := r.queue.Subscribe(id)
+	defer unsubscribe()
 	repo := tasks.NewRepository(r.db)
 	for {
+		task, err := repo.FindByID(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if task.Status == tasks.StatusSuccess || task.Status == tasks.StatusFailed || task.Status == tasks.StatusCanceled {
+			return task, nil
+		}
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-ticker.C:
-			task, err := repo.FindByID(context.Background(), id)
-			if err != nil {
-				return nil, err
-			}
-			if task.Status == tasks.StatusSuccess || task.Status == tasks.StatusFailed || task.Status == tasks.StatusCanceled {
-				return task, nil
-			}
+		case <-completed:
 		}
 	}
 }

@@ -62,6 +62,12 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "generation_tasks", "output_format", "VARCHAR(20) NULL", "size"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "api_providers", "internal_base_url", "VARCHAR(255) NULL", "base_url"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "api_providers", "use_internal_url", "BOOLEAN NOT NULL DEFAULT FALSE", "internal_base_url"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "generation_tasks", "subscription_quota_units", "INTEGER NOT NULL DEFAULT 1", "quantity"); err != nil {
 		return err
 	}
@@ -210,6 +216,26 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "api_access_logs", "error_details", JSONTextType()+" NULL", "error_code"); err != nil {
 		return err
 	}
+	if _, err := db.ExecContext(ctx, Rebind(`
+		CREATE TABLE IF NOT EXISTS generation_outbox (
+			id VARCHAR(36) PRIMARY KEY,
+			task_id VARCHAR(36) NOT NULL UNIQUE,
+			shard INTEGER NOT NULL DEFAULT 0,
+			concurrency_scope VARCHAR(160) NULL,
+			concurrency_limit INTEGER NOT NULL DEFAULT 1,
+			response_format VARCHAR(32) NULL,
+			quality VARCHAR(32) NULL,
+			status VARCHAR(16) NOT NULL DEFAULT 'pending',
+			attempts INTEGER NOT NULL DEFAULT 0,
+			next_attempt_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			stream_message_id VARCHAR(80) NULL,
+			last_error TEXT NULL,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)
+	`)); err != nil {
+		return err
+	}
 	if err := backfillAPIAccessLogBilling(ctx, db); err != nil {
 		return err
 	}
@@ -253,14 +279,11 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_email_delivery_logs_status_created", `CREATE INDEX idx_email_delivery_logs_status_created ON email_delivery_logs (status, created_at)`},
 		{"idx_email_delivery_logs_category_created", `CREATE INDEX idx_email_delivery_logs_category_created ON email_delivery_logs (category, created_at)`},
 		{"idx_email_delivery_logs_recipient_created", `CREATE INDEX idx_email_delivery_logs_recipient_created ON email_delivery_logs (recipient, created_at)`},
-		{"idx_http_request_logs_created_at", `CREATE INDEX idx_http_request_logs_created_at ON http_request_logs (created_at)`},
-		{"idx_http_request_logs_path_created", `CREATE INDEX idx_http_request_logs_path_created ON http_request_logs (path, created_at)`},
-		{"idx_http_request_logs_source_created", `CREATE INDEX idx_http_request_logs_source_created ON http_request_logs (source_ip, created_at)`},
-		{"idx_http_request_logs_status_created", `CREATE INDEX idx_http_request_logs_status_created ON http_request_logs (status_code, created_at)`},
 		{"idx_api_access_logs_task_id", `CREATE INDEX idx_api_access_logs_task_id ON api_access_logs (task_id)`},
 		{"idx_api_access_logs_created_status", `CREATE INDEX idx_api_access_logs_created_status ON api_access_logs (created_at, status)`},
 		{"idx_api_access_logs_key_status", `CREATE INDEX idx_api_access_logs_key_status ON api_access_logs (api_key_id, status)`},
 		{"idx_api_access_logs_response_status_created", `CREATE INDEX idx_api_access_logs_response_status_created ON api_access_logs (response_status_code, created_at)`},
+		{"idx_generation_outbox_dispatch", `CREATE INDEX idx_generation_outbox_dispatch ON generation_outbox (status, next_attempt_at, created_at)`},
 	}
 	for _, index := range indexes {
 		if err := addIndexIfMissing(ctx, db, index.name, index.statement); err != nil {
@@ -650,6 +673,8 @@ func schemaBootstrapStatements() []string {
 				type VARCHAR(32) NOT NULL,
 				capability VARCHAR(32) NOT NULL DEFAULT 'chat_image',
 				base_url VARCHAR(255) NOT NULL,
+				internal_base_url VARCHAR(255) NULL,
+				use_internal_url BOOLEAN NOT NULL DEFAULT FALSE,
 				api_key VARCHAR(255) NOT NULL,
 				status VARCHAR(16) NOT NULL DEFAULT 'active',
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -738,22 +763,6 @@ func schemaBootstrapStatements() []string {
 				error_message TEXT NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				sent_at TIMESTAMP NULL
-			)`,
-			`CREATE TABLE IF NOT EXISTS http_request_logs (
-				id VARCHAR(36) PRIMARY KEY,
-				method VARCHAR(12) NOT NULL,
-				path VARCHAR(500) NOT NULL,
-				query_params JSONB NULL,
-				body_params JSONB NULL,
-				source_ip VARCHAR(64) NOT NULL DEFAULT '',
-				source_host VARCHAR(255) NOT NULL DEFAULT '',
-				origin VARCHAR(1000) NOT NULL DEFAULT '',
-				referer VARCHAR(1000) NOT NULL DEFAULT '',
-				user_agent VARCHAR(1000) NOT NULL DEFAULT '',
-				status_code INTEGER NOT NULL,
-				duration_ms BIGINT NOT NULL DEFAULT 0,
-				response_bytes BIGINT NOT NULL DEFAULT 0,
-				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 			)`,
 			`CREATE TABLE IF NOT EXISTS recharge_orders (
 				id VARCHAR(36) PRIMARY KEY,
@@ -1053,26 +1062,6 @@ func schemaBootstrapStatements() []string {
 			INDEX idx_email_delivery_logs_status_created (status, created_at),
 			INDEX idx_email_delivery_logs_category_created (category, created_at),
 			INDEX idx_email_delivery_logs_recipient_created (recipient, created_at)
-		)`,
-		`CREATE TABLE IF NOT EXISTS http_request_logs (
-			id VARCHAR(36) PRIMARY KEY,
-			method VARCHAR(12) NOT NULL,
-			path VARCHAR(500) NOT NULL,
-			query_params JSON NULL,
-			body_params JSON NULL,
-			source_ip VARCHAR(64) NOT NULL DEFAULT '',
-			source_host VARCHAR(255) NOT NULL DEFAULT '',
-			origin VARCHAR(1000) NOT NULL DEFAULT '',
-			referer VARCHAR(1000) NOT NULL DEFAULT '',
-			user_agent VARCHAR(1000) NOT NULL DEFAULT '',
-			status_code INTEGER NOT NULL,
-			duration_ms BIGINT NOT NULL DEFAULT 0,
-			response_bytes BIGINT NOT NULL DEFAULT 0,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			INDEX idx_http_request_logs_created_at (created_at),
-			INDEX idx_http_request_logs_path_created (path, created_at),
-			INDEX idx_http_request_logs_source_created (source_ip, created_at),
-			INDEX idx_http_request_logs_status_created (status_code, created_at)
 		)`,
 		`CREATE TABLE IF NOT EXISTS generation_result_images (
 			id VARCHAR(36) PRIMARY KEY,

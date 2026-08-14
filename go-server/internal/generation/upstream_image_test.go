@@ -194,6 +194,63 @@ func TestNormalizeImageResultForProviderMapsChatUsage(t *testing.T) {
 	}
 }
 
+func TestImageEndpointUsesEnabledInternalBaseURL(t *testing.T) {
+	provider := providers.Provider{
+		Type:            "newapi",
+		BaseURL:         "https://public.example.test",
+		InternalBaseURL: "http://image-pool:8080",
+		UseInternalURL:  true,
+	}
+	if got, want := imageEndpoint(provider, "generation"), "http://image-pool:8080/v1/images/generations"; got != want {
+		t.Fatalf("imageEndpoint() = %q, want %q", got, want)
+	}
+}
+
+func TestNormalizeImageResultUsesPublicURLWhileInternalRoutingIsEnabled(t *testing.T) {
+	provider := providers.Provider{
+		BaseURL:         "https://images.example.test/v1",
+		InternalBaseURL: "http://image-pool:8080/v1",
+		UseInternalURL:  true,
+	}
+	result := NormalizeImageResultForProvider(map[string]any{
+		"data": []any{map[string]any{"url": "/images/output.png"}},
+	}, provider)
+	images := ExtractImages(result)
+	if len(images) != 1 || images[0].URL != "https://images.example.test/images/output.png" {
+		t.Fatalf("relative result URL should use public origin, got %#v", images)
+	}
+}
+
+func TestNormalizeImageResultRewritesInternalAbsoluteURLToPublicOrigin(t *testing.T) {
+	provider := providers.Provider{
+		BaseURL:         "https://images.example.test/v1",
+		InternalBaseURL: "http://image-pool:8080/v1",
+		UseInternalURL:  true,
+	}
+	result := NormalizeImageResultForProvider(map[string]any{
+		"data": []any{map[string]any{"url": "http://image-pool:9090/images/output.png?token=fixture"}},
+	}, provider)
+	images := ExtractImages(result)
+	if len(images) != 1 || images[0].URL != "https://images.example.test/images/output.png?token=fixture" {
+		t.Fatalf("internal result URL should use public origin, got %#v", images)
+	}
+}
+
+func TestNormalizeImageResultKeepsThirdPartyPublicURL(t *testing.T) {
+	provider := providers.Provider{
+		BaseURL:         "https://images.example.test/v1",
+		InternalBaseURL: "http://image-pool:8080/v1",
+		UseInternalURL:  true,
+	}
+	result := NormalizeImageResultForProvider(map[string]any{
+		"data": []any{map[string]any{"url": "https://cdn.example.test/images/output.png"}},
+	}, provider)
+	images := ExtractImages(result)
+	if len(images) != 1 || images[0].URL != "https://cdn.example.test/images/output.png" {
+		t.Fatalf("third-party public URL should be preserved, got %#v", images)
+	}
+}
+
 func TestCallImageJSONRewritesLocalhostImageURLToProviderOrigin(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{

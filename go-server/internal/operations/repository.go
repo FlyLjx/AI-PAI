@@ -542,6 +542,66 @@ func (r *Repository) DashboardTaskTrend(ctx context.Context, days int) ([]Dashbo
 	return result, nil
 }
 
+func (r *Repository) DashboardTaskHourlyTrend(ctx context.Context, hours int) ([]DashboardTaskTrendPoint, error) {
+	if hours < 1 {
+		hours = 24
+	}
+	if hours > 72 {
+		hours = 72
+	}
+	now := time.Now().In(time.Local).Truncate(time.Hour)
+	start := now.Add(-time.Duration(hours-1) * time.Hour)
+	end := now.Add(time.Hour)
+	hourExpr := database.HourExpr("created_at")
+	rows, err := r.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT %s AS task_hour,
+			COUNT(*) AS total,
+			COALESCE(SUM(CASE WHEN status='queued' THEN 1 ELSE 0 END), 0) AS queued,
+			COALESCE(SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END), 0) AS pending,
+			COALESCE(SUM(CASE WHEN status='processing' THEN 1 ELSE 0 END), 0) AS processing,
+			COALESCE(SUM(CASE WHEN status='success' THEN 1 ELSE 0 END), 0) AS success,
+			COALESCE(SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END), 0) AS failed,
+			COALESCE(SUM(CASE WHEN status='canceled' THEN 1 ELSE 0 END), 0) AS canceled,
+			COALESCE(SUM(CASE WHEN status IN ('failed', 'canceled', 'cancelled') THEN 1 ELSE 0 END), 0) AS counted_failed,
+			0 AS excluded
+		FROM generation_tasks
+		WHERE created_at >= ? AND created_at < ?
+		GROUP BY %s
+		ORDER BY %s ASC
+	`, hourExpr, hourExpr, hourExpr), start, end)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	byHour := make(map[string]DashboardTaskTrendPoint, hours)
+	for rows.Next() {
+		var rawHour any
+		var point DashboardTaskTrendPoint
+		if err := rows.Scan(
+			&rawHour, &point.Total, &point.Queued, &point.Pending, &point.Processing,
+			&point.Success, &point.Failed, &point.Canceled, &point.CountedFailed, &point.Excluded,
+		); err != nil {
+			return nil, err
+		}
+		point.Date = sqlDateString(rawHour)
+		point.Running = point.Queued + point.Pending + point.Processing
+		byHour[point.Date] = point
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	result := make([]DashboardTaskTrendPoint, 0, hours)
+	for offset := 0; offset < hours; offset++ {
+		hour := start.Add(time.Duration(offset) * time.Hour).Format("2006-01-02 15:00")
+		point := byHour[hour]
+		point.Date = hour
+		result = append(result, point)
+	}
+	return result, nil
+}
+
 func (r *Repository) DashboardSummary(ctx context.Context, limit int) (map[string]any, error) {
 	if limit < 1 {
 		limit = 8
@@ -565,9 +625,14 @@ func (r *Repository) DashboardSummary(ctx context.Context, limit int) (map[strin
 	if err != nil {
 		return nil, err
 	}
+	hourlyTrend, err := r.DashboardTaskHourlyTrend(ctx, 24)
+	if err != nil {
+		return nil, err
+	}
 	result["recentOrders"] = orders
 	result["recentTasks"] = tasks
 	result["taskTrend"] = trend
+	result["taskTrendHourly"] = hourlyTrend
 	return result, nil
 }
 
