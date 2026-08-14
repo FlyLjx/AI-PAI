@@ -33,7 +33,6 @@ import {
   ADMIN_CHART_ACTIVE_DOT,
   ADMIN_CHART_AXIS,
   ADMIN_CHART_BORDER,
-  ADMIN_CHART_COLORS,
   ADMIN_CHART_DOT,
   ADMIN_CHART_GRID,
   ADMIN_CHART_MARGIN,
@@ -147,7 +146,9 @@ type DashboardData = {
 };
 
 const TASK_TREND_COLORS = {
-  ...ADMIN_CHART_COLORS,
+  success: '#72C99E',
+  failed: '#F0A7A7',
+  running: '#A8C5DF',
 } as const;
 
 // Keep the admin runtime health colors aligned with the user status page:
@@ -214,7 +215,7 @@ export default function AdminDashboardPage() {
   const [stabilityError, setStabilityError] = useState('');
   const [openAIStatusError, setOpenAIStatusError] = useState('');
   const [lastUpdated, setLastUpdated] = useState('');
-  const [trendDays, setTrendDays] = useState<7 | 15 | 30>(7);
+  const [trendDays, setTrendDays] = useState<1 | 7 | 15 | 30>(7);
   const [activityView, setActivityView] = useState<'tasks' | 'orders'>('tasks');
   const [recentTasksSort, setRecentTasksSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
   const [recentOrdersSort, setRecentOrdersSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
@@ -313,6 +314,7 @@ export default function AdminDashboardPage() {
   const taskTrendSeries = [
     { key: 'success', label: '成功', value: taskTrendSummary.success, color: TASK_TREND_COLORS.success },
     { key: 'failed', label: '失败', value: taskTrendSummary.failed, color: TASK_TREND_COLORS.failed },
+    { key: 'running', label: '运行中', value: taskTrendSummary.running, color: TASK_TREND_COLORS.running },
   ] as const;
 
   const upstreamCode = Number(stability?.upstream_status_code || 0);
@@ -426,8 +428,8 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
               <div className="inline-flex self-start rounded-md border border-[#DCE4DF] bg-[#F7F8F6] p-0.5 sm:self-auto" role="group" aria-label="任务趋势时间范围">
-                {[7, 15, 30].map((days) => (
-                  <button key={days} type="button" onClick={() => setTrendDays(days as 7 | 15 | 30)} aria-pressed={trendDays === days} className={`h-7 min-w-12 rounded px-2 text-[11px] font-semibold ${trendDays === days ? 'bg-white text-[#047857] shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>{days}天</button>
+                {[1, 7, 15, 30].map((days) => (
+                  <button key={days} type="button" onClick={() => setTrendDays(days as 1 | 7 | 15 | 30)} aria-pressed={trendDays === days} className={`h-7 min-w-12 rounded px-2 text-[11px] font-semibold ${trendDays === days ? 'bg-white text-[#047857] shadow-sm' : 'text-zinc-500 hover:text-zinc-800'}`}>{days}天</button>
                 ))}
               </div>
             </header>
@@ -446,6 +448,7 @@ export default function AdminDashboardPage() {
                   <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `日期 ${String(label)}`} contentStyle={{ border: `1px solid ${ADMIN_CHART_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
                   <Line type="monotone" dataKey="success" name="成功" stroke={TASK_TREND_COLORS.success} strokeWidth={2} dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.success, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
                   <Line type="monotone" dataKey="failed" name="失败" stroke={TASK_TREND_COLORS.failed} strokeWidth={1.8} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.failed, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
+                  <Line type="monotone" dataKey="running" name="运行中" stroke={TASK_TREND_COLORS.running} strokeWidth={1.8} dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.running, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
