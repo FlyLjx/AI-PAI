@@ -27,7 +27,7 @@ const (
 func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt int) (any, error) {
 	body := map[string]any{
 		"model":           input.Model.ModelName,
-		"prompt":          strings.TrimSpace(input.Prompt),
+		"prompt":          buildUpstreamPrompt(input.Prompt, input.Size, input.SizeTier, input.Model.AppendSizeToPrompt),
 		"size":            input.Size,
 		"n":               input.Quantity,
 		"quality":         normalizeUpstreamImageQuality(input.Quality),

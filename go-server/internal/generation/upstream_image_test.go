@@ -38,7 +38,10 @@ func TestCallImageJSONNormalizesURLOnlyResponse(t *testing.T) {
 	defer server.Close()
 
 	service := &Service{logger: slog.Default()}
-	result, err := service.callImageJSON(context.Background(), testImageRequest(server.URL), 1)
+	input := testImageRequest(server.URL)
+	input.SizeTier = "1k"
+	input.Size = "1536x864"
+	result, err := service.callImageJSON(context.Background(), input, 1)
 	if err != nil {
 		t.Fatalf("callImageJSON returned error: %v", err)
 	}
@@ -47,6 +50,13 @@ func TestCallImageJSONNormalizesURLOnlyResponse(t *testing.T) {
 	}
 	if received["quality"] != "high" {
 		t.Fatalf("quality should default to high, got %#v", received["quality"])
+	}
+	prompt, _ := received["prompt"].(string)
+	if received["size"] != "1536x864" {
+		t.Fatalf("size should preserve the selected landscape dimensions, got %#v", received["size"])
+	}
+	if !strings.Contains(prompt, "比例 16:9") || !strings.Contains(prompt, "输出尺寸 1536x864") {
+		t.Fatalf("prompt should include the configured size requirement, got %q", prompt)
 	}
 	payload, ok := result.(map[string]any)
 	if !ok {
@@ -225,7 +235,8 @@ func TestCallImageJSONSendsEditImageDataFields(t *testing.T) {
 		if err := req.ParseMultipartForm(1024 * 1024); err != nil {
 			t.Fatalf("parse multipart request: %v", err)
 		}
-		if req.FormValue("model") != "gpt-image-test" || req.FormValue("prompt") != "测试" {
+		prompt := req.FormValue("prompt")
+		if req.FormValue("model") != "gpt-image-test" || !strings.Contains(prompt, "测试") || !strings.Contains(prompt, "比例 1:1") || !strings.Contains(prompt, "输出尺寸 2048x2048") {
 			t.Fatalf("unexpected form fields: model=%q prompt=%q", req.FormValue("model"), req.FormValue("prompt"))
 		}
 		file, _, err := req.FormFile("image")
