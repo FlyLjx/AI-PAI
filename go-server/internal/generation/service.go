@@ -60,6 +60,9 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 			s.logger.Error("failed to persist generation failure", "taskId", taskID, "error", finishErr)
 		}
 		s.reconcileTaskBalanceReservation(failed)
+		if failed != nil {
+			_ = s.tasks.ReleaseSubscriptionQuotaForTerminalTask(context.Background(), failed.ID)
+		}
 		s.syncAPIAccessLogForTask(failed)
 		s.logger.Error("[generation:finished]",
 			"taskId", taskID,
@@ -78,6 +81,9 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 			s.logger.Error("failed to persist generation failure", "taskId", taskID, "error", finishErr)
 		}
 		s.reconcileTaskBalanceReservation(failed)
+		if failed != nil {
+			_ = s.tasks.ReleaseSubscriptionQuotaForTerminalTask(context.Background(), failed.ID)
+		}
 		s.syncAPIAccessLogForTask(failed)
 		s.logger.Warn("[generation:finished]",
 			"taskId", taskID,
@@ -187,6 +193,9 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 			s.logger.Error("failed to persist generation failure", "taskId", taskID, "error", finishErr)
 		}
 		s.reconcileTaskBalanceReservation(failed)
+		if failed != nil {
+			_ = s.tasks.ReleaseSubscriptionQuotaForTerminalTask(context.Background(), failed.ID)
+		}
 		s.syncAPIAccessLogForTask(failed)
 		s.logger.Error("[generation:finished]",
 			"taskId", taskID,

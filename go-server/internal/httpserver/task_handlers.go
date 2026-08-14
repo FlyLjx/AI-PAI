@@ -125,6 +125,9 @@ func (r *Router) cancelTask(w http.ResponseWriter, req *http.Request, id string)
 	if err := tasks.NewRepository(r.db).ReconcileGenerationBalanceReservation(ctx, task.UserID); err != nil && r.logger != nil {
 		r.logger.Warn("generation balance reservation reconcile failed", "taskId", task.ID, "userId", task.UserID, "error", err)
 	}
+	if err := tasks.NewRepository(r.db).ReleaseSubscriptionQuotaForTerminalTask(ctx, task.ID); err != nil && r.logger != nil {
+		r.logger.Warn("generation subscription quota release failed", "taskId", task.ID, "error", err)
+	}
 	if r.queue != nil {
 		r.queue.Cancel(task.ID)
 	}

@@ -351,6 +351,31 @@ func (r *Repository) ReconcileGenerationBalanceReservation(ctx context.Context, 
 	return tx.Commit()
 }
 
+// ReleaseSubscriptionQuotaForTerminalTask returns a failed or canceled task's
+// admission reservation exactly once by clearing its stored quota units.
+func (r *Repository) ReleaseSubscriptionQuotaForTerminalTask(ctx context.Context, id string) error {
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var userID, status string
+	var quantity, units int
+	if err := tx.QueryRowContext(ctx, `SELECT user_id, status, quantity, subscription_quota_units FROM generation_tasks WHERE id=? FOR UPDATE`, id).Scan(&userID, &status, &quantity, &units); err != nil {
+		return err
+	}
+	if (status != string(StatusFailed) && status != string(StatusCanceled)) || quantity < 1 || units < 1 {
+		return tx.Commit()
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE user_subscriptions SET quota_remaining=quota_remaining + ? WHERE user_id=? AND status='active'`, quantity*units, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE generation_tasks SET subscription_quota_units=0 WHERE id=?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (r *Repository) ClaimForProcessing(ctx context.Context, id string) (bool, error) {
 	result, err := r.db.ExecContext(ctx, `
 		UPDATE generation_tasks
