@@ -71,6 +71,9 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - default
+      - image-shared
     expose:
       - "3001"
     volumes:
@@ -130,3 +133,8 @@ services:
 volumes:
   postgres_data:
   redis_data:
+
+networks:
+  image-shared:
+    name: image-shared
+    external: true
