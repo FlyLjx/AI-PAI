@@ -382,6 +382,10 @@ export default function AdminAPIOperationsPage() {
   const trendHasData = trendPoints.some((point) => point.success > 0 || point.failed > 0);
   const trendSuccessRate = `${Number(upstreamRuntime?.success_rate || 0).toFixed(1)}%`;
   const trendErrorRate = `${Number(upstreamRuntime?.error_rate || 0).toFixed(1)}%`;
+  const runtimeErrorReasons = useMemo(() => (upstreamRuntime?.error_reasons || [])
+    .filter((reason) => Number(reason.value || 0) > 0)
+    .sort((left, right) => Number(right.value || 0) - Number(left.value || 0)), [upstreamRuntime?.error_reasons]);
+  const upstreamErrorMessage = stability?.error?.trim();
 
   const summaryItems = [
     { label: '调用用户', value: live.activeUsers.toLocaleString('zh-CN'), note: '当前有任务', icon: Users, tone: 'blue' as const },
@@ -445,6 +449,29 @@ export default function AdminAPIOperationsPage() {
             </ResponsiveContainer>
           ) : (
             <div className="grid h-full place-items-center text-[11px] text-zinc-400">近 60 分钟暂无调用记录</div>
+          )}
+        </div>
+        <div className="border-t border-[#EDF0EE] bg-[#FAFBFA] px-4 py-3" aria-live="polite">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-[#17201B]"><TriangleAlert className="h-3.5 w-3.5 text-red-600" />错误信息</div>
+            {runtimeErrorReasons.length > 0 && <span className="text-[10px] text-zinc-400">近 {upstreamRuntime?.window_minutes || 60} 分钟</span>}
+          </div>
+          {upstreamErrorMessage ? (
+            <div className="mt-2 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-2.5 py-2 text-[11px] text-red-700" role="alert">
+              <TriangleAlert className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+              <p className="break-words">{upstreamErrorMessage}</p>
+            </div>
+          ) : runtimeErrorReasons.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {runtimeErrorReasons.map((reason) => (
+                <div key={`${reason.category || ''}-${reason.code || ''}-${reason.label}`} className="min-w-[180px] flex-1 border-l-2 border-red-400 bg-white px-2.5 py-2 text-[11px]">
+                  <div className="flex items-start justify-between gap-3"><span className="break-words font-medium text-red-700" title={reason.code || reason.label}>{reason.label || reason.code || '未知错误'}</span><strong className="shrink-0 font-mono text-red-700">{Number(reason.value || 0)}</strong></div>
+                  {(reason.category_label || reason.code) && <p className="mt-0.5 truncate text-[10px] text-zinc-400" title={[reason.category_label, reason.code].filter(Boolean).join(' · ')}>{[reason.category_label, reason.code].filter(Boolean).join(' · ')}</p>}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-[11px] text-zinc-400">近 {upstreamRuntime?.window_minutes || 60} 分钟未记录上游调用错误</p>
           )}
         </div>
       </section>

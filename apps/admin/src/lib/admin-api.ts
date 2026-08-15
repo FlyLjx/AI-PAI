@@ -446,6 +446,9 @@ export type StabilitySeriesPoint = {
 export type StabilityErrorReason = {
   label: string;
   value: number;
+  category?: string;
+  category_label?: string;
+  code?: string;
 };
 
 export type StabilityRecentWindow = {

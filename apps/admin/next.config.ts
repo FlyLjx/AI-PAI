@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
   basePath: ADMIN_BASE_PATH,
   output: "standalone",
   outputFileTracingRoot: fileURLToPath(new URL("../../", import.meta.url)),
+  async redirects() {
+    return [{ source: "/", destination: ADMIN_BASE_PATH, permanent: false, basePath: false }];
+  },
 };
 
 export default nextConfig;
