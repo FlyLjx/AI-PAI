@@ -66,12 +66,11 @@ func (r *Repository) create(ctx context.Context, store taskStore, task Task) (*T
 }
 
 func insertTask(ctx context.Context, store taskStore, task Task) error {
-	resultJSON := any(nil)
-	if task.ResultJSON != nil {
-		bytes, _ := json.Marshal(task.ResultJSON)
-		resultJSON = string(bytes)
+	resultJSON, err := durableResultJSON(task.ResultJSON)
+	if err != nil {
+		return err
 	}
-	_, err := store.ExecContext(ctx, `
+	_, err = store.ExecContext(ctx, `
 		INSERT INTO generation_tasks
 			(id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip,
 			 subscription_quota_units, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json)
@@ -391,15 +390,18 @@ func (r *Repository) ClaimForProcessing(ctx context.Context, id string) (bool, e
 }
 
 func (r *Repository) FinishSuccess(ctx context.Context, id string, result any, durationSeconds float64) (*Task, error) {
-	bytes, _ := json.Marshal(result)
-	_, err := r.db.ExecContext(ctx, `
+	resultJSON, err := durableResultJSON(result)
+	if err != nil {
+		return nil, err
+	}
+	_, err = r.db.ExecContext(ctx, `
 		UPDATE generation_tasks
 		SET status = 'success',
 			result_json = ?,
 			error_message = NULL,
 			duration_seconds = ?
 		WHERE id = ?
-	`, string(bytes), durationSeconds, id)
+	`, resultJSON, durationSeconds, id)
 	if err != nil {
 		return nil, err
 	}
@@ -407,15 +409,11 @@ func (r *Repository) FinishSuccess(ctx context.Context, id string, result any, d
 }
 
 func (r *Repository) ReplaceResultJSON(ctx context.Context, id string, result any) error {
-	var encoded any
-	if result != nil {
-		bytes, err := json.Marshal(result)
-		if err != nil {
-			return err
-		}
-		encoded = string(bytes)
+	encoded, err := durableResultJSON(result)
+	if err != nil {
+		return err
 	}
-	_, err := r.db.ExecContext(ctx, `UPDATE generation_tasks SET result_json = ? WHERE id = ?`, encoded, id)
+	_, err = r.db.ExecContext(ctx, `UPDATE generation_tasks SET result_json = ? WHERE id = ?`, encoded, id)
 	return err
 }
 
@@ -479,11 +477,21 @@ const errorDetailsResultKey = "__aipi_error_details"
 
 func errorDetailsResultJSON(details any) (string, error) {
 	result := map[string]any{errorDetailsResultKey: details}
-	bytes, err := json.Marshal(result)
+	encoded, err := durableResultJSON(result)
 	if err != nil {
 		return "", err
 	}
-	return string(bytes), nil
+	if encoded == nil {
+		return "", nil
+	}
+	return encoded.(string), nil
+}
+
+// durableResultJSON is the repository persistence boundary for task results.
+// Results may contain inline image bytes for the waiting request, but those
+// bytes must never be stored in generation_tasks.result_json.
+func durableResultJSON(value any) (any, error) {
+	return resultdata.MarshalWithoutInlineImages(value)
 }
 
 func ErrorDetailsFromResult(result any) (any, bool) {

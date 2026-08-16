@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -117,10 +116,9 @@ func (s *Service) finishSuccessWithBillingOnce(ctx context.Context, input Billin
 		}
 	}
 	durableResult := ResultWithoutBase64(input.Result)
-	var storedResult any
-	if durableResult != nil {
-		resultBytes, _ := json.Marshal(durableResult)
-		storedResult = string(resultBytes)
+	storedResult, err := resultdata.MarshalWithoutInlineImages(durableResult)
+	if err != nil {
+		return err
 	}
 	var storedReference any
 	if referenceImageURL.Valid {

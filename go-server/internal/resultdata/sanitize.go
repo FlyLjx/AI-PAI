@@ -12,6 +12,27 @@ func WithoutInlineImages(value any) any {
 	return cleaned
 }
 
+// MarshalWithoutInlineImages serializes a result after recursively removing
+// inline image bytes. The JSON round trip also handles structs and typed
+// slices, which cannot be traversed by WithoutInlineImages directly.
+func MarshalWithoutInlineImages(value any) (any, error) {
+	if value == nil {
+		return nil, nil
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	cleaned, _, err := SanitizeResultJSON(string(raw))
+	if err != nil {
+		return nil, err
+	}
+	if cleaned == nil {
+		return nil, nil
+	}
+	return *cleaned, nil
+}
+
 func withoutInlineImages(value any) (any, bool) {
 	switch item := value.(type) {
 	case map[string]any:

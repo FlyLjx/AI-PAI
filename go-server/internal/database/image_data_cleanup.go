@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	imageDataCleanupMigrationKey = "migration.image_data_cleanup_v1"
+	imageDataCleanupMigrationKey = "migration.image_data_cleanup_v2"
 	imageDataCleanupBatchSize    = 25
 	imageDataCleanupBatchPause   = 250 * time.Millisecond
 )
@@ -30,7 +30,10 @@ func cleanupLegacyGenerationImageData(ctx context.Context, db *sql.DB, now time.
 		now = time.Now()
 	}
 	localNow := now.In(location)
-	cutoff := time.Date(localNow.Year(), localNow.Month(), localNow.Day(), 0, 0, 0, 0, location)
+	// Terminal tasks are immutable from the worker's perspective, so include
+	// the current day as well. This catches rows written by the previous
+	// persistence path shortly before the service was upgraded.
+	cutoff := localNow
 
 	var marker string
 	err := db.QueryRowContext(ctx, Rebind(`
