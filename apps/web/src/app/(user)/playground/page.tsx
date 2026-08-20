@@ -140,7 +140,7 @@ export default function PlaygroundPage() {
   const [sizeTier, setSizeTier] = useState<SizeTier>('1k');
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('1:1');
   const [quantity, setQuantity] = useState(1);
-  const [outputFormat, setOutputFormat] = useState<OutputFormat>('png');
+  const [outputFormat, setOutputFormat] = useState<OutputFormat>('jpeg');
   const [loadingKeys, setLoadingKeys] = useState(true);
   const [loadingModels, setLoadingModels] = useState(false);
   const [generating, setGenerating] = useState(false);

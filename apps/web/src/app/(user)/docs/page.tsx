@@ -79,7 +79,7 @@ const requestParameters: Record<Endpoint, APIParameter[]> = {
     { name: 'quality', type: 'string', required: '否', description: '上游输出质量：auto、low、medium、high；仍兼容 1k、2k、4k 作为 size_tier 别名' },
     { name: 'resolution', type: 'string', required: '否', description: 'size_tier 的兼容别名' },
     { name: 'aspect_ratio / ratio', type: 'string', required: '否', description: '输出比例，例如 1:1、16:9、9:16' },
-    { name: 'output_format', type: 'string', required: '否', description: 'png、jpeg、webp，默认 png' },
+    { name: 'output_format', type: 'string', required: '否', description: 'png、jpeg、webp，默认 jpeg' },
     { name: 'response_format', type: 'string', required: '否', description: 'url 或 b64_json，默认 url；b64_json 返回 Base64 图片数据' },
   ],
   chat: [
@@ -89,7 +89,7 @@ const requestParameters: Record<Endpoint, APIParameter[]> = {
     { name: 'n', type: 'integer', required: '否', description: '输出数量，范围 1-10，默认 1' },
     { name: 'size', type: 'string', required: '否', description: '像素尺寸，默认 1024x1024' },
     { name: 'quality', type: 'string', required: '否', description: '清晰度兼容参数' },
-    { name: 'output_format', type: 'string', required: '否', description: 'png、jpeg、webp，默认 png' },
+    { name: 'output_format', type: 'string', required: '否', description: 'png、jpeg、webp，默认 jpeg' },
   ],
 };
 
