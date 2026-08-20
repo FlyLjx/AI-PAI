@@ -21,3 +21,13 @@ func TestNextEligibleJobHonorsThousandConcurrencyLimit(t *testing.T) {
 		t.Fatalf("eligible index = %d, want -1", index)
 	}
 }
+
+func TestNextEligibleJobPrioritizesEnterpriseCustomer(t *testing.T) {
+	pending := []streamJob{
+		{Job: Job{TaskID: "standard-1", QueuePriority: 0, ConcurrencyScope: "standard", ConcurrencyLimit: 1}},
+		{Job: Job{TaskID: "enterprise-1", QueuePriority: 100, ConcurrencyScope: "enterprise", ConcurrencyLimit: 1}},
+	}
+	if index := nextEligibleJob(pending, map[string]int{}); index != 1 {
+		t.Fatalf("eligible index = %d, want enterprise job at index 1", index)
+	}
+}

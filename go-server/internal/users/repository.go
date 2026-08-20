@@ -20,7 +20,7 @@ import (
 const (
 	inviteCodeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 	inviteCodeLength   = 8
-	userSelectColumns  = `id, email, invite_code, invited_by, invited_ip, password_hash, credits, role, status, email_verified_at, created_at, updated_at`
+	userSelectColumns  = `id, email, invite_code, invited_by, invited_ip, password_hash, credits, queue_priority, role, status, email_verified_at, created_at, updated_at`
 )
 
 type Repository struct {
@@ -331,9 +331,9 @@ func (r *Repository) Create(ctx context.Context, user User) (*User, error) {
 	invitedBy := strings.TrimSpace(user.InvitedBy)
 	invitedIP := strings.TrimSpace(user.InvitedIP)
 	_, err := r.db.ExecContext(ctx, `
-		INSERT INTO users (id, email, invite_code, invited_by, invited_ip, password_hash, credits, role, status, email_verified_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, user.ID, user.Email, inviteCode, nullableString(invitedBy), nullableString(invitedIP), user.PasswordHash, user.Credits, user.Role, user.Status, user.EmailVerifiedAt)
+		INSERT INTO users (id, email, invite_code, invited_by, invited_ip, password_hash, credits, queue_priority, role, status, email_verified_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, user.ID, user.Email, inviteCode, nullableString(invitedBy), nullableString(invitedIP), user.PasswordHash, user.Credits, user.QueuePriority, user.Role, user.Status, user.EmailVerifiedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -375,9 +375,9 @@ func (r *Repository) MarkEmailVerified(ctx context.Context, id string) (*User, e
 func (r *Repository) Update(ctx context.Context, id string, input User) (*User, error) {
 	if _, err := r.db.ExecContext(ctx, `
 		UPDATE users
-		SET email = ?, role = ?, status = ?, updated_at = CURRENT_TIMESTAMP
+		SET email = ?, queue_priority = ?, role = ?, status = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, input.Email, input.Role, input.Status, id); err != nil {
+	`, input.Email, input.QueuePriority, input.Role, input.Status, id); err != nil {
 		return nil, err
 	}
 	return r.FindByID(ctx, id)
@@ -453,6 +453,7 @@ func scanUser(row scanner) (*User, error) {
 		&invitedIP,
 		&user.PasswordHash,
 		&user.Credits,
+		&user.QueuePriority,
 		&user.Role,
 		&user.Status,
 		&verifiedAt,

@@ -33,6 +33,7 @@ type outboxRow struct {
 	Limit          int
 	ResponseFormat sql.NullString
 	Quality        sql.NullString
+	QueuePriority  int
 	Status         string
 	MessageID      sql.NullString
 }
@@ -96,11 +97,11 @@ func (q *Queue) dispatchOutboxBatch() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	rows, err := q.service.db.QueryContext(ctx, `
-		SELECT task_id, shard, concurrency_scope, concurrency_limit, response_format, quality, status, stream_message_id
+		SELECT task_id, shard, concurrency_scope, concurrency_limit, response_format, quality, queue_priority, status, stream_message_id
 		FROM generation_outbox
 		WHERE (status = 'pending' AND next_attempt_at <= ?)
 			OR (status = 'sent' AND updated_at <= ?)
-		ORDER BY created_at ASC
+		ORDER BY queue_priority DESC, created_at ASC
 		LIMIT ?
 	`, time.Now(), time.Now().Add(-2*time.Minute), outboxBatchSize)
 	if err != nil {
@@ -111,7 +112,7 @@ func (q *Queue) dispatchOutboxBatch() {
 	batch := make([]outboxRow, 0, outboxBatchSize)
 	for rows.Next() {
 		var row outboxRow
-		if err := rows.Scan(&row.TaskID, &row.Shard, &row.Scope, &row.Limit, &row.ResponseFormat, &row.Quality, &row.Status, &row.MessageID); err != nil {
+		if err := rows.Scan(&row.TaskID, &row.Shard, &row.Scope, &row.Limit, &row.ResponseFormat, &row.Quality, &row.QueuePriority, &row.Status, &row.MessageID); err != nil {
 			q.logRedisWarning("generation outbox scan failed", err)
 			return
 		}
@@ -143,7 +144,7 @@ func (q *Queue) publishOutboxRows(ctx context.Context, rows []outboxRow) {
 			Stream: fmt.Sprintf("generation:tasks:%d", row.Shard%q.queueConfig.StreamShards),
 			Values: map[string]any{
 				"task_id": row.TaskID, "scope": row.Scope.String, "limit": row.Limit,
-				"response_format": row.ResponseFormat.String, "quality": row.Quality.String,
+				"response_format": row.ResponseFormat.String, "quality": row.Quality.String, "queue_priority": row.QueuePriority,
 			},
 		})
 	}
@@ -273,6 +274,7 @@ func decodeStreamJob(stream string, message redis.XMessage) (streamJob, bool) {
 	return streamJob{
 		Job: Job{
 			TaskID:              taskID,
+			QueuePriority:       maxInt(priorityFromStream(message.Values["queue_priority"]), 0),
 			ConcurrencyScope:    strings.TrimSpace(fmt.Sprint(message.Values["scope"])),
 			ConcurrencyLimit:    maxInt(limit, 1),
 			ImageResponseFormat: strings.TrimSpace(fmt.Sprint(message.Values["response_format"])),
@@ -281,6 +283,11 @@ func decodeStreamJob(stream string, message redis.XMessage) (streamJob, bool) {
 		Stream:    stream,
 		MessageID: message.ID,
 	}, true
+}
+
+func priorityFromStream(value any) int {
+	priority, _ := strconv.Atoi(strings.TrimSpace(fmt.Sprint(value)))
+	return priority
 }
 
 func (q *Queue) recoverPendingLoop() {

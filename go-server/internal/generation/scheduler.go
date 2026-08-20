@@ -50,11 +50,15 @@ func (q *Queue) scheduleJobs() {
 }
 
 func nextEligibleJob(pending []streamJob, active map[string]int) int {
+	selected := -1
 	for index, job := range pending {
 		scope := strings.TrimSpace(job.ConcurrencyScope)
-		if scope == "" || active[scope] < maxInt(job.ConcurrencyLimit, 1) {
-			return index
+		if scope != "" && active[scope] >= maxInt(job.ConcurrencyLimit, 1) {
+			continue
+		}
+		if selected < 0 || job.QueuePriority > pending[selected].QueuePriority {
+			selected = index
 		}
 	}
-	return -1
+	return selected
 }

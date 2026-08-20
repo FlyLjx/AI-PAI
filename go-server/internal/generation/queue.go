@@ -50,6 +50,7 @@ type Queue struct {
 
 type Job struct {
 	TaskID              string
+	QueuePriority       int
 	ConcurrencyScope    string
 	ConcurrencyLimit    int
 	ImageResponseFormat string

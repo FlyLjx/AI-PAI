@@ -86,6 +86,9 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "users", "generation_reserved_credits", "NUMERIC(12,4) NOT NULL DEFAULT 0.0000", "credits"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "users", "queue_priority", "INTEGER NOT NULL DEFAULT 0", "generation_reserved_credits"); err != nil {
+		return err
+	}
 	// Rebuild the reservation cache from active tasks. This repairs rows left
 	// by a process interrupted between admission and settlement.
 	if _, err := db.ExecContext(ctx, Rebind(`
@@ -236,6 +239,9 @@ func EnsureSchema(db *sql.DB) error {
 	`)); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "generation_outbox", "queue_priority", "INTEGER NOT NULL DEFAULT 0", "quality"); err != nil {
+		return err
+	}
 	if err := backfillAPIAccessLogBilling(ctx, db); err != nil {
 		return err
 	}
@@ -284,6 +290,7 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_api_access_logs_key_status", `CREATE INDEX idx_api_access_logs_key_status ON api_access_logs (api_key_id, status)`},
 		{"idx_api_access_logs_response_status_created", `CREATE INDEX idx_api_access_logs_response_status_created ON api_access_logs (response_status_code, created_at)`},
 		{"idx_generation_outbox_dispatch", `CREATE INDEX idx_generation_outbox_dispatch ON generation_outbox (status, next_attempt_at, created_at)`},
+		{"idx_generation_outbox_priority_dispatch", `CREATE INDEX idx_generation_outbox_priority_dispatch ON generation_outbox (status, next_attempt_at, queue_priority, created_at)`},
 	}
 	for _, index := range indexes {
 		if err := addIndexIfMissing(ctx, db, index.name, index.statement); err != nil {
@@ -665,7 +672,8 @@ func schemaBootstrapStatements() []string {
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				credits NUMERIC(12,4) NOT NULL DEFAULT 0.0000,
-				generation_reserved_credits NUMERIC(12,4) NOT NULL DEFAULT 0.0000
+				generation_reserved_credits NUMERIC(12,4) NOT NULL DEFAULT 0.0000,
+				queue_priority INTEGER NOT NULL DEFAULT 0
 			)`,
 			`CREATE TABLE IF NOT EXISTS api_providers (
 				id VARCHAR(36) PRIMARY KEY,

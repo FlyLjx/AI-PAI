@@ -28,8 +28,8 @@ func TestRevealUserAPIAccessKey(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
-		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 0, "user", "active", now, now, now))
+			"credits", "queue_priority", "role", "status", "email_verified_at", "created_at", "updated_at",
+		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 0, 0, "user", "active", now, now, now))
 	mock.ExpectQuery(`SELECT key_plain FROM api_access_keys WHERE id = \? AND user_id = \? AND deleted_at IS NULL LIMIT 1`).
 		WithArgs("key-1", "user-1").
 		WillReturnRows(sqlmock.NewRows([]string{"key_plain"}).AddRow("sk-aipai-secret"))
@@ -86,8 +86,8 @@ func TestRevealUserAPIAccessKeyReturnsNotFoundForUnownedKey(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
-		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 0, "user", "active", now, now, now))
+			"credits", "queue_priority", "role", "status", "email_verified_at", "created_at", "updated_at",
+		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 0, 0, "user", "active", now, now, now))
 	mock.ExpectQuery(`SELECT key_plain FROM api_access_keys WHERE id = \? AND user_id = \? AND deleted_at IS NULL LIMIT 1`).
 		WithArgs("key-2", "user-1").
 		WillReturnError(sql.ErrNoRows)

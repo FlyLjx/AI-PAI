@@ -24,12 +24,12 @@ func TestInsertOutboxWithTxPersistsCompleteJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	mock.ExpectExec(regexp.QuoteMeta("INSERT INTO generation_outbox")).
-		WithArgs("task-1", "task-1", taskShard("task-1", 64), "api-key:key-1", 1000, "url", "high").
+		WithArgs("task-1", "task-1", taskShard("task-1", 64), "api-key:key-1", 1000, "url", "high", 100).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err = InsertOutboxWithTx(context.Background(), tx, Job{
 		TaskID: "task-1", ConcurrencyScope: "api-key:key-1", ConcurrencyLimit: 1000,
-		ImageResponseFormat: "url", ImageQuality: "high",
+		ImageResponseFormat: "url", ImageQuality: "high", QueuePriority: 100,
 	}, 64)
 	if err != nil {
 		t.Fatal(err)

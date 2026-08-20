@@ -29,10 +29,10 @@ func TestUserLoginAllowsUnverifiedEmail(t *testing.T) {
 		WithArgs("user@example.com").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
+			"credits", "queue_priority", "role", "status", "email_verified_at", "created_at", "updated_at",
 		}).AddRow(
 			"user-1", "user@example.com", nil, nil, nil, auth.HashPassword("password123"),
-			0, "user", "active", nil, now, now,
+			0, 0, "user", "active", nil, now, now,
 		))
 	mock.ExpectExec(`INSERT INTO user_ip_evidence`).
 		WithArgs("user-1", sqlmock.AnyArg(), "198.51.100.16", "login", nil).

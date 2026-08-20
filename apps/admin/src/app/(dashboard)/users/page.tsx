@@ -8,6 +8,7 @@ import {
   ChevronRight,
   CircleDollarSign,
   CreditCard,
+  Crown,
   Eye,
   Gauge,
   Loader2,
@@ -38,13 +39,14 @@ type UserDraft = {
   password: string;
   role: 'user' | 'admin';
   status: 'active' | 'disabled';
+  priorityQueue: boolean;
 };
 
 type GrantMode = 'plan' | 'custom';
 type QuotaAdjustMode = 'remaining' | 'reset';
 type CreditLogFilter = 'all' | 'deduct' | 'recharge' | 'manual_adjust' | 'invite_reward' | 'invite_rebate';
 
-const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active' };
+const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active', priorityQueue: false };
 const pageSize = 12;
 const creditLogPageSize = 10;
 
@@ -424,6 +426,7 @@ export default function AdminUsersPage() {
       password: '',
       role: user.role,
       status: user.status === 'active' ? 'active' : 'disabled',
+      priorityQueue: Boolean(user.priorityQueue),
     });
     setEditorOpen(true);
   };
@@ -438,6 +441,7 @@ export default function AdminUsersPage() {
         email: draft.email.trim(),
         role: draft.role,
         status: draft.status,
+        priorityQueue: draft.priorityQueue,
       };
       if (draft.password) input.password = draft.password;
       if (editing) {
@@ -871,6 +875,7 @@ export default function AdminUsersPage() {
                 <div className="flex max-w-[260px] items-center gap-2">
                   <strong className="truncate font-medium">{user.email}</strong>
                   {user.role === 'admin' && <span className="shrink-0 rounded border border-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500">管理员</span>}
+                  {user.priorityQueue && <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800"><Crown className="h-2.5 w-2.5" />优先队列</span>}
                 </div>
                 <small className="mt-0.5 block max-w-[260px] truncate font-mono text-[10px] text-zinc-400">{user.id}</small>
                 <div className="mt-1.5 flex items-center gap-3 text-[10px]">
@@ -891,7 +896,7 @@ export default function AdminUsersPage() {
           renderMobileItem={(user) => (
             <article key={user.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0"><div className="flex items-center gap-2"><strong className="truncate text-sm">{user.email}</strong>{user.role === 'admin' && <span className="rounded border border-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500">管理员</span>}</div><small className="block truncate font-mono text-[10px] text-zinc-400">{user.id}</small></div>
+                <div className="min-w-0"><div className="flex items-center gap-2"><strong className="truncate text-sm">{user.email}</strong>{user.role === 'admin' && <span className="rounded border border-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500">管理员</span>}{user.priorityQueue && <span className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-200 bg-amber-50 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800"><Crown className="h-2.5 w-2.5" />优先</span>}</div><small className="block truncate font-mono text-[10px] text-zinc-400">{user.id}</small></div>
                 <span className={`mt-0.5 inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold ${user.status === 'active' ? 'text-emerald-700' : 'text-zinc-500'}`}><i className={`h-1.5 w-1.5 rounded-full ${user.status === 'active' ? 'bg-emerald-500' : 'bg-zinc-400'}`} />{user.status === 'active' ? '已启用' : '已停用'}</span>
               </div>
               <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-y border-[#EDF0EE] py-3">
@@ -914,6 +919,7 @@ export default function AdminUsersPage() {
               <label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">{editing ? '重置密码（留空保持不变）' : '初始密码'}</span><input required={!editing} minLength={editing ? undefined : 6} type="password" value={draft.password} onChange={(event) => updateDraft('password', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
               <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">角色</span><AppSelect value={draft.role} onValueChange={(value) => updateDraft('role', value as UserDraft['role'])} options={[{ value: 'user', label: 'API 客户' }, { value: 'admin', label: '管理员' }]} /></label>
               <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">状态</span><AppSelect value={draft.status} onValueChange={(value) => updateDraft('status', value as UserDraft['status'])} options={[{ value: 'active', label: '启用' }, { value: 'disabled', label: '停用' }]} /></label>
+              <label className="sm:col-span-2 flex cursor-pointer items-start gap-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900"><input type="checkbox" checked={draft.priorityQueue} onChange={(event) => updateDraft('priorityQueue', event.target.checked)} className="mt-0.5 h-3.5 w-3.5 accent-amber-600" /><span><strong className="flex items-center gap-1"><Crown className="h-3.5 w-3.5" />大客户优先队列</strong><small className="mt-0.5 block text-[10px] text-amber-800">该客户新提交的 API 请求会优先进入生成队列。</small></span></label>
             </div>
             <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setEditorOpen(false)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}保存</button></div>
           </form>

@@ -15,9 +15,9 @@ func InsertOutboxWithTx(ctx context.Context, tx *database.Tx, job Job, shards in
 	}
 	_, err := tx.ExecContext(ctx, `
 		INSERT INTO generation_outbox
-			(id, task_id, shard, concurrency_scope, concurrency_limit, response_format, quality, status, attempts, next_attempt_at, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-	`, job.TaskID, job.TaskID, taskShard(job.TaskID, shards), nullableString(job.ConcurrencyScope), maxInt(job.ConcurrencyLimit, 1), nullableString(job.ImageResponseFormat), nullableString(job.ImageQuality))
+			(id, task_id, shard, concurrency_scope, concurrency_limit, response_format, quality, queue_priority, status, attempts, next_attempt_at, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+	`, job.TaskID, job.TaskID, taskShard(job.TaskID, shards), nullableString(job.ConcurrencyScope), maxInt(job.ConcurrencyLimit, 1), nullableString(job.ImageResponseFormat), nullableString(job.ImageQuality), maxInt(job.QueuePriority, 0))
 	return err
 }
 

@@ -440,10 +440,11 @@ func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string)
 		return
 	}
 	var input struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-		Role     string `json:"role"`
-		Status   string `json:"status"`
+		Email         string `json:"email"`
+		Password      string `json:"password"`
+		Role          string `json:"role"`
+		Status        string `json:"status"`
+		PriorityQueue *bool  `json:"priorityQueue"`
 	}
 	if err := decodeCompatJSON(req, &input); err != nil {
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
@@ -465,6 +466,13 @@ func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string)
 	}
 	if input.Status == "active" || input.Status == "disabled" {
 		user.Status = input.Status
+	}
+	if input.PriorityQueue != nil {
+		if *input.PriorityQueue {
+			user.QueuePriority = users.QueuePriorityEnterprise
+		} else {
+			user.QueuePriority = users.QueuePriorityStandard
+		}
 	}
 	if strings.TrimSpace(input.Password) != "" {
 		if _, err := repo.UpdatePassword(ctx, id, auth.HashPassword(input.Password)); err != nil {
@@ -760,6 +768,7 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 		Email          string `json:"email"`
 		Password       string `json:"password"`
 		Role           string `json:"role"`
+		PriorityQueue  bool   `json:"priorityQueue"`
 		InviteCode     string `json:"inviteCode"`
 		DeviceID       string `json:"deviceId"`
 		ChallengeToken string `json:"challengeToken"`
@@ -777,6 +786,10 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 	role := "user"
 	if admin && input.Role == "admin" {
 		role = "admin"
+	}
+	queuePriority := users.QueuePriorityStandard
+	if admin && input.PriorityQueue {
+		queuePriority = users.QueuePriorityEnterprise
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
 	defer cancel()
@@ -882,6 +895,7 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 		InvitedIP:       invitedIP,
 		PasswordHash:    auth.HashPassword(input.Password),
 		Credits:         0,
+		QueuePriority:   queuePriority,
 		Role:            role,
 		Status:          "active",
 		EmailVerifiedAt: emailVerifiedAt,

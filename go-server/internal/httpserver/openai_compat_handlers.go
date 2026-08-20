@@ -281,6 +281,7 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 			admissionStage = "outbox_insert"
 			if err := generation.InsertOutboxWithTx(ctx, tx, generation.Job{
 				TaskID:              savedTask.ID,
+				QueuePriority:       auth.User.QueuePriority,
 				ConcurrencyScope:    concurrencyScope,
 				ConcurrencyLimit:    concurrencyLimit,
 				ImageResponseFormat: input.ResponseFormat,

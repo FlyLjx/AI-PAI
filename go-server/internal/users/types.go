@@ -10,6 +10,11 @@ var (
 	ErrInvalidCredits   = errors.New("余额必须在 0 到 99999999.9999 之间")
 )
 
+const (
+	QueuePriorityStandard   = 0
+	QueuePriorityEnterprise = 100
+)
+
 type User struct {
 	ID              string
 	Email           string
@@ -18,6 +23,7 @@ type User struct {
 	InvitedIP       string
 	PasswordHash    string
 	Credits         float64
+	QueuePriority   int
 	Role            string
 	Status          string
 	EmailVerifiedAt *time.Time
@@ -42,6 +48,7 @@ type PublicUser struct {
 	InviteCode      string  `json:"inviteCode"`
 	Role            string  `json:"role"`
 	Status          string  `json:"status"`
+	PriorityQueue   bool    `json:"priorityQueue"`
 	EmailVerifiedAt *string `json:"emailVerifiedAt"`
 	CreatedAt       string  `json:"createdAt"`
 	UpdatedAt       string  `json:"updatedAt"`
@@ -83,6 +90,7 @@ func ToPublicUser(user *User) PublicUser {
 		InviteCode:      user.InviteCode,
 		Role:            user.Role,
 		Status:          user.Status,
+		PriorityQueue:   user.QueuePriority > QueuePriorityStandard,
 		EmailVerifiedAt: verifiedAt,
 		CreatedAt:       user.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:       user.UpdatedAt.Format(time.RFC3339),
