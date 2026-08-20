@@ -42,8 +42,8 @@ func TestCompatBalanceReturnsAuthenticatedUserBalance(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
-		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 128.75, "user", "active", now, now, now))
+			"credits", "role", "status", "sync_size", "email_verified_at", "created_at", "updated_at",
+		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 128.75, "user", "active", false, now, now, now))
 	mock.ExpectExec(`UPDATE api_access_keys SET last_used_at`).
 		WithArgs("key-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))

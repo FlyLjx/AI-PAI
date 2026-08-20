@@ -130,6 +130,6 @@ func expectAdminVerificationUser(mock sqlmock.Sqlmock, id string, email string, 
 		WithArgs(id).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
-		}).AddRow(id, email, nil, nil, nil, "hash", 0, role, "active", verifiedAt, createdAt, createdAt))
+			"credits", "role", "status", "sync_size", "email_verified_at", "created_at", "updated_at",
+		}).AddRow(id, email, nil, nil, nil, "hash", 0, role, "active", false, verifiedAt, createdAt, createdAt))
 }

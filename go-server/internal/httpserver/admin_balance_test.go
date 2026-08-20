@@ -90,6 +90,6 @@ func expectAdminBalanceUser(mock sqlmock.Sqlmock, id string, email string, credi
 		WithArgs(id).
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
-		}).AddRow(id, email, nil, nil, nil, "hash", credits, role, "active", now, now, now))
+			"credits", "role", "status", "sync_size", "email_verified_at", "created_at", "updated_at",
+		}).AddRow(id, email, nil, nil, nil, "hash", credits, role, "active", false, now, now, now))
 }

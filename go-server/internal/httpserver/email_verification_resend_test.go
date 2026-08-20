@@ -115,6 +115,6 @@ func expectResendVerificationUser(mock sqlmock.Sqlmock, verifiedAt any, now time
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
-		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 0, "user", "active", verifiedAt, now, now))
+			"credits", "role", "status", "sync_size", "email_verified_at", "created_at", "updated_at",
+		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 0, "user", "active", false, verifiedAt, now, now))
 }

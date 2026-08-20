@@ -27,8 +27,8 @@ func TestRechargeHistoryReturnsOnlyAuthenticatedUserOrders(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
-		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 0, "user", "active", now, now, now))
+			"credits", "role", "status", "sync_size", "email_verified_at", "created_at", "updated_at",
+		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 0, "user", "active", false, now, now, now))
 	mock.ExpectQuery(`SELECT setting_key, setting_value FROM system_settings`).
 		WillReturnRows(sqlmock.NewRows([]string{"setting_key", "setting_value"}))
 	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM recharge_orders LEFT JOIN users ON users.id=recharge_orders.user_id WHERE recharge_orders.user_id=\? AND recharge_orders.order_type=\?`).

@@ -38,8 +38,8 @@ func TestSetCreditsUpdatesBalanceAndWritesAuditLog(t *testing.T) {
 		WithArgs("user-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
-		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 25.5, "user", "active", now, now, now))
+			"credits", "role", "status", "sync_size", "email_verified_at", "created_at", "updated_at",
+		}).AddRow("user-1", "user@example.com", nil, nil, nil, "hash", 25.5, "user", "active", false, now, now, now))
 
 	updated, err := NewRepository(database.Wrap(rawDB)).SetCredits(context.Background(), "user-1", 25.5, "管理员 admin@example.com：补发余额")
 	if err != nil {

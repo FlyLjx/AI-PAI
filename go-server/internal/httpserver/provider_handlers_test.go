@@ -183,6 +183,6 @@ func expectAdminUser(mock sqlmock.Sqlmock, now time.Time) {
 		WithArgs("admin-1").
 		WillReturnRows(sqlmock.NewRows([]string{
 			"id", "email", "invite_code", "invited_by", "invited_ip", "password_hash",
-			"credits", "role", "status", "email_verified_at", "created_at", "updated_at",
-		}).AddRow("admin-1", "admin@example.com", nil, nil, nil, "hash", 0, "admin", "active", now, now, now))
+			"credits", "role", "status", "sync_size", "email_verified_at", "created_at", "updated_at",
+		}).AddRow("admin-1", "admin@example.com", nil, nil, nil, "hash", 0, "admin", "active", false, now, now, now))
 }
