@@ -244,6 +244,7 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 				SizeTier:               sizeTier,
 				Size:                   &size,
 				OutputFormat:           effectiveOutputFormat(outputFormat),
+				SyncSize:               auth.User.SyncSize,
 				Quantity:               input.N,
 				SubscriptionQuotaUnits: subscriptionQuotaUnits,
 				UserIP:                 requestIP(req),

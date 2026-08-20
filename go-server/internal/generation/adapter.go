@@ -23,6 +23,7 @@ type ImageRequest struct {
 	Quantity           int
 	Quality            string
 	OutputFormat       string
+	SyncSize           bool
 	ResponseFormat     string
 	ReferenceImageURLs []string
 	MaskImageURL       string

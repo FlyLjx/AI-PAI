@@ -113,6 +113,7 @@ func (s *Service) ProcessWithOptions(ctx context.Context, taskID string, options
 		Quantity:           task.Quantity,
 		Quality:            options.ImageQuality,
 		OutputFormat:       taskOutputFormat(task.OutputFormat),
+		SyncSize:           task.SyncSize,
 		ResponseFormat:     options.ImageResponseFormat,
 		ReferenceImageURLs: referenceImages(task.ReferenceImageURL),
 		MaskImageURL:       maskImage(task.ReferenceImageURL),

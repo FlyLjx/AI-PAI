@@ -25,6 +25,7 @@ export type PortalUser = {
   email: string;
   role: 'user' | 'admin';
   status: string;
+  syncSize: boolean;
   credits: number;
   emailVerifiedAt?: string | null;
   createdAt?: string;

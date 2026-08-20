@@ -20,6 +20,7 @@ type User struct {
 	Credits         float64
 	Role            string
 	Status          string
+	SyncSize        bool
 	EmailVerifiedAt *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
@@ -42,6 +43,7 @@ type PublicUser struct {
 	InviteCode      string  `json:"inviteCode"`
 	Role            string  `json:"role"`
 	Status          string  `json:"status"`
+	SyncSize        bool    `json:"syncSize"`
 	EmailVerifiedAt *string `json:"emailVerifiedAt"`
 	CreatedAt       string  `json:"createdAt"`
 	UpdatedAt       string  `json:"updatedAt"`
@@ -83,6 +85,7 @@ func ToPublicUser(user *User) PublicUser {
 		InviteCode:      user.InviteCode,
 		Role:            user.Role,
 		Status:          user.Status,
+		SyncSize:        user.SyncSize,
 		EmailVerifiedAt: verifiedAt,
 		CreatedAt:       user.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:       user.UpdatedAt.Format(time.RFC3339),

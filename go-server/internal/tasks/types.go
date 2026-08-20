@@ -24,6 +24,7 @@ type Task struct {
 	SizeTier               string
 	Size                   *string
 	OutputFormat           string
+	SyncSize               bool
 	TransparentBackground  bool
 	Quantity               int
 	SubscriptionQuotaUnits int

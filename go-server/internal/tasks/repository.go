@@ -72,12 +72,12 @@ func insertTask(ctx context.Context, store taskStore, task Task) error {
 	}
 	_, err = store.ExecContext(ctx, `
 		INSERT INTO generation_tasks
-			(id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, transparent_background, quantity, user_ip,
+			(id, user_id, model_id, provider_id, capability, prompt, reference_image_url, size_tier, size, output_format, sync_size, transparent_background, quantity, user_ip,
 			 subscription_quota_units, cost_credits, model_cost_credits, remaining_credits, duration_seconds, status, error_message, result_json)
 		VALUES
-			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 			 ?, ?, ?, ?, ?, ?, ?, ?)
-	`, task.ID, task.UserID, task.ModelID, task.ProviderID, task.Capability, task.Prompt, task.ReferenceImageURL, task.SizeTier, task.Size, task.OutputFormat, task.TransparentBackground, task.Quantity, task.UserIP,
+	`, task.ID, task.UserID, task.ModelID, task.ProviderID, task.Capability, task.Prompt, task.ReferenceImageURL, task.SizeTier, task.Size, task.OutputFormat, task.SyncSize, task.TransparentBackground, task.Quantity, task.UserIP,
 		task.SubscriptionQuotaUnits, task.CostCredits, task.ModelCostCredits, task.RemainingCredits, task.DurationSeconds, task.Status, task.ErrorMessage, resultJSON)
 	return err
 }
@@ -745,6 +745,7 @@ const taskSelectColumns = `
 	generation_tasks.size_tier,
 	generation_tasks.size,
 	generation_tasks.output_format,
+	generation_tasks.sync_size,
 	generation_tasks.transparent_background,
 	generation_tasks.quantity,
 	generation_tasks.user_ip,
@@ -842,6 +843,7 @@ func scanTask(row taskScanner) (*Task, error) {
 		&task.SizeTier,
 		&size,
 		&outputFormat,
+		&task.SyncSize,
 		&task.TransparentBackground,
 		&task.Quantity,
 		&task.UserIP,

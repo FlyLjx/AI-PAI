@@ -32,6 +32,7 @@ func (s *Service) callImageJSON(ctx context.Context, input ImageRequest, attempt
 		"n":               input.Quantity,
 		"quality":         normalizeUpstreamImageQuality(input.Quality),
 		"response_format": normalizeUpstreamImageResponseFormat(input.ResponseFormat),
+		"sync_size":       input.SyncSize,
 	}
 	payload, contentType, err := imageUpstreamPayload(ctx, input, body)
 	if err != nil {
@@ -74,7 +75,7 @@ func imageUpstreamPayload(ctx context.Context, input ImageRequest, body map[stri
 
 	var buffer bytes.Buffer
 	writer := multipart.NewWriter(&buffer)
-	for _, key := range []string{"model", "prompt", "size", "n", "quality", "response_format"} {
+	for _, key := range []string{"model", "prompt", "size", "n", "quality", "response_format", "sync_size"} {
 		if value, exists := body[key]; exists {
 			if err := writer.WriteField(key, fmt.Sprint(value)); err != nil {
 				return nil, "", err

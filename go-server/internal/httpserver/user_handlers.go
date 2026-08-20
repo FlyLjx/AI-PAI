@@ -444,6 +444,7 @@ func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string)
 		Password string `json:"password"`
 		Role     string `json:"role"`
 		Status   string `json:"status"`
+		SyncSize *bool  `json:"syncSize"`
 	}
 	if err := decodeCompatJSON(req, &input); err != nil {
 		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
@@ -465,6 +466,9 @@ func (r *Router) updateUser(w http.ResponseWriter, req *http.Request, id string)
 	}
 	if input.Status == "active" || input.Status == "disabled" {
 		user.Status = input.Status
+	}
+	if input.SyncSize != nil {
+		user.SyncSize = *input.SyncSize
 	}
 	if strings.TrimSpace(input.Password) != "" {
 		if _, err := repo.UpdatePassword(ctx, id, auth.HashPassword(input.Password)); err != nil {
@@ -761,6 +765,7 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 		Password       string `json:"password"`
 		Role           string `json:"role"`
 		InviteCode     string `json:"inviteCode"`
+		SyncSize       bool   `json:"syncSize"`
 		DeviceID       string `json:"deviceId"`
 		ChallengeToken string `json:"challengeToken"`
 		Website        string `json:"website"`
@@ -884,6 +889,7 @@ func (r *Router) createUser(w http.ResponseWriter, req *http.Request, admin bool
 		Credits:         0,
 		Role:            role,
 		Status:          "active",
+		SyncSize:        input.SyncSize,
 		EmailVerifiedAt: emailVerifiedAt,
 	})
 	if err != nil {

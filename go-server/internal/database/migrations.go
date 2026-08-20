@@ -62,6 +62,9 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "generation_tasks", "output_format", "VARCHAR(20) NULL", "size"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "generation_tasks", "sync_size", "BOOLEAN NOT NULL DEFAULT FALSE", "output_format"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "api_providers", "internal_base_url", "VARCHAR(255) NULL", "base_url"); err != nil {
 		return err
 	}
@@ -84,6 +87,9 @@ func EnsureSchema(db *sql.DB) error {
 		return err
 	}
 	if err := addColumnIfMissing(ctx, db, "users", "generation_reserved_credits", "NUMERIC(12,4) NOT NULL DEFAULT 0.0000", "credits"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "users", "sync_size", "BOOLEAN NOT NULL DEFAULT FALSE", "status"); err != nil {
 		return err
 	}
 	// Rebuild the reservation cache from active tasks. This repairs rows left
@@ -661,6 +667,7 @@ func schemaBootstrapStatements() []string {
 				password_hash VARCHAR(255) NOT NULL,
 				role VARCHAR(16) NOT NULL DEFAULT 'user',
 				status VARCHAR(16) NOT NULL DEFAULT 'active',
+				sync_size BOOLEAN NOT NULL DEFAULT FALSE,
 				email_verified_at TIMESTAMP NULL,
 				created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
 				updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -714,6 +721,7 @@ func schemaBootstrapStatements() []string {
 				size_tier VARCHAR(8) NOT NULL DEFAULT '1k',
 				size VARCHAR(30) NULL,
 				output_format VARCHAR(20) NOT NULL DEFAULT 'jpeg',
+				sync_size BOOLEAN NOT NULL DEFAULT FALSE,
 				transparent_background BOOLEAN NOT NULL DEFAULT FALSE,
 				quantity INTEGER NOT NULL DEFAULT 1,
 				subscription_quota_units INTEGER NOT NULL DEFAULT 1,

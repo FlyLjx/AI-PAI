@@ -38,13 +38,14 @@ type UserDraft = {
   password: string;
   role: 'user' | 'admin';
   status: 'active' | 'disabled';
+  syncSize: boolean;
 };
 
 type GrantMode = 'plan' | 'custom';
 type QuotaAdjustMode = 'remaining' | 'reset';
 type CreditLogFilter = 'all' | 'deduct' | 'recharge' | 'manual_adjust' | 'invite_reward' | 'invite_rebate';
 
-const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active' };
+const emptyDraft: UserDraft = { email: '', password: '', role: 'user', status: 'active', syncSize: false };
 const pageSize = 12;
 const creditLogPageSize = 10;
 
@@ -424,6 +425,7 @@ export default function AdminUsersPage() {
       password: '',
       role: user.role,
       status: user.status === 'active' ? 'active' : 'disabled',
+      syncSize: user.syncSize === true,
     });
     setEditorOpen(true);
   };
@@ -438,6 +440,7 @@ export default function AdminUsersPage() {
         email: draft.email.trim(),
         role: draft.role,
         status: draft.status,
+        syncSize: draft.syncSize,
       };
       if (draft.password) input.password = draft.password;
       if (editing) {
@@ -914,6 +917,7 @@ export default function AdminUsersPage() {
               <label className="sm:col-span-2"><span className="mb-1 block text-[11px] font-semibold text-zinc-500">{editing ? '重置密码（留空保持不变）' : '初始密码'}</span><input required={!editing} minLength={editing ? undefined : 6} type="password" value={draft.password} onChange={(event) => updateDraft('password', event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 text-xs outline-none focus:border-[#12B76A]" /></label>
               <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">角色</span><AppSelect value={draft.role} onValueChange={(value) => updateDraft('role', value as UserDraft['role'])} options={[{ value: 'user', label: 'API 客户' }, { value: 'admin', label: '管理员' }]} /></label>
               <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">状态</span><AppSelect value={draft.status} onValueChange={(value) => updateDraft('status', value as UserDraft['status'])} options={[{ value: 'active', label: '启用' }, { value: 'disabled', label: '停用' }]} /></label>
+              <label className="sm:col-span-2 flex items-center justify-between rounded-md border border-[#DCE4DF] bg-[#F8FAF8] px-3 py-2.5"><span><strong className="block text-[11px] font-semibold text-zinc-600">同步尺寸</strong><small className="mt-0.5 block text-[10px] text-zinc-400">向上游生图请求附加 sync_size 布尔参数</small></span><button type="button" role="switch" aria-checked={draft.syncSize} onClick={() => updateDraft('syncSize', !draft.syncSize)} className={`relative h-5 w-9 rounded-full transition-colors ${draft.syncSize ? 'bg-[#12B76A]' : 'bg-zinc-300'}`}><span className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-transform ${draft.syncSize ? 'translate-x-4' : 'translate-x-0.5'}`} /></button></label>
             </div>
             <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setEditorOpen(false)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}保存</button></div>
           </form>
