@@ -871,10 +871,8 @@ func scanTask(row taskScanner) (*Task, error) {
 	}
 	if outputFormat.Valid && strings.TrimSpace(outputFormat.String) != "" {
 		task.OutputFormat = outputFormat.String
-	} else if task.TransparentBackground {
-		task.OutputFormat = "png"
 	} else {
-		task.OutputFormat = "png"
+		task.OutputFormat = "jpeg"
 	}
 	if errorMessage.Valid {
 		task.ErrorMessage = &errorMessage.String

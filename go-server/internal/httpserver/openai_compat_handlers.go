@@ -1045,7 +1045,7 @@ func normalizeOutputFormat(value string) string {
 	if value == "jpeg" || value == "png" || value == "webp" {
 		return value
 	}
-	return "png"
+	return "jpeg"
 }
 
 func compatReferencePayload(req *http.Request, urls []string) *string {

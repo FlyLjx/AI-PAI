@@ -156,7 +156,7 @@ func stringInList(items []string, target string) bool {
 func effectiveOutputFormat(outputFormat string) string {
 	normalized := normalizeOutputFormat(outputFormat)
 	if normalized == "" {
-		return "png"
+		return "jpeg"
 	}
 	return normalized
 }
