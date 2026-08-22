@@ -226,6 +226,7 @@ export type UsageSummary = {
   success: number;
   failed: number;
   imageCount: number;
+  chargedCredits: number;
 };
 
 export type UsageTrendPoint = {
@@ -386,6 +387,16 @@ export type RechargeOrder = {
   paidAt?: string | null;
   createdAt: string;
   updatedAt?: string;
+};
+
+export type CreditLog = {
+  id: string;
+  userId: string;
+  type: string;
+  amount: number;
+  balanceAfter: number;
+  remark: string;
+  createdAt: string;
 };
 
 export type Announcement = {
@@ -557,6 +568,17 @@ export const portalApi = {
   updateKey: (user: PortalUser, id: string, status: string) => api<APIKey>(`/api/api-access/keys/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ userId: user.id, status }) }, user.token),
   deleteKey: (user: PortalUser, id: string) => api(`/api/api-access/keys/${encodeURIComponent(id)}${query({ userId: user.id })}`, { method: 'DELETE' }, user.token),
   usage: (user: PortalUser, page = 1, pageSize = 20, keyword = '', status = '', startDate = '', endDate = '') => api<UsageLog[]>(`/api/api-access/logs${query({ userId: user.id, page, pageSize, keyword, status, startDate, endDate })}`, {}, user.token),
+  exportUsage: async (user: PortalUser, keyword = '', status = '', startDate = '', endDate = '') => {
+    const response = await fetch(`${API_BASE}/api/api-access/logs${query({ userId: user.id, keyword, status, startDate, endDate, export: 'xlsx' })}`, {
+      headers: { Authorization: `Bearer ${user.token}` },
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null) as { message?: string; error?: { message?: string } } | null;
+      throw new APIError(payload?.message || payload?.error?.message || `导出失败 (${response.status})`, response.status);
+    }
+    return response.blob();
+  },
   usageTrend: (user: PortalUser, startDate: string, endDate: string) => api<UsageTrendPoint[]>(`/api/api-access/logs/trend${query({ userId: user.id, startDate, endDate })}`, {}, user.token),
   usageAnalytics: (user: PortalUser, startDate: string, endDate: string) => api<UsageAnalytics>(`/api/api-access/logs/analytics${query({ userId: user.id, startDate, endDate })}`, {}, user.token),
   stability: () => api<StabilitySnapshot>('/api/upstream/stability'),
@@ -565,6 +587,7 @@ export const portalApi = {
   subscription: (user: PortalUser) => api<Subscription | null>(`/api/subscriptions/public/current${query({ userId: user.id })}`, {}, user.token),
   recharge: (user: PortalUser, input: { amount?: number; subscriptionPlanId?: string }) => api<Record<string, unknown>>('/api/recharge', { method: 'POST', body: JSON.stringify({ userId: user.id, ...input }) }, user.token),
   rechargeHistory: (user: PortalUser, page = 1, pageSize = 10) => api<RechargeOrder[]>(`/api/recharge/history${query({ userId: user.id, page, pageSize })}`, {}, user.token),
+  creditLogs: (user: PortalUser, page = 1, pageSize = 10, type = 'manual_adjust') => api<CreditLog[]>(`/api/users/${encodeURIComponent(user.id)}/credit-logs${query({ page, pageSize, type })}`, {}, user.token),
   rechargeOrder: (user: PortalUser, id: string) => api<Record<string, unknown>>(`/api/recharge/${encodeURIComponent(id)}${query({ userId: user.id })}`, {}, user.token),
   syncRecharge: (user: PortalUser, id: string) => api<Record<string, unknown>>(`/api/recharge/${encodeURIComponent(id)}/sync`, { method: 'POST', body: JSON.stringify({ userId: user.id }) }, user.token),
   requestEmailChange: (user: PortalUser, password: string, email: string) => api<EmailChangeRequest>(`/api/users/${encodeURIComponent(user.id)}/email`, { method: 'POST', body: JSON.stringify({ userId: user.id, password, email }) }, user.token),

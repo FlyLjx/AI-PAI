@@ -3,6 +3,7 @@ package settings
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"aipi-go/internal/database"
@@ -143,6 +144,32 @@ func TestParseInvalidInviteRechargeRebatePercentFallsBackToDefault(t *testing.T)
 		if got := parseValue("inviteRechargeRebatePercent", value); got != Defaults["inviteRechargeRebatePercent"] {
 			t.Fatalf("parseValue(inviteRechargeRebatePercent, %q) = %v, want %v", value, got, Defaults["inviteRechargeRebatePercent"])
 		}
+	}
+}
+
+func TestNormalizeImageSafetyKeywords(t *testing.T) {
+	got, err := NormalizeImageSafetyKeywords("色情, Nude;色情\n  explicit sex ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "色情, Nude, explicit sex" {
+		t.Fatalf("normalized keywords = %q", got)
+	}
+	config := ImageSafetyConfigFromSettings(Settings{
+		"imageSafetyEnabled":  true,
+		"imageSafetyKeywords": got,
+	})
+	if matched := config.Match("A NUDE portrait"); matched != "nude" {
+		t.Fatalf("matched keyword = %q, want nude", matched)
+	}
+	if matched := config.Match("a landscape"); matched != "" {
+		t.Fatalf("unexpected match = %q", matched)
+	}
+}
+
+func TestNormalizeImageSafetyKeywordsRejectsOversizedKeyword(t *testing.T) {
+	if _, err := NormalizeImageSafetyKeywords(strings.Repeat("a", maxImageSafetyKeywordSize+1)); !errors.Is(err, ErrInvalidImageSafetySettings) {
+		t.Fatalf("error = %v, want ErrInvalidImageSafetySettings", err)
 	}
 }
 

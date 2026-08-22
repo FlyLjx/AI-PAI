@@ -152,6 +152,18 @@ func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, aut
 		writeOpenAIError(w, http.StatusNotFound, "模型不存在或已禁用", "invalid_request_error")
 		return
 	}
+	if model.Capability == "chat_image" {
+		moderationConfig, moderationErr := r.imageSafetyConfig(ctx)
+		if moderationErr != nil {
+			writeOpenAIError(w, http.StatusInternalServerError, "内容检测配置读取失败", "api_error")
+			return
+		}
+		prompt := compatTextRequestPrompt(upstreamPath, body)
+		if moderationConfig.Match(prompt) != "" {
+			r.rejectImageSafetyRequest(w, req, auth, modelName, prompt, stringValue(body["size"]), stringValue(body["quality"]), compatChatImageCount(body["n"]), stringValue(body["response_format"]), body)
+			return
+		}
+	}
 	provider, err := providers.NewRepository(r.db).FindByID(ctx, model.ProviderID)
 	if errors.Is(err, sql.ErrNoRows) || provider == nil || provider.Status != "active" {
 		writeOpenAIError(w, http.StatusNotFound, "接口配置不存在或已禁用", "invalid_request_error")
@@ -183,6 +195,17 @@ func (r *Router) forwardOpenAIText(w http.ResponseWriter, req *http.Request, aut
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(status)
 	_, _ = w.Write(result)
+}
+
+func compatTextRequestPrompt(upstreamPath string, body map[string]any) string {
+	switch strings.Trim(strings.ToLower(upstreamPath), "/") {
+	case "chat/completions":
+		return compatChatPrompt(body["messages"])
+	case "responses":
+		return compatChatContentText(body["input"])
+	default:
+		return ""
+	}
 }
 
 func (r *Router) forwardOpenAITextStream(w http.ResponseWriter, req *http.Request, provider providers.Provider, body map[string]any, upstreamPath string) {

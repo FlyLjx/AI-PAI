@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"sync"
@@ -707,10 +708,10 @@ func insertUsageLog(ctx context.Context, store accessStore, log UsageLog) error 
 	responseStatusCode, errorMessage, errorCode, errorDetails := usageLogErrorFields(log)
 	_, err = store.ExecContext(ctx, `
 		INSERT INTO api_access_logs
-			(id, user_id, api_key_id, task_id, endpoint, model, prompt, size, quality, quantity, image_count, response_format, request_params, status, error_message, response_status_code, error_code, error_details, finished_at)
+			(id, user_id, api_key_id, access_ip, access_host, task_id, endpoint, model, prompt, size, quality, quantity, image_count, response_format, request_params, status, error_message, response_status_code, error_code, error_details, finished_at)
 		VALUES
-			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, log.ID, log.UserID, log.APIKeyID, log.TaskID, log.Endpoint, log.Model, log.Prompt, log.Size, log.Quality, log.Quantity, log.ImageCount, log.ResponseFormat, requestParams, log.Status, errorMessage, responseStatusCode, errorCode, errorDetails, log.FinishedAt)
+			(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, log.ID, log.UserID, log.APIKeyID, log.AccessIP, log.AccessHost, log.TaskID, log.Endpoint, log.Model, log.Prompt, log.Size, log.Quality, log.Quantity, log.ImageCount, log.ResponseFormat, requestParams, log.Status, errorMessage, responseStatusCode, errorCode, errorDetails, log.FinishedAt)
 	return err
 }
 
@@ -944,17 +945,110 @@ func (r *Repository) ListLogs(ctx context.Context, input ListLogsInput) ([]Usage
 	return items, stats.Total, err
 }
 
-// ListLogsWithStats loads the current page and the aggregate values for the
-// same filter set. Keeping the aggregate query here means callers do not need
-// to run a separate COUNT(*) scan followed by a second full statistics scan.
+// StreamLogExportRows reads the filtered log projection in creation order.
+// The callback lets callers write a workbook without holding the full export
+// in memory.
+func (r *Repository) StreamLogExportRows(ctx context.Context, input ListLogsInput, fn func(UsageExportRow) error) error {
+	where, args := buildLogWhere(input)
+	rows, err := r.db.QueryContext(ctx, `
+		SELECT
+			api_access_logs.created_at,
+			api_access_logs.endpoint,
+			api_access_logs.task_id,
+			api_access_logs.model,
+			api_access_logs.size,
+			api_access_logs.quantity,
+			COALESCE(api_access_logs.charged_credits, 0),
+			api_access_logs.status,
+			api_access_logs.error_message
+		FROM api_access_logs
+		LEFT JOIN users ON users.id = api_access_logs.user_id
+		LEFT JOIN api_access_keys ON api_access_keys.id = api_access_logs.api_key_id
+		`+where+`
+		ORDER BY api_access_logs.created_at DESC, api_access_logs.id DESC
+	`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item UsageExportRow
+		var taskID, errorMessage sql.NullString
+		if err := rows.Scan(
+			&item.CreatedAt,
+			&item.Endpoint,
+			&taskID,
+			&item.Model,
+			&item.Size,
+			&item.Quantity,
+			&item.ChargedCredits,
+			&item.Status,
+			&errorMessage,
+		); err != nil {
+			return err
+		}
+		if taskID.Valid {
+			item.TaskID = taskID.String
+		}
+		if errorMessage.Valid {
+			item.ErrorMessage = errorMessage.String
+		}
+		item.CreatedAt = appclock.DatabaseTime(item.CreatedAt)
+		if err := fn(item); err != nil {
+			return err
+		}
+	}
+	return rows.Err()
+}
+
+// ListLogsWithStats loads the current page before calculating aggregate values
+// for the same filter set. This keeps a slow broad search from blocking the
+// first visible page indefinitely.
 func (r *Repository) ListLogsWithStats(ctx context.Context, input ListLogsInput) ([]UsageLog, UsageStats, error) {
 	page, pageSize, offset := normalizePage(input.Page, input.PageSize)
-	_ = page
 	where, args := buildLogWhere(input)
 	orderBy := adminLogOrder(input.SortBy, input.SortOrder)
+	queryArgs := append(append([]any{}, args...), pageSize+1, offset)
+	rows, err := r.db.QueryContext(ctx, usageLogSelect()+` `+where+`
+		ORDER BY `+orderBy+`
+		LIMIT ? OFFSET ?
+	`, queryArgs...)
+	if err != nil {
+		return nil, UsageStats{}, err
+	}
+	defer rows.Close()
+	items := make([]UsageLog, 0, pageSize)
+	hasMore := false
+	for rows.Next() {
+		item, err := scanUsageLog(rows)
+		if err != nil {
+			return nil, UsageStats{}, err
+		}
+		if len(items) >= pageSize {
+			hasMore = true
+			continue
+		}
+		items = append(items, *item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, UsageStats{}, err
+	}
+	if err := rows.Close(); err != nil {
+		return nil, UsageStats{}, err
+	}
+
 	countFrom := logCountFrom(input)
 	var stats UsageStats
-	if err := r.db.QueryRowContext(ctx, `
+	statsCtx := ctx
+	var cancel context.CancelFunc
+	if strings.TrimSpace(input.Keyword) != "" {
+		// A broad log search can require a sequential scan over a large table.
+		// The page above is already available, so do not make the visible result
+		// wait for an exact aggregate indefinitely.
+		statsCtx, cancel = context.WithTimeout(ctx, 3*time.Second)
+		defer cancel()
+	}
+	if err := r.db.QueryRowContext(statsCtx, `
 		SELECT
 			COUNT(*) AS total,
 			COALESCE(SUM(CASE WHEN api_access_logs.status IN ('success', 'succeeded') THEN 1 ELSE 0 END), 0) AS success,
@@ -977,29 +1071,34 @@ func (r *Repository) ListLogsWithStats(ctx context.Context, input ListLogsInput)
 		&stats.ChargedCredits,
 		&stats.ModelCostCredits,
 	); err != nil {
-		return nil, UsageStats{}, err
-	}
-	queryArgs := append(append([]any{}, args...), pageSize, offset)
-	rows, err := r.db.QueryContext(ctx, usageLogSelect()+` `+where+`
-		ORDER BY `+orderBy+`
-		LIMIT ? OFFSET ?
-	`, queryArgs...)
-	if err != nil {
-		return nil, UsageStats{}, err
-	}
-	defer rows.Close()
-	items := []UsageLog{}
-	for rows.Next() {
-		item, err := scanUsageLog(rows)
-		if err != nil {
+		if ctx.Err() != nil || statsCtx.Err() != context.DeadlineExceeded && !errors.Is(err, context.DeadlineExceeded) {
 			return nil, UsageStats{}, err
 		}
-		items = append(items, *item)
+		stats = usageStatsFromPage(items, (page-1)*pageSize)
+		stats.HasMore = hasMore
+		return items, stats, nil
 	}
-	if err := rows.Err(); err != nil {
-		return nil, UsageStats{}, err
-	}
+	stats.TotalExact = true
+	stats.HasMore = stats.Total > page*pageSize
 	return items, stats, nil
+}
+
+func usageStatsFromPage(items []UsageLog, offset int) UsageStats {
+	stats := UsageStats{Total: offset + len(items)}
+	for _, item := range items {
+		status := strings.ToLower(strings.TrimSpace(item.Status))
+		if status == "success" || status == "succeeded" {
+			stats.Success++
+			stats.Counted++
+		} else if status == "failed" || status == "canceled" || status == "cancelled" {
+			stats.Failed++
+			stats.Counted++
+		}
+		stats.ImageCount += item.ImageCount
+		stats.ChargedCredits += item.ChargedCredits
+		stats.ModelCostCredits += item.ModelCostCredits
+	}
+	return stats
 }
 
 func adminLogOrder(sortBy string, sortOrder string) string {
@@ -1196,6 +1295,8 @@ func usageLogSelect() string {
 			api_access_logs.api_key_id,
 			api_access_keys.name AS key_name,
 			api_access_keys.key_prefix,
+			api_access_logs.access_ip,
+			api_access_logs.access_host,
 			api_access_logs.task_id,
 			api_access_logs.endpoint,
 			api_access_logs.model,
@@ -1731,7 +1832,7 @@ type usageLogScanner interface {
 
 func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	var item UsageLog
-	var userEmail, keyName, keyPrefix, taskID, requestParams, taskResult, taskUsage, errorMessage, errorCode, errorDetails sql.NullString
+	var userEmail, keyName, keyPrefix, accessIP, accessHost, taskID, requestParams, taskResult, taskUsage, errorMessage, errorCode, errorDetails sql.NullString
 	var finishedAt sql.NullTime
 	if err := row.Scan(
 		&item.ID,
@@ -1740,6 +1841,8 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 		&item.APIKeyID,
 		&keyName,
 		&keyPrefix,
+		&accessIP,
+		&accessHost,
 		&taskID,
 		&item.Endpoint,
 		&item.Model,
@@ -1773,6 +1876,12 @@ func scanUsageLog(row usageLogScanner) (*UsageLog, error) {
 	}
 	if keyPrefix.Valid {
 		item.KeyPrefix = &keyPrefix.String
+	}
+	if accessIP.Valid {
+		item.AccessIP = accessIP.String
+	}
+	if accessHost.Valid {
+		item.AccessHost = accessHost.String
 	}
 	if taskID.Valid {
 		item.TaskID = &taskID.String

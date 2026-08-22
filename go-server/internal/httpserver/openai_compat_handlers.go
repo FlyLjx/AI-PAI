@@ -180,12 +180,21 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		input.ResponseFormat = "b64_json"
 	}
 	requestParams := compatRequestParams(req, input)
+	ctx, cancel := context.WithTimeout(req.Context(), generationEnqueueTimeout)
+	defer cancel()
+	moderationConfig, moderationErr := r.imageSafetyConfig(ctx)
+	if moderationErr != nil {
+		writeOpenAIError(w, http.StatusInternalServerError, "内容检测配置读取失败", "api_error")
+		return
+	}
+	if moderationConfig.Match(input.Prompt) != "" {
+		r.rejectImageSafetyRequest(w, req, auth, input.Model, input.Prompt, "", defaultString(input.Quality, input.SizeTier), input.N, defaultString(input.ResponseFormat, "url"), requestParams)
+		return
+	}
 
 	// Model lookup and task admission can briefly wait for the account
 	// generation lock. Keep this deadline separate from the image-processing
 	// wait below so a slow database lock cannot surface as a generic 500.
-	ctx, cancel := context.WithTimeout(req.Context(), generationEnqueueTimeout)
-	defer cancel()
 	admissionStage = "model_lookup"
 	model, err := models.NewRepository(r.db).FindActiveByNameOrDisplayName(ctx, input.Model)
 	if err != nil {
@@ -224,6 +233,7 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 		}
 	}
 	accessLogID := newID()
+	accessIP, accessHost := requestAccessMetadata(req)
 	var savedTask *tasks.Task
 	concurrencyScope := generation.APIKeyConcurrencyScope(auth.APIKey.ID)
 	concurrencyLimit := r.dynamicAPIKeyConcurrencyLimit(auth.APIKey)
@@ -264,6 +274,8 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 				ID:             accessLogID,
 				UserID:         auth.User.ID,
 				APIKeyID:       auth.APIKey.ID,
+				AccessIP:       accessIP,
+				AccessHost:     accessHost,
 				TaskID:         &savedTask.ID,
 				Endpoint:       req.URL.Path,
 				Model:          input.Model,
@@ -321,6 +333,8 @@ func (r *Router) compatImageRequestWithInput(w http.ResponseWriter, req *http.Re
 					ID:                 accessLogID,
 					UserID:             auth.User.ID,
 					APIKeyID:           auth.APIKey.ID,
+					AccessIP:           accessIP,
+					AccessHost:         accessHost,
 					Endpoint:           req.URL.Path,
 					Model:              input.Model,
 					Prompt:             input.Prompt,

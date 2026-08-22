@@ -17,6 +17,7 @@ import (
 	"aipi-go/internal/config"
 	"aipi-go/internal/database"
 	"aipi-go/internal/generation"
+	"aipi-go/internal/settings"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -41,6 +42,10 @@ type Router struct {
 	taskTimeoutMu      sync.RWMutex
 	taskTimeoutCache   time.Duration
 	taskTimeoutCacheAt time.Time
+
+	imageSafetyMu      sync.RWMutex
+	imageSafetyCache   settings.ImageSafetyConfig
+	imageSafetyCacheAt time.Time
 
 	// A subscription entitlement includes the current period's generation
 	// usage. Coalesce concurrent requests for the same user so a burst does

@@ -207,6 +207,12 @@ func EnsureSchema(db *sql.DB) error {
 	if err := addColumnIfMissing(ctx, db, "api_access_logs", "request_params", JSONTextType()+" NULL", "response_format"); err != nil {
 		return err
 	}
+	if err := addColumnIfMissing(ctx, db, "api_access_logs", "access_ip", "VARCHAR(64) NULL", "request_params"); err != nil {
+		return err
+	}
+	if err := addColumnIfMissing(ctx, db, "api_access_logs", "access_host", "VARCHAR(255) NULL", "access_ip"); err != nil {
+		return err
+	}
 	if err := addColumnIfMissing(ctx, db, "api_access_logs", "charged_credits", "NUMERIC(12,4) NOT NULL DEFAULT 0", "request_params"); err != nil {
 		return err
 	}
@@ -290,6 +296,38 @@ func EnsureSchema(db *sql.DB) error {
 		{"idx_api_access_logs_key_status", `CREATE INDEX idx_api_access_logs_key_status ON api_access_logs (api_key_id, status)`},
 		{"idx_api_access_logs_response_status_created", `CREATE INDEX idx_api_access_logs_response_status_created ON api_access_logs (response_status_code, created_at)`},
 		{"idx_generation_outbox_dispatch", `CREATE INDEX idx_generation_outbox_dispatch ON generation_outbox (status, next_attempt_at, created_at)`},
+	}
+	for _, index := range indexes {
+		if err := addIndexIfMissing(ctx, db, index.name, index.statement); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// EnsureAPIAccessSearchIndexes creates the PostgreSQL-only fuzzy-search
+// indexes. It is intentionally callable after the HTTP server starts because
+// building a trigram index over a large log table is an expensive one-time
+// operation.
+func EnsureAPIAccessSearchIndexes(ctx context.Context, db *sql.DB) error {
+	if CurrentDialect() != DialectPostgres {
+		return nil
+	}
+	if _, err := db.ExecContext(ctx, `CREATE EXTENSION IF NOT EXISTS pg_trgm`); err != nil {
+		return err
+	}
+	indexes := []struct {
+		name      string
+		statement string
+	}{
+		{"idx_api_access_logs_prompt_trgm", `CREATE INDEX CONCURRENTLY idx_api_access_logs_prompt_trgm ON api_access_logs USING GIN ((LOWER(COALESCE(prompt, ''))) gin_trgm_ops)`},
+		{"idx_api_access_logs_endpoint_trgm", `CREATE INDEX CONCURRENTLY idx_api_access_logs_endpoint_trgm ON api_access_logs USING GIN ((LOWER(COALESCE(endpoint, ''))) gin_trgm_ops)`},
+		{"idx_api_access_logs_model_trgm", `CREATE INDEX CONCURRENTLY idx_api_access_logs_model_trgm ON api_access_logs USING GIN ((LOWER(COALESCE(model, ''))) gin_trgm_ops)`},
+		{"idx_api_access_logs_error_message_trgm", `CREATE INDEX CONCURRENTLY idx_api_access_logs_error_message_trgm ON api_access_logs USING GIN ((LOWER(COALESCE(error_message, ''))) gin_trgm_ops)`},
+		{"idx_api_access_logs_request_params_trgm", `CREATE INDEX CONCURRENTLY idx_api_access_logs_request_params_trgm ON api_access_logs USING GIN ((LOWER(COALESCE(CAST(request_params AS TEXT), ''))) gin_trgm_ops)`},
+		{"idx_users_email_trgm", `CREATE INDEX CONCURRENTLY idx_users_email_trgm ON users USING GIN ((LOWER(COALESCE(email, ''))) gin_trgm_ops)`},
+		{"idx_api_access_keys_name_trgm", `CREATE INDEX CONCURRENTLY idx_api_access_keys_name_trgm ON api_access_keys USING GIN ((LOWER(COALESCE(name, ''))) gin_trgm_ops)`},
+		{"idx_api_access_keys_prefix_trgm", `CREATE INDEX CONCURRENTLY idx_api_access_keys_prefix_trgm ON api_access_keys USING GIN ((LOWER(COALESCE(key_prefix, ''))) gin_trgm_ops)`},
 	}
 	for _, index := range indexes {
 		if err := addIndexIfMissing(ctx, db, index.name, index.statement); err != nil {
@@ -982,6 +1020,8 @@ func schemaBootstrapStatements() []string {
 				image_count INTEGER NOT NULL DEFAULT 0,
 				response_format VARCHAR(30) NOT NULL DEFAULT 'url',
 				request_params JSONB NULL,
+				access_ip VARCHAR(64) NULL,
+				access_host VARCHAR(255) NULL,
 				charged_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
 				model_cost_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
 			status VARCHAR(16) NOT NULL DEFAULT 'queued',
@@ -1112,6 +1152,8 @@ func schemaBootstrapStatements() []string {
 			image_count INTEGER NOT NULL DEFAULT 0,
 			response_format VARCHAR(30) NOT NULL DEFAULT 'url',
 			request_params JSON NULL,
+			access_ip VARCHAR(64) NULL,
+			access_host VARCHAR(255) NULL,
 			charged_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
 			model_cost_credits NUMERIC(12,4) NOT NULL DEFAULT 0,
 			status VARCHAR(16) NOT NULL DEFAULT 'queued',

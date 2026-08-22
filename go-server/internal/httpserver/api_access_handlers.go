@@ -63,7 +63,12 @@ func (r *Router) userAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 		writeError(w, err)
 		return
 	}
-	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
+	exportRequested := strings.EqualFold(strings.TrimSpace(req.URL.Query().Get("export")), "xlsx")
+	timeout := 20 * time.Second
+	if exportRequested {
+		timeout = 5 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), timeout)
 	defer cancel()
 	input := apiaccess.ListLogsInput{
 		UserID:    userID,
@@ -75,7 +80,9 @@ func (r *Router) userAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 		SortBy:    req.URL.Query().Get("sortBy"),
 		SortOrder: req.URL.Query().Get("sortOrder"),
 	}
-	if strings.TrimSpace(req.URL.Query().Get("startDate")) != "" || strings.TrimSpace(req.URL.Query().Get("endDate")) != "" {
+	startDateText := strings.TrimSpace(req.URL.Query().Get("startDate"))
+	endDateText := strings.TrimSpace(req.URL.Query().Get("endDate"))
+	if startDateText != "" || endDateText != "" {
 		startDate, endDate, rangeErr := usageTrendRange(req, time.Now())
 		if rangeErr != nil {
 			writeError(w, newAppError(http.StatusBadRequest, rangeErr.Error()))
@@ -84,6 +91,24 @@ func (r *Router) userAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 		endExclusive := endDate.AddDate(0, 0, 1)
 		input.StartAt = &startDate
 		input.EndAt = &endExclusive
+		startDateText = startDate.Format("2006-01-02")
+		endDateText = endDate.Format("2006-01-02")
+	}
+	if exportRequested {
+		if startDateText == "" || endDateText == "" {
+			startDate, endDate, rangeErr := usageTrendRange(req, time.Now())
+			if rangeErr != nil {
+				writeError(w, newAppError(http.StatusBadRequest, rangeErr.Error()))
+				return
+			}
+			startDateText = startDate.Format("2006-01-02")
+			endDateText = endDate.Format("2006-01-02")
+			endExclusive := endDate.AddDate(0, 0, 1)
+			input.StartAt = &startDate
+			input.EndAt = &endExclusive
+		}
+		r.exportUserUsageXLSX(w, ctx, input, startDateText, endDateText)
+		return
 	}
 	service := apiaccess.NewService(apiaccess.NewRepository(r.db), users.NewRepository(r.db))
 	items, stats, err := service.ListLogsWithStats(ctx, input)
@@ -472,7 +497,7 @@ func (r *Router) adminAPIAccessLogs(w http.ResponseWriter, req *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"data":       items,
-		"pagination": map[string]any{"total": stats.Total, "page": page, "pageSize": pageSize},
+		"pagination": map[string]any{"total": stats.Total, "page": page, "pageSize": pageSize, "hasMore": stats.HasMore, "totalExact": stats.TotalExact},
 		"summary":    stats,
 	})
 }

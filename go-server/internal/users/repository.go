@@ -110,6 +110,7 @@ func (r *Repository) FindAdminPage(ctx context.Context, input AdminUserPageInput
 	if pageSize > 100 {
 		pageSize = 100
 	}
+	activeSince := time.Now().AddDate(0, 0, -30)
 	conditions := []string{}
 	args := []any{}
 	keyword := strings.ToLower(strings.TrimSpace(input.Keyword))
@@ -139,6 +140,24 @@ func (r *Repository) FindAdminPage(ctx context.Context, input AdminUserPageInput
 			  AND active_subscription.expires_at > CURRENT_TIMESTAMP
 		)`)
 	}
+	switch strings.ToLower(strings.TrimSpace(input.Activity)) {
+	case "active":
+		conditions = append(conditions, `users.role <> 'admin' AND EXISTS (
+			SELECT 1 FROM user_ip_evidence active_evidence
+			WHERE active_evidence.user_id = users.id
+			  AND active_evidence.source_type IN ('login', 'api')
+			  AND active_evidence.last_seen_at >= ?
+		)`)
+		args = append(args, activeSince)
+	case "inactive":
+		conditions = append(conditions, `users.role <> 'admin' AND NOT EXISTS (
+			SELECT 1 FROM user_ip_evidence inactive_evidence
+			WHERE inactive_evidence.user_id = users.id
+			  AND inactive_evidence.source_type IN ('login', 'api')
+			  AND inactive_evidence.last_seen_at >= ?
+		)`)
+		args = append(args, activeSince)
+	}
 	where := ""
 	if len(conditions) > 0 {
 		where = "WHERE " + strings.Join(conditions, " AND ")
@@ -159,13 +178,23 @@ func (r *Repository) FindAdminPage(ctx context.Context, input AdminUserPageInput
 				  AND active_subscription.status = 'active'
 				  AND active_subscription.expires_at > CURRENT_TIMESTAMP
 			) THEN 1 ELSE 0 END), 0) AS subscribed
+			,COALESCE(SUM(CASE WHEN users.role <> 'admin' AND EXISTS (
+				SELECT 1 FROM user_ip_evidence active_evidence
+				WHERE active_evidence.user_id = users.id
+				  AND active_evidence.source_type IN ('login', 'api')
+				  AND active_evidence.last_seen_at >= ?
+			) THEN 1 ELSE 0 END), 0) AS active_last_30_days
 		FROM users
-	`).Scan(&stats.Total, &stats.Active, &stats.Verified, &stats.Subscribed); err != nil {
+	`, activeSince).Scan(&stats.Total, &stats.Active, &stats.Verified, &stats.Subscribed, &stats.ActiveLast30Days); err != nil {
 		return nil, 0, AdminUserPageStats{}, err
 	}
-	queryArgs := append(append([]any{}, args...), pageSize, (page-1)*pageSize)
+	queryArgs := append([]any{activeSince}, args...)
+	queryArgs = append(queryArgs, pageSize, (page-1)*pageSize)
 	rows, err := r.db.QueryContext(ctx, `
-		SELECT `+userSelectColumns+`
+		SELECT `+userSelectColumns+`,
+			COALESCE((SELECT ip_address FROM user_ip_evidence WHERE user_id=users.id AND source_type='login' ORDER BY last_seen_at DESC LIMIT 1), '') AS last_login_ip,
+			COALESCE((SELECT ip_address FROM user_ip_evidence WHERE user_id=users.id AND source_type='api' ORDER BY last_seen_at DESC LIMIT 1), '') AS last_api_ip,
+			COALESCE((SELECT 1 FROM user_ip_evidence WHERE user_id=users.id AND users.role <> 'admin' AND source_type IN ('login', 'api') AND last_seen_at >= ? LIMIT 1), 0) AS active_last_30_days
 		FROM users
 		`+where+`
 		ORDER BY created_at DESC, id DESC
@@ -177,7 +206,7 @@ func (r *Repository) FindAdminPage(ctx context.Context, input AdminUserPageInput
 	defer rows.Close()
 	items := []User{}
 	for rows.Next() {
-		item, err := scanUser(rows)
+		item, err := scanAdminUser(rows)
 		if err != nil {
 			return nil, 0, AdminUserPageStats{}, err
 		}
@@ -426,8 +455,54 @@ func (r *Repository) SetCredits(ctx context.Context, id string, nextBalance floa
 	return r.FindByID(ctx, id)
 }
 
+func (r *Repository) AdjustCredits(ctx context.Context, id string, amount float64, remark string) (*User, error) {
+	if math.IsNaN(amount) || math.IsInf(amount, 0) {
+		return nil, ErrInvalidCredits
+	}
+	amount = math.Round(amount*10000) / 10000
+	remark = strings.TrimSpace(remark)
+	if remark == "" {
+		remark = "管理员调整余额"
+	}
+
+	tx, err := r.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	var currentBalance float64
+	if err := tx.QueryRowContext(ctx, `SELECT credits FROM users WHERE id = ? FOR UPDATE`, id).Scan(&currentBalance); err != nil {
+		return nil, err
+	}
+	currentBalance, _ = normalizeCredits(currentBalance)
+	nextBalance, ok := normalizeCredits(currentBalance + amount)
+	if !ok {
+		return nil, ErrInvalidCredits
+	}
+	if amount != 0 {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE users
+			SET credits = ?, updated_at = CURRENT_TIMESTAMP
+			WHERE id = ?
+		`, nextBalance, id); err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO credit_logs (id, user_id, type, amount, balance_after, remark)
+			VALUES (?, ?, 'manual_adjust', ?, ?, ?)
+		`, newRepositoryID(), id, amount, nextBalance, remark); err != nil {
+			return nil, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return r.FindByID(ctx, id)
+}
+
 func (r *Repository) Delete(ctx context.Context, id string) (bool, error) {
-	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id)
+	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE id = ? AND role <> 'admin'`, id)
 	if err != nil {
 		return false, err
 	}
@@ -435,17 +510,59 @@ func (r *Repository) Delete(ctx context.Context, id string) (bool, error) {
 	return rows > 0, err
 }
 
+func (r *Repository) DeleteMany(ctx context.Context, ids []string) (int, error) {
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]struct{}, len(ids))
+	for _, id := range ids {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return 0, nil
+	}
+	placeholders := make([]string, len(unique))
+	args := make([]any, len(unique))
+	for index, id := range unique {
+		placeholders[index] = "?"
+		args[index] = id
+	}
+	result, err := r.db.ExecContext(ctx, `DELETE FROM users WHERE role <> 'admin' AND id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := result.RowsAffected()
+	return int(rows), err
+}
+
 type scanner interface {
 	Scan(dest ...any) error
 }
 
 func scanUser(row scanner) (*User, error) {
+	return scanUserColumns(row, false)
+}
+
+func scanAdminUser(row scanner) (*User, error) {
+	return scanUserColumns(row, true)
+}
+
+func scanUserColumns(row scanner, includeIPEvidence bool) (*User, error) {
 	var user User
 	var inviteCode sql.NullString
 	var invitedBy sql.NullString
 	var invitedIP sql.NullString
+	var lastLoginIP sql.NullString
+	var lastAPIIP sql.NullString
+	var activeLast30Days int
 	var verifiedAt sql.NullTime
-	if err := row.Scan(
+	destinations := []any{
 		&user.ID,
 		&user.Email,
 		&inviteCode,
@@ -459,7 +576,11 @@ func scanUser(row scanner) (*User, error) {
 		&verifiedAt,
 		&user.CreatedAt,
 		&user.UpdatedAt,
-	); err != nil {
+	}
+	if includeIPEvidence {
+		destinations = append(destinations, &lastLoginIP, &lastAPIIP, &activeLast30Days)
+	}
+	if err := row.Scan(destinations...); err != nil {
 		return nil, err
 	}
 	if verifiedAt.Valid {
@@ -475,6 +596,13 @@ func scanUser(row scanner) (*User, error) {
 	if invitedIP.Valid {
 		user.InvitedIP = strings.TrimSpace(invitedIP.String)
 	}
+	if lastLoginIP.Valid {
+		user.LastLoginIP = strings.TrimSpace(lastLoginIP.String)
+	}
+	if lastAPIIP.Valid {
+		user.LastAPIIP = strings.TrimSpace(lastAPIIP.String)
+	}
+	user.ActiveLast30Days = activeLast30Days > 0
 	user.CreatedAt = appclock.DatabaseTime(user.CreatedAt)
 	user.UpdatedAt = appclock.DatabaseTime(user.UpdatedAt)
 	return &user, nil

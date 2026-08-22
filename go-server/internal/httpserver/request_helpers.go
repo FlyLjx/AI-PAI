@@ -45,6 +45,34 @@ func requestIP(req *http.Request) string {
 	return normalizeRequestIP(req.RemoteAddr)
 }
 
+func requestAccessMetadata(req *http.Request) (string, string) {
+	if req == nil {
+		return "", ""
+	}
+	ip := requestIP(req)
+	host := firstForwardedHeaderValue(req.Header.Get("X-Forwarded-Host"))
+	if host == "" {
+		host = req.Host
+	}
+	host = normalizeRequestHost(host)
+	if host != "" && net.ParseIP(host) != nil {
+		host = ""
+	}
+	return ip, host
+}
+
+func normalizeRequestHost(value string) string {
+	value = strings.Trim(strings.TrimSpace(value), "\"")
+	if host, _, err := net.SplitHostPort(value); err == nil {
+		value = host
+	}
+	value = strings.Trim(strings.TrimSpace(value), "[]")
+	if value == "" || strings.ContainsAny(value, " /\\") {
+		return ""
+	}
+	return strings.TrimSuffix(strings.ToLower(value), ".")
+}
+
 func normalizeRequestIP(value string) string {
 	value = strings.Trim(strings.TrimSpace(value), "\"")
 	if host, _, err := net.SplitHostPort(value); err == nil {

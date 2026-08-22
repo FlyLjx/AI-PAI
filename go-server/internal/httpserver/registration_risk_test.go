@@ -35,6 +35,17 @@ func TestRequestIPFallsBackWhenForwardedAddressIsInvalid(t *testing.T) {
 	}
 }
 
+func TestRequestAccessMetadataPrefersForwardedDomain(t *testing.T) {
+	req := httptest.NewRequest("GET", "http://api.example.test/v1/images/generations", nil)
+	req.RemoteAddr = "192.0.2.10:43120"
+	req.Header.Set("X-Forwarded-For", "198.51.100.8")
+	req.Header.Set("X-Forwarded-Host", "API.Example.Test:443, proxy.internal")
+	ip, host := requestAccessMetadata(req)
+	if ip != "198.51.100.8" || host != "api.example.test" {
+		t.Fatalf("requestAccessMetadata() = (%q, %q), want (%q, %q)", ip, host, "198.51.100.8", "api.example.test")
+	}
+}
+
 func TestRegistrationFingerprintDoesNotHashMissingDevice(t *testing.T) {
 	if got := hashOptionalRegistrationValue("device:"); got != "" {
 		t.Fatalf("missing device hash = %q, want empty", got)

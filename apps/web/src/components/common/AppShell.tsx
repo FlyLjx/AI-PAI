@@ -5,7 +5,7 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import {
   Activity, BadgeDollarSign, Bell, BellRing, BookOpen, ChevronRight, Gift, HeartPulse, Images, KeyRound,
-  LayoutDashboard, LoaderCircle, LogOut, MailWarning, Menu, Megaphone, Search, Send, Settings, UserRound, WalletCards, X,
+  LayoutDashboard, LoaderCircle, LogOut, MailWarning, Menu, Megaphone, Send, Settings, UserRound, WalletCards, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { BillingRail } from './BillingRail';
@@ -70,7 +70,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<PortalUser | null>(() => getSession());
   const [ready, setReady] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
-  const [topSearch, setTopSearch] = useState('');
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [verificationSending, setVerificationSending] = useState(false);
@@ -366,10 +365,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="topbar-status"><i aria-hidden="true" />中转服务正常</span>
           </div>
           <div className="topbar-actions">
-            <label className="topbar-search">
-              <Search size={15} aria-hidden="true" />
-              <input value={topSearch} onChange={(event) => setTopSearch(event.target.value)} placeholder="搜索图片地址 / 请求ID" aria-label="搜索图片地址或请求ID" />
-            </label>
             <button
               type="button"
               className={`topbar-icon-button ${notificationAnnouncement ? 'has-announcement' : ''}`}

@@ -343,11 +343,12 @@ func (r *Router) updateUserBalance(w http.ResponseWriter, req *http.Request, id 
 		return
 	}
 	var input struct {
-		Balance *float64 `json:"balance"`
+		Amount  *float64 `json:"amount"`
+		Balance *float64 `json:"balance"` // 兼容旧版后台请求
 		Remark  string   `json:"remark"`
 	}
-	if err := decodeCompatJSON(req, &input); err != nil || input.Balance == nil {
-		writeError(w, newAppError(http.StatusBadRequest, "请填写调整后的余额"))
+	if err := decodeCompatJSON(req, &input); err != nil || (input.Amount == nil && input.Balance == nil) {
+		writeError(w, newAppError(http.StatusBadRequest, "请填写调整金额"))
 		return
 	}
 	id = strings.Trim(id, "/")
@@ -356,8 +357,8 @@ func (r *Router) updateUserBalance(w http.ResponseWriter, req *http.Request, id 
 		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
 		return
 	}
-	if input.Remark == "" || len([]rune(input.Remark)) > 120 {
-		writeError(w, newAppError(http.StatusBadRequest, "请填写 1-120 字的调整备注"))
+	if len([]rune(input.Remark)) > 120 {
+		writeError(w, newAppError(http.StatusBadRequest, "备注不能超过 120 个字"))
 		return
 	}
 	ctx, cancel := context.WithTimeout(req.Context(), 8*time.Second)
@@ -366,8 +367,17 @@ func (r *Router) updateUserBalance(w http.ResponseWriter, req *http.Request, id 
 	if adminEmail := strings.TrimSpace(admin.Email); adminEmail != "" {
 		actorLabel = "管理员 " + adminEmail
 	}
-	remark := actorLabel + "：" + input.Remark
-	updated, err := users.NewRepository(r.db).SetCredits(ctx, id, *input.Balance, remark)
+	remark := actorLabel
+	if input.Remark != "" {
+		remark += "：" + input.Remark
+	}
+	repo := users.NewRepository(r.db)
+	var updated *users.User
+	if input.Amount != nil {
+		updated, err = repo.AdjustCredits(ctx, id, *input.Amount, remark)
+	} else {
+		updated, err = repo.SetCredits(ctx, id, *input.Balance, remark)
+	}
 	if errors.Is(err, users.ErrInvalidCredits) {
 		writeError(w, newAppError(http.StatusBadRequest, err.Error()))
 		return
@@ -388,14 +398,16 @@ func (r *Router) userCreditLogs(w http.ResponseWriter, req *http.Request, id str
 		writeMethodNotAllowed(w)
 		return
 	}
-	if _, err := r.requireAdmin(req); err != nil {
-		writeError(w, err)
-		return
-	}
 	id = strings.Trim(id, "/")
 	if id == "" || strings.Contains(id, "/") {
 		writeError(w, newAppError(http.StatusNotFound, "用户不存在"))
 		return
+	}
+	if _, adminErr := r.requireAdmin(req); adminErr != nil {
+		if _, frontErr := r.requireFrontUser(req, id); frontErr != nil {
+			writeError(w, frontErr)
+			return
+		}
 	}
 
 	logType := strings.TrimSpace(req.URL.Query().Get("type"))
@@ -551,6 +563,10 @@ func (r *Router) listUserOptions(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) adminUsers(w http.ResponseWriter, req *http.Request) {
+	if req.Method == http.MethodDelete {
+		r.deleteUsers(w, req)
+		return
+	}
 	if req.Method != http.MethodGet {
 		writeMethodNotAllowed(w)
 		return
@@ -567,6 +583,7 @@ func (r *Router) adminUsers(w http.ResponseWriter, req *http.Request) {
 		Keyword:  req.URL.Query().Get("keyword"),
 		Status:   req.URL.Query().Get("status"),
 		Billing:  req.URL.Query().Get("billing"),
+		Activity: req.URL.Query().Get("activity"),
 		Page:     page,
 		PageSize: pageSize,
 	})
@@ -583,6 +600,36 @@ func (r *Router) adminUsers(w http.ResponseWriter, req *http.Request) {
 		"pagination": map[string]any{"total": total, "page": page, "pageSize": pageSize},
 		"summary":    stats,
 	})
+}
+
+func (r *Router) deleteUsers(w http.ResponseWriter, req *http.Request) {
+	if _, err := r.requireAdmin(req); err != nil {
+		writeError(w, err)
+		return
+	}
+	var input struct {
+		UserIDs []string `json:"userIds"`
+	}
+	if err := decodeCompatJSON(req, &input); err != nil {
+		writeError(w, newAppError(http.StatusBadRequest, "请求参数不正确"))
+		return
+	}
+	if len(input.UserIDs) == 0 {
+		writeError(w, newAppError(http.StatusBadRequest, "请选择要删除的用户"))
+		return
+	}
+	if len(input.UserIDs) > 100 {
+		writeError(w, newAppError(http.StatusBadRequest, "单次最多删除 100 个用户"))
+		return
+	}
+	ctx, cancel := context.WithTimeout(req.Context(), 20*time.Second)
+	defer cancel()
+	deleted, err := users.NewRepository(r.db).DeleteMany(ctx, input.UserIDs)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"requested": len(input.UserIDs), "deleted": deleted}})
 }
 
 func (r *Router) grantUserSubscription(w http.ResponseWriter, req *http.Request, id string) {

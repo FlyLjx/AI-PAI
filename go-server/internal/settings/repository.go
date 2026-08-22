@@ -19,6 +19,7 @@ var ErrInvalidInviteSettings = errors.New("邀请奖励或注册风控配置不�
 var ErrInvalidAdminNotification = errors.New("管理员通知配置不正确")
 var ErrInvalidSystemLogCleanup = errors.New("系统日志自动清理配置不正确")
 var ErrInvalidSubscriptionAccessUser = errors.New("订阅开放账号配置不正确")
+var ErrInvalidImageSafetySettings = errors.New("生图内容检测配置不正确")
 
 type Repository struct {
 	db *database.DB
@@ -87,6 +88,18 @@ func (r *Repository) Update(ctx context.Context, input Settings) (Settings, erro
 				return nil, ErrInvalidTaskTimeout
 			}
 			value = number
+		}
+		if key == "imageSafetyEnabled" {
+			if _, ok := value.(bool); !ok {
+				return nil, ErrInvalidImageSafetySettings
+			}
+		}
+		if key == "imageSafetyKeywords" {
+			normalized, err := NormalizeImageSafetyKeywords(value)
+			if err != nil {
+				return nil, ErrInvalidImageSafetySettings
+			}
+			value = normalized
 		}
 		if key == "dynamicConcurrencyEnabled" {
 			if _, ok := value.(bool); !ok {
@@ -343,6 +356,12 @@ func parseValue(key string, value string) any {
 	}
 	if key == "adminNotificationEmails" {
 		if normalized, err := NormalizeNotificationEmails(value); err == nil {
+			return normalized
+		}
+		return Defaults[key]
+	}
+	if key == "imageSafetyKeywords" {
+		if normalized, err := NormalizeImageSafetyKeywords(value); err == nil {
 			return normalized
 		}
 		return Defaults[key]

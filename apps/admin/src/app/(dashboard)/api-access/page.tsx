@@ -169,6 +169,8 @@ export default function AdminAPIAccessPage() {
   const [logStatusFilter, setLogStatusFilter] = useState('all');
   const [logPage, setLogPage] = useState(1);
   const [logTotal, setLogTotal] = useState(0);
+  const [logTotalExact, setLogTotalExact] = useState(true);
+  const [logHasMore, setLogHasMore] = useState(false);
   const [logSort, setLogSort] = useState<SortState>({ key: 'createdAt', direction: 'desc' });
   const [logSummary, setLogSummary] = useState<UsageSummary>({ total: 0, counted: 0, success: 0, failed: 0, imageCount: 0 });
   const [concurrencyDraft, setConcurrencyDraft] = useState<Record<string, number>>({});
@@ -238,6 +240,8 @@ export default function AdminAPIAccessPage() {
       setLogs(response.data as DetailedUsageLog[]);
       const responseTotal = response.pagination?.total ?? response.data.length;
       setLogTotal(responseTotal);
+      setLogTotalExact(response.pagination?.totalExact ?? true);
+      setLogHasMore(response.pagination?.hasMore ?? response.data.length >= logPageSize);
       setLogSummary(response.summary || {
         total: responseTotal,
         counted: response.data.filter(isCountedRequest).length,
@@ -297,6 +301,7 @@ export default function AdminAPIAccessPage() {
   }, [detailLog]);
 
   const keyTotalPages = Math.max(1, Math.ceil(keyTotal / keyPageSize));
+  const logTotalPages = Math.max(1, logHasMore ? Math.max(logPage + 1, Math.ceil(logTotal / logPageSize)) : Math.ceil(logTotal / logPageSize));
   const effectiveKeyPage = Math.min(keyPage, keyTotalPages);
   const countedRequests = Number(logSummary.counted ?? logSummary.success + logSummary.failed);
   const logSuccessRate = countedRequests > 0 ? `${((logSummary.success / countedRequests) * 100).toFixed(1)}%` : '0.0%';
@@ -472,6 +477,7 @@ export default function AdminAPIAccessPage() {
           headers={[
             { key: 'createdAt', label: '请求时间' },
             { key: 'user', label: 'API 客户 / Key' },
+            { key: 'accessAddress', label: '访问地址' },
             { key: 'endpoint', label: '接口' },
             { key: 'model', label: '模型' },
             { key: 'imageCount', label: '参数 / 图片数' },
@@ -487,8 +493,9 @@ export default function AdminAPIAccessPage() {
           onSearchChange={(value) => { setLogSearch(value); setLogPage(1); }}
           filterControls={<><AppSelect value={logStatusFilter} options={LOG_STATUS_OPTIONS} onValueChange={(value) => { setLogStatusFilter(value); setLogPage(1); }} compact ariaLabel="筛选调用状态" /><span className="text-[11px] text-zinc-400">{logsLoading ? '正在查询...' : `共 ${logTotal} 条 · 本页 ${logs.length} 条`}</span></>}
           currentPage={logPage}
-          totalPages={Math.max(1, Math.ceil(logTotal / logPageSize))}
+          totalPages={logTotalPages}
           totalItems={logTotal}
+          totalItemsLabel={`${logTotalExact ? '共' : '至少'} ${logTotal.toLocaleString('zh-CN')} 条`}
           onPageChange={(page) => void loadLogs(page)}
           paginationLoading={logsLoading}
           sortKey={logSort.key}
@@ -500,6 +507,7 @@ export default function AdminAPIAccessPage() {
             <tr key={log.id} className="hover:bg-[#FAFBFA]">
               <td className="whitespace-nowrap px-4 py-3 text-zinc-500">{formatDate(log.createdAt)}</td>
               <td className="px-4 py-3"><strong className="block max-w-[170px] truncate font-medium">{log.userEmail || log.userId}</strong><small className="block max-w-[150px] truncate text-[10px] text-zinc-400">{log.keyName || log.keyPrefix || '-'}</small></td>
+              <td className="max-w-[150px] truncate px-4 py-3 font-mono text-[11px] text-zinc-500" title={log.accessAddress || ''}>{log.accessAddress || '-'}</td>
               <td className="max-w-[150px] truncate px-4 py-3 font-mono text-[11px]">{log.endpoint}</td>
               <td className="max-w-[160px] truncate px-4 py-3">{log.model || '-'}</td>
               <td className="px-4 py-3 text-[11px] text-zinc-500">{log.size || '-'} · {log.quality || '-'} · {log.imageCount || log.quantity || 0} 张</td>
@@ -515,6 +523,7 @@ export default function AdminAPIAccessPage() {
               <div className="flex items-start justify-between gap-3"><div className="min-w-0"><strong className="block truncate text-sm">{log.model || log.endpoint}</strong><small className="block truncate text-[10px] text-zinc-400">{log.userEmail || log.userId} · {log.keyName || log.keyPrefix || '-'}</small></div><StatusBadge status={status.badge} customLabel={status.label} /></div>
               <p className="mt-3 truncate rounded bg-[#F6F8F6] px-2 py-1.5 font-mono text-[11px]">{log.endpoint}</p>
               <div className="mt-2 flex items-center justify-between text-[10px] text-zinc-400"><span>{log.size || '-'} · {log.imageCount || log.quantity || 0} 张</span><span>{formatDate(log.createdAt)}</span></div>
+              <p className="mt-2 truncate text-[10px] text-zinc-400">访问地址：<span className="font-mono text-zinc-600">{log.accessAddress || '-'}</span></p>
               <div className="mt-2 flex items-center justify-between border-t border-[#EEF1EF] pt-2 text-[10px] text-zinc-400"><span>扣费 / 成本</span><span className="font-mono text-zinc-600">{Number(log.chargedCredits || 0).toFixed(4)} / {Number(log.modelCostCredits || 0).toFixed(4)}</span></div>
               <div className="mt-2 flex items-center justify-between border-t border-[#EEF1EF] pt-2 text-[10px] text-zinc-400"><span>生图时间</span><GenerationDurationBadge log={log} /></div>
               {log.errorMessage && <p className="mt-2 line-clamp-2 text-[11px] text-red-600">{log.errorMessage}</p>}

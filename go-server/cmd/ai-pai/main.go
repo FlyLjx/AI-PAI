@@ -37,6 +37,15 @@ func main() {
 		logger.Error("database migration failed", "error", err)
 		os.Exit(1)
 	}
+	go func() {
+		indexCtx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+		defer cancel()
+		if err := database.EnsureAPIAccessSearchIndexes(indexCtx, db.Raw()); err != nil {
+			logger.Error("API access search indexes failed", "error", err)
+			return
+		}
+		logger.Info("API access search indexes ready")
+	}()
 	workerContext, stopWorkers := context.WithCancel(context.Background())
 	defer stopWorkers()
 	httpserver.StartServiceNotificationWorker(workerContext, db, logger)

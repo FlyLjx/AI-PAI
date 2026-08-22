@@ -29,6 +29,7 @@ import {
   refreshSession,
   type Plan,
   type PortalUser,
+  type CreditLog,
   type RechargeOrder,
   type Subscription,
 } from '@/lib/portal-api';
@@ -125,6 +126,11 @@ export default function BillingPage() {
   const [historyLoading, setHistoryLoading] = useState(true);
   const [historyError, setHistoryError] = useState('');
   const [reopeningOrderId, setReopeningOrderId] = useState('');
+  const [creditHistory, setCreditHistory] = useState<CreditLog[]>([]);
+  const [creditPage, setCreditPage] = useState(1);
+  const [creditTotal, setCreditTotal] = useState(0);
+  const [creditLoading, setCreditLoading] = useState(true);
+  const [creditError, setCreditError] = useState('');
 
   const loadBilling = useCallback(async (silent = false) => {
     const current = getSession();
@@ -163,6 +169,28 @@ export default function BillingPage() {
     if (!silent) setLoading(false);
   }, []);
 
+  const loadCreditHistory = useCallback(async (page = 1, current = getSession(), silent = false) => {
+    if (!current) {
+      setCreditError('登录状态已失效，请重新登录');
+      if (!silent) setCreditLoading(false);
+      return;
+    }
+    setCreditPage(page);
+    if (!silent) setCreditLoading(true);
+    setCreditError('');
+    setCreditHistory([]);
+    try {
+      const response = await portalApi.creditLogs(current, page, HISTORY_PAGE_SIZE);
+      setCreditHistory(response.data || []);
+      setCreditTotal(response.pagination?.total || 0);
+      setCreditPage(response.pagination?.page || page);
+    } catch (creditLoadError) {
+      setCreditError(errorMessage(creditLoadError));
+    } finally {
+      if (!silent) setCreditLoading(false);
+    }
+  }, []);
+
   const loadOrderHistory = useCallback(async (page = 1, current = getSession(), silent = false) => {
     if (!current) {
       setHistoryError('登录状态已失效，请重新登录');
@@ -189,9 +217,10 @@ export default function BillingPage() {
     const timer = window.setTimeout(() => {
       void loadBilling();
       void loadOrderHistory(1);
+      void loadCreditHistory(1);
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [loadBilling, loadOrderHistory]);
+  }, [loadBilling, loadCreditHistory, loadOrderHistory]);
 
   const presets = useMemo(() => parsePresets(settings.rechargePresets), [settings.rechargePresets]);
   const rechargeEnabled = settings.rechargeEnabled !== false;
@@ -329,6 +358,7 @@ export default function BillingPage() {
     ? paidStatus(paymentOrder.status) ? 'paid' : failedStatus(paymentOrder.status) ? 'failed' : 'pending'
     : 'pending';
   const historyTotalPages = Math.max(1, Math.ceil(historyTotal / HISTORY_PAGE_SIZE));
+  const creditTotalPages = Math.max(1, Math.ceil(creditTotal / HISTORY_PAGE_SIZE));
   const historyHeaders = [
     { key: 'type', label: '类型 / 订单号' },
     { key: 'amount', label: '金额' },
@@ -614,6 +644,80 @@ export default function BillingPage() {
               );
             }}
             emptyState={<EmptyState title="暂无订单记录" description={subscriptionEnabled ? '完成余额充值或购买订阅后，订单会显示在这里。' : '完成余额充值后，订单会显示在这里。'} icon={ReceiptText} />}
+            />
+          </div>
+        )}
+      </section>
+
+      <section className="billing-history-section billing-credit-history-section" aria-labelledby="billing-credit-history-title">
+        <div className="billing-history-header">
+          <div className="billing-history-title">
+            <span className="billing-icon"><WalletCards size={16} /></span>
+            <div className="min-w-0">
+              <strong id="billing-credit-history-title" className="block text-sm">管理员余额调整</strong>
+              <small className="mt-0.5 block text-[11px] text-zinc-500">管理员手动增加或扣减的余额，共 {creditTotal.toLocaleString()} 条</small>
+            </div>
+          </div>
+          <button className="btn billing-history-refresh" type="button" onClick={() => void loadCreditHistory(creditPage)} disabled={creditLoading}>
+            <RefreshCw size={14} className={creditLoading ? 'animate-spin' : ''} />刷新记录
+          </button>
+        </div>
+
+        {creditLoading ? (
+          <div className="section-panel empty-row" role="status"><LoaderCircle size={14} className="mr-2 inline animate-spin" />正在读取余额调整记录...</div>
+        ) : creditError ? (
+          <div className="flex flex-col items-start gap-3 rounded-[7px] border border-red-200 bg-red-50 p-4 text-[11px] text-red-700 sm:flex-row sm:items-center" role="alert">
+            <span className="min-w-0 flex-1">余额调整记录暂未更新：{creditError}</span>
+            <button className="btn shrink-0" type="button" onClick={() => void loadCreditHistory(creditPage)}>重新加载</button>
+          </div>
+        ) : (
+          <div className="billing-history-table">
+            <DataTable
+              headers={[
+                { key: 'type', label: '调整类型' },
+                { key: 'amount', label: '本次变动' },
+                { key: 'balanceAfter', label: '调整后余额' },
+                { key: 'remark', label: '备注' },
+                { key: 'createdAt', label: '调整时间' },
+              ]}
+              data={creditHistory}
+              currentPage={creditPage}
+              totalPages={creditTotalPages}
+              totalItems={creditTotal}
+              onPageChange={(page) => void loadCreditHistory(page)}
+              renderRow={(log) => {
+                const amount = Number(log.amount || 0);
+                const positive = amount >= 0;
+                return (
+                  <tr key={log.id}>
+                    <td className="px-4 py-3"><span className={`billing-credit-type ${positive ? 'is-credit' : 'is-debit'}`}>{positive ? '管理员加款' : '管理员扣款'}</span></td>
+                    <td className={`mono px-4 py-3 font-bold ${positive ? 'text-[#087443]' : 'text-red-600'}`}>{positive ? '+' : '-'}{formatCNY(Math.abs(amount))}</td>
+                    <td className="mono px-4 py-3 text-zinc-600">{formatCNY(Number(log.balanceAfter || 0))}</td>
+                    <td className="max-w-[360px] px-4 py-3 text-zinc-500"><span className="block truncate" title={log.remark}>{log.remark || '-'}</span></td>
+                    <td className="mono whitespace-nowrap px-4 py-3 text-zinc-500">{formatDate(log.createdAt)}</td>
+                  </tr>
+                );
+              }}
+              renderMobileItem={(log) => {
+                const amount = Number(log.amount || 0);
+                const positive = amount >= 0;
+                return (
+                  <article key={log.id} className="section-panel p-4">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <strong className="block text-sm">{positive ? '管理员加款' : '管理员扣款'}</strong>
+                        <span className="mt-1 block truncate text-[11px] text-zinc-500">{log.remark || '无备注'}</span>
+                      </div>
+                      <strong className={`mono text-base ${positive ? 'text-[#087443]' : 'text-red-600'}`}>{positive ? '+' : '-'}{formatCNY(Math.abs(amount))}</strong>
+                    </div>
+                    <dl className="mt-3 grid grid-cols-2 gap-3 border-t border-[#edf0ee] pt-3 text-[11px]">
+                      <div><dt className="text-zinc-400">调整后余额</dt><dd className="mono mt-1 text-[#526059]">{formatCNY(Number(log.balanceAfter || 0))}</dd></div>
+                      <div><dt className="text-zinc-400">调整时间</dt><dd className="mt-1 text-[#526059]">{formatDate(log.createdAt)}</dd></div>
+                    </dl>
+                  </article>
+                );
+              }}
+              emptyState={<EmptyState title="暂无管理员余额调整" description="管理员手动增加或扣减余额后，记录会显示在这里。" icon={WalletCards} />}
             />
           </div>
         )}

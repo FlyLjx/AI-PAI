@@ -13,6 +13,7 @@ const CUSTOMER_ROUTES: Rule[] = [
   { pattern: /^\/api\/users\/register\/challenge$/, methods: ['GET'] },
   { pattern: /^\/api\/users\/password\/(forgot|reset)$/, methods: ['POST'] },
   { pattern: /^\/api\/users\/[^/]+\/profile$/, methods: ['GET'] },
+  { pattern: /^\/api\/users\/[^/]+\/credit-logs$/, methods: ['GET'] },
   { pattern: /^\/api\/users\/[^/]+\/password$/, methods: ['PATCH'] },
   { pattern: /^\/api\/users\/[^/]+\/email$/, methods: ['POST'] },
   { pattern: /^\/api\/users\/[^/]+\/resend-verification$/, methods: ['POST'] },

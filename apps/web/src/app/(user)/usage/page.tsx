@@ -5,6 +5,8 @@ import {
   CheckCircle2,
   Clipboard,
   Clock3,
+  CircleDollarSign,
+  Download,
   ImageIcon,
   LoaderCircle,
   RefreshCw,
@@ -18,6 +20,7 @@ import {
 import { toast } from 'sonner';
 import { AppSelect, type AppSelectOption } from '@/components/common/AppSelect';
 import { DataTable } from '@/components/common/DataTable';
+import { TrendDateRangePicker } from '@/components/dashboard/TrendDateRangePicker';
 import {
   APIError,
   getSession,
@@ -167,13 +170,15 @@ function UsageMetricCard({
   tone,
   trend,
   trendTone,
+  trendNote = '较昨日',
 }: {
   label: string;
   value: string;
   icon: LucideIcon;
-  tone: 'green' | 'mint' | 'danger' | 'balance';
+  tone: 'green' | 'mint' | 'danger' | 'balance' | 'charge';
   trend: string;
-  trendTone: 'up' | 'down';
+  trendTone: 'up' | 'down' | 'neutral';
+  trendNote?: string;
 }) {
   return (
     <article className={`usage-metric-card ${tone}`}>
@@ -183,8 +188,8 @@ function UsageMetricCard({
           <strong>{label}</strong>
           <div className="usage-metric-value">{value}</div>
           <div className={`usage-metric-trend ${trendTone}`}>
-            <span>{trendTone === 'down' ? '↓' : '↑'} {trend}</span>
-            <small>较昨日</small>
+            <span>{trendTone === 'down' ? '↓' : trendTone === 'up' ? '↑' : '•'} {trend}</span>
+            {trendNote && <small>{trendNote}</small>}
           </div>
         </div>
       </div>
@@ -194,12 +199,15 @@ function UsageMetricCard({
 
 export default function UsagePage() {
   const [logs, setLogs] = useState<UsageLog[]>([]);
-  const [summary, setSummary] = useState<UsageSummary>({ total: 0, counted: 0, success: 0, failed: 0, imageCount: 0 });
+  const [summary, setSummary] = useState<UsageSummary>({ total: 0, counted: 0, success: 0, failed: 0, imageCount: 0, chargedCredits: 0 });
   const [balance, setBalance] = useState<number | null>(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
-  const [periodDays, setPeriodDays] = useState(1);
+  const [dateRange, setDateRange] = useState(() => periodRange(1));
+  const [draftStartDate, setDraftStartDate] = useState(dateRange.startDate);
+  const [draftEndDate, setDraftEndDate] = useState(dateRange.endDate);
+  const [periodDays, setPeriodDays] = useState<number | null>(1);
   const [keyword, setKeyword] = useState('');
   const [draftKeyword, setDraftKeyword] = useState('');
   const [status, setStatus] = useState('');
@@ -207,6 +215,7 @@ export default function UsagePage() {
   const [error, setError] = useState('');
   const [detailLog, setDetailLog] = useState<UsageLog | null>(null);
   const [detailTab, setDetailTab] = useState<'request' | 'response'>('request');
+  const [exporting, setExporting] = useState(false);
 
   const loadUsage = useCallback(async () => {
     const current = getSession();
@@ -215,16 +224,15 @@ export default function UsagePage() {
       setLoading(false);
       return;
     }
-    const range = periodRange(periodDays);
     setBalance(Number(current.credits || 0));
     setLoading(true);
     setError('');
     try {
       const summaryRequest = keyword || status
-        ? portalApi.usage(current, 1, 1, '', '', range.startDate, range.endDate)
+        ? portalApi.usage(current, 1, 1, '', '', dateRange.startDate, dateRange.endDate)
         : null;
       const [response, summaryResponse] = await Promise.all([
-        portalApi.usage(current, page, pageSize, keyword, status, range.startDate, range.endDate),
+        portalApi.usage(current, page, pageSize, keyword, status, dateRange.startDate, dateRange.endDate),
         summaryRequest,
       ]);
       const items = response.data || [];
@@ -235,6 +243,7 @@ export default function UsagePage() {
         success: items.filter((log) => ['success', 'succeeded'].includes(log.status.toLowerCase())).length,
         failed: items.filter(isCountedFailure).length,
         imageCount: items.reduce((sum, log) => sum + Number(log.imageCount || 0), 0),
+        chargedCredits: items.reduce((sum, log) => sum + Number(log.chargedCredits || 0), 0),
       };
       setLogs(items);
       setTotal(responseTotal);
@@ -244,7 +253,7 @@ export default function UsagePage() {
     } finally {
       setLoading(false);
     }
-  }, [keyword, page, pageSize, periodDays, status]);
+  }, [dateRange.endDate, dateRange.startDate, keyword, page, pageSize, status]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void loadUsage(), 0);
@@ -266,13 +275,64 @@ export default function UsagePage() {
   }, [detailLog]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const periodLabel = `${periodDays} 天`;
-  const rangeText = `近 ${periodLabel} · 共 ${summary.total.toLocaleString()} 次请求`;
+  const rangeText = periodDays
+    ? `近 ${periodDays} 天 · 共 ${summary.total.toLocaleString()} 次请求`
+    : `${dateRange.startDate} 至 ${dateRange.endDate} · 共 ${summary.total.toLocaleString()} 次请求`;
 
   const applyFilters = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const today = dateKey(new Date());
+    if (!draftStartDate || !draftEndDate) {
+      setError('请选择开始日期和结束日期');
+      return;
+    }
+    if (draftStartDate > draftEndDate) {
+      setError('开始日期不能晚于结束日期');
+      return;
+    }
+    if (draftEndDate > today) {
+      setError('结束日期不能晚于今天');
+      return;
+    }
     setPage(1);
     setKeyword(draftKeyword.trim());
+    setDateRange({ startDate: draftStartDate, endDate: draftEndDate });
+    setPeriodDays(null);
+    setError('');
+  };
+
+  const selectPeriod = (days: number) => {
+    const nextRange = periodRange(days);
+    setPeriodDays(days);
+    setDateRange(nextRange);
+    setDraftStartDate(nextRange.startDate);
+    setDraftEndDate(nextRange.endDate);
+    setPage(1);
+  };
+
+  const exportUsage = async () => {
+    const current = getSession();
+    if (!current) {
+      toast.error('登录状态已失效，请重新登录');
+      return;
+    }
+    setExporting(true);
+    try {
+      const blob = await portalApi.exportUsage(current, keyword, status, dateRange.startDate, dateRange.endDate);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = `客户端用量-${dateRange.startDate}-${dateRange.endDate}.xlsx`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success('Excel 已开始下载');
+    } catch (exportError) {
+      toast.error(errorMessage(exportError));
+    } finally {
+      setExporting(false);
+    }
   };
 
   const openDetail = (log: UsageLog) => {
@@ -310,11 +370,26 @@ export default function UsagePage() {
                 type="button"
                 className={periodDays === option.days ? 'is-active' : ''}
                 aria-pressed={periodDays === option.days}
-                onClick={() => { setPeriodDays(option.days); setPage(1); }}
+                onClick={() => selectPeriod(option.days)}
               >
                 {option.label}
               </button>
             ))}
+          </div>
+          <div className="usage-date-range-control usage-custom-period-control">
+            <TrendDateRangePicker
+              startDate={draftStartDate}
+              endDate={draftEndDate}
+              maxDate={dateKey(new Date())}
+              ariaLabel="自定义统计周期"
+              onChange={(nextStartDate, nextEndDate) => {
+                setDraftStartDate(nextStartDate);
+                setDraftEndDate(nextEndDate);
+                setDateRange({ startDate: nextStartDate, endDate: nextEndDate });
+                setPeriodDays(null);
+                setPage(1);
+              }}
+            />
           </div>
           <button className="usage-refresh" type="button" onClick={() => void loadUsage()} disabled={loading} aria-label="刷新用量">
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -329,6 +404,7 @@ export default function UsagePage() {
             <UsageMetricCard label="请求数" value={summary.total.toLocaleString()} icon={UploadCloud} tone="mint" trend="8.3%" trendTone="up" />
             <UsageMetricCard label="失败" value={summary.failed.toLocaleString()} icon={XCircle} tone="danger" trend="5.1%" trendTone="down" />
             <UsageMetricCard label="成功" value={summary.success.toLocaleString()} icon={CheckCircle2} tone="green" trend="9.4%" trendTone="up" />
+            <UsageMetricCard label="扣费余额" value={formatCNY(Number(summary.chargedCredits || 0))} icon={CircleDollarSign} tone="charge" trend="当前筛选周期" trendTone="neutral" trendNote="" />
             <UsageMetricCard label="剩余余额" value={balance === null ? '--' : formatCNY(balance)} icon={KeyRound} tone="balance" trend="6.7%" trendTone="up" />
           </section>
 
@@ -351,6 +427,10 @@ export default function UsagePage() {
                 <AppSelect id="usage-status" value={status} options={STATUS_OPTIONS} onValueChange={(nextStatus) => { setStatus(nextStatus); setPage(1); }} />
                 <AppSelect id="usage-page-size" value={String(pageSize)} options={PAGE_SIZE_OPTIONS} onValueChange={(nextPageSize) => { setPageSize(Number(nextPageSize)); setPage(1); }} />
                 <button className="usage-filter-submit" type="submit" aria-label="查询"><Search size={14} /></button>
+                <button className="usage-export" type="button" onClick={() => void exportUsage()} disabled={exporting || loading}>
+                  <Download size={14} />
+                  <span>{exporting ? '导出中' : '导出 Excel'}</span>
+                </button>
               </form>
             </header>
 

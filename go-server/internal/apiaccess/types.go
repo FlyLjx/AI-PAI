@@ -91,6 +91,8 @@ type UsageLog struct {
 	APIKeyID           string
 	KeyName            *string
 	KeyPrefix          *string
+	AccessIP           string
+	AccessHost         string
 	TaskID             *string
 	Endpoint           string
 	Model              string
@@ -113,6 +115,21 @@ type UsageLog struct {
 	TaskUsage          map[string]any
 	CreatedAt          time.Time
 	FinishedAt         *time.Time
+}
+
+// UsageExportRow contains only the fields needed by the customer usage
+// workbook. Keeping this projection small avoids decoding large request and
+// response JSON blobs while exporting a long history.
+type UsageExportRow struct {
+	CreatedAt      time.Time
+	Endpoint       string
+	TaskID         string
+	Model          string
+	Size           string
+	Quantity       int
+	ChargedCredits float64
+	Status         string
+	ErrorMessage   string
 }
 
 type PublicAccessKey struct {
@@ -171,6 +188,9 @@ type PublicUsageLog struct {
 type AdminPublicUsageLog struct {
 	PublicUsageLog
 	ModelCostCredits float64 `json:"modelCostCredits"`
+	AccessIP         string  `json:"accessIp,omitempty"`
+	AccessHost       string  `json:"accessHost,omitempty"`
+	AccessAddress    string  `json:"accessAddress,omitempty"`
 }
 
 type ListLogsInput struct {
@@ -203,6 +223,8 @@ type ListKeysInput struct {
 
 type UsageStats struct {
 	Total            int     `json:"total"`
+	TotalExact       bool    `json:"totalExact"`
+	HasMore          bool    `json:"hasMore,omitempty"`
 	Counted          int     `json:"counted"`
 	Success          int     `json:"success"`
 	Failed           int     `json:"failed"`
@@ -416,7 +438,19 @@ func ToAdminPublicLog(log UsageLog) AdminPublicUsageLog {
 	return AdminPublicUsageLog{
 		PublicUsageLog:   ToPublicLog(log),
 		ModelCostCredits: log.ModelCostCredits,
+		AccessIP:         log.AccessIP,
+		AccessHost:       log.AccessHost,
+		AccessAddress:    firstNonEmpty(log.AccessHost, log.AccessIP),
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func usageLogResponseParams(log UsageLog) map[string]any {

@@ -2,6 +2,7 @@ package settings
 
 import (
 	"math"
+	"strings"
 	"time"
 )
 
@@ -9,6 +10,14 @@ const (
 	MinTaskTimeoutMinutes     = 1
 	MaxTaskTimeoutMinutes     = 120
 	DefaultTaskTimeoutMinutes = 5
+)
+
+const DefaultImageSafetyKeywords = "色情,淫秽,裸体,裸身,裸照,裸女,裸男,性爱,性交,性行为,乳房,乳头,阴部,生殖器,自慰,口交,肛交,强奸,乱伦,porn,pornography,nude,nudity,nsfw,explicit sex,sexual intercourse,genitals,breasts,nipple,nipples,vagina,penis,masturbation,oral sex,anal sex,rape,incest"
+
+const (
+	maxImageSafetyKeywords    = 300
+	maxImageSafetyKeywordSize = 120
+	maxImageSafetyValueSize   = 24000
 )
 
 // TaskTimeout converts the persisted API timeout setting to a duration. The
@@ -20,6 +29,78 @@ func TaskTimeout(values Settings) time.Duration {
 		return DefaultTaskTimeoutMinutes * time.Minute
 	}
 	return time.Duration(minutes * float64(time.Minute))
+}
+
+type ImageSafetyConfig struct {
+	Enabled  bool
+	Keywords []string
+}
+
+func NormalizeImageSafetyKeywords(value any) (string, error) {
+	raw, ok := value.(string)
+	if !ok {
+		return "", ErrInvalidImageSafetySettings
+	}
+	if len(raw) > maxImageSafetyValueSize {
+		return "", ErrInvalidImageSafetySettings
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == '\n' || r == '\r'
+	})
+	seen := make(map[string]struct{}, len(parts))
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		keyword := strings.TrimSpace(part)
+		if keyword == "" {
+			continue
+		}
+		if len([]rune(keyword)) > maxImageSafetyKeywordSize {
+			return "", ErrInvalidImageSafetySettings
+		}
+		key := strings.ToLower(keyword)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		result = append(result, keyword)
+		if len(result) > maxImageSafetyKeywords {
+			return "", ErrInvalidImageSafetySettings
+		}
+	}
+	return strings.Join(result, ", "), nil
+}
+
+func ImageSafetyConfigFromSettings(values Settings) ImageSafetyConfig {
+	keywords, _ := NormalizeImageSafetyKeywords(values["imageSafetyKeywords"])
+	parts := strings.FieldsFunc(keywords, func(r rune) bool {
+		return r == ','
+	})
+	result := ImageSafetyConfig{
+		Enabled:  values["imageSafetyEnabled"] == true,
+		Keywords: make([]string, 0, len(parts)),
+	}
+	for _, keyword := range parts {
+		if value := strings.ToLower(strings.TrimSpace(keyword)); value != "" {
+			result.Keywords = append(result.Keywords, value)
+		}
+	}
+	return result
+}
+
+func (config ImageSafetyConfig) Match(prompt string) string {
+	if !config.Enabled {
+		return ""
+	}
+	prompt = strings.ToLower(strings.TrimSpace(prompt))
+	if prompt == "" {
+		return ""
+	}
+	for _, keyword := range config.Keywords {
+		if keyword != "" && strings.Contains(prompt, keyword) {
+			return keyword
+		}
+	}
+	return ""
 }
 
 type Settings map[string]any
@@ -72,6 +153,8 @@ var Defaults = Settings{
 	"registrationChallengeMinSeconds":      float64(2),
 	"registrationChallengeMaxPerIPHour":    float64(30),
 	"taskTimeoutMinutes":                   float64(DefaultTaskTimeoutMinutes),
+	"imageSafetyEnabled":                   true,
+	"imageSafetyKeywords":                  DefaultImageSafetyKeywords,
 	"systemLogAutoCleanupEnabled":          false,
 	"systemLogRetentionDays":               float64(30),
 	"taskImageAutoCleanupEnabled":          true,

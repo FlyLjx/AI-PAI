@@ -26,6 +26,8 @@ type SettingsForm = {
   registerMode: 'open' | 'closed';
   registerEmailVerification: boolean;
   taskTimeoutMinutes: number;
+  imageSafetyEnabled: boolean;
+  imageSafetyKeywords: string;
   taskImageAutoCleanupEnabled: boolean;
   taskImageRetentionDays: number;
   dynamicConcurrencyEnabled: boolean;
@@ -98,6 +100,8 @@ const emptySettings: SettingsForm = {
   registerMode: 'open',
   registerEmailVerification: false,
   taskTimeoutMinutes: 5,
+  imageSafetyEnabled: true,
+  imageSafetyKeywords: '色情,淫秽,裸体,裸身,裸照,裸女,裸男,性爱,性交,性行为,乳房,乳头,阴部,生殖器,自慰,口交,肛交,强奸,乱伦,porn,pornography,nude,nudity,nsfw,explicit sex,sexual intercourse,genitals,breasts,nipple,nipples,vagina,penis,masturbation,oral sex,anal sex,rape,incest',
   taskImageAutoCleanupEnabled: true,
   taskImageRetentionDays: 1,
   dynamicConcurrencyEnabled: true,
@@ -187,6 +191,8 @@ function normalizeSettings(data: Record<string, unknown>): SettingsForm {
     registerMode: data.registerMode === 'closed' ? 'closed' : 'open',
     registerEmailVerification: Boolean(data.registerEmailVerification),
     taskTimeoutMinutes: positiveInteger(data.taskTimeoutMinutes, 5),
+    imageSafetyEnabled: data.imageSafetyEnabled !== false,
+    imageSafetyKeywords: String(data.imageSafetyKeywords || emptySettings.imageSafetyKeywords),
     taskImageAutoCleanupEnabled: data.taskImageAutoCleanupEnabled !== false,
     taskImageRetentionDays: positiveInteger(data.taskImageRetentionDays, 1),
     dynamicConcurrencyEnabled: data.dynamicConcurrencyEnabled !== false,
@@ -289,6 +295,7 @@ export default function AdminSettingsPage() {
     event.preventDefault();
     if (!form.siteName.trim() || !form.logoText.trim()) return toast.error('请填写站点名称和 Logo 文字');
     if (form.taskTimeoutMinutes < 1) return toast.error('API 请求超时至少 1 分钟');
+    if (form.imageSafetyEnabled && !form.imageSafetyKeywords.trim()) return toast.error('启用生图内容检测后请至少配置一个关键词');
     if (!Number.isSafeInteger(form.taskImageRetentionDays) || form.taskImageRetentionDays < 1 || form.taskImageRetentionDays > 3650) return toast.error('图片缓存保留天数必须是 1 到 3650 的整数');
     if (!Number.isSafeInteger(form.dynamicConcurrencyWindowValue) || form.dynamicConcurrencyWindowValue < 1) return toast.error('动态并发统计窗口必须是大于 0 的整数');
     if (!Number.isSafeInteger(form.dynamicConcurrencyRequestStep) || form.dynamicConcurrencyRequestStep < 1) return toast.error('每档调用次数必须是大于 0 的整数');
@@ -313,6 +320,7 @@ export default function AdminSettingsPage() {
         frontendUrl: form.frontendUrl.trim(),
         backendUrl: form.backendUrl.trim(),
         taskTimeoutMinutes: Number(form.taskTimeoutMinutes || 5),
+        imageSafetyKeywords: form.imageSafetyKeywords.trim(),
         rechargeRate: Number(form.rechargeRate),
         inviteRewardType: form.inviteInviterRewardType,
         inviteRewardPlanId: form.inviteInviterRewardPlanId,
@@ -418,6 +426,24 @@ export default function AdminSettingsPage() {
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">前端地址</span><input type="url" value={form.frontendUrl} onChange={(event) => updateField('frontendUrl', event.target.value)} placeholder="https://portal.example.com" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">Go 后端地址</span><input type="url" value={form.backendUrl} onChange={(event) => updateField('backendUrl', event.target.value)} placeholder="https://api.example.com" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
                 <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">API 请求超时（分钟）</span><input min={1} max={120} type="number" value={form.taskTimeoutMinutes} onChange={(event) => updateField('taskTimeoutMinutes', Number(event.target.value))} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs" /></label>
+              </div>
+            </section>
+
+            <section className="space-y-4 border-b border-[#DCE4DF] p-5 xl:col-span-2">
+              <div className="flex items-center justify-between gap-4 border-b border-[#DCE4DF] pb-2.5">
+                <div className="flex items-center gap-2"><ShieldAlert className="h-4 w-4 text-[#18B969]" /><div><h2 className="text-xs font-semibold">生图内容检测</h2><p className="mt-0.5 text-[10px] text-zinc-400">API 生图请求先检查提示词，命中关键词后直接返回错误，不创建任务、不扣费、不调用上游</p></div></div>
+                <label className="flex shrink-0 items-center gap-2 text-[11px] font-semibold text-zinc-500"><input type="checkbox" checked={form.imageSafetyEnabled} onChange={(event) => updateField('imageSafetyEnabled', event.target.checked)} className="h-4 w-4 accent-[#18B969]" />启用</label>
+              </div>
+              <div className={`grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_280px] ${form.imageSafetyEnabled ? '' : 'opacity-55'}`}>
+                <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">拦截关键词</span><textarea disabled={!form.imageSafetyEnabled} rows={4} value={form.imageSafetyKeywords} onChange={(event) => updateField('imageSafetyKeywords', event.target.value)} placeholder="色情, 淫秽, nude, nudity\n支持逗号、分号或换行分隔，不区分大小写" className="w-full resize-y rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-[11px] leading-5 outline-none focus:border-[#18B969] disabled:bg-zinc-50" /><small className="mt-1 block text-[10px] text-zinc-400">关键词按包含关系匹配；建议使用短词并定期根据误拦截情况调整。</small></label>
+                <div className="rounded-lg border border-[#D7F1DF] bg-[#F4FCF6] p-3.5 text-[10px] leading-5 text-[#4C6B59]">
+                  <strong className="block text-[11px] text-[#087443]">拦截后的处理</strong>
+                  <ul className="mt-1.5 list-disc space-y-1 pl-4">
+                    <li>返回 `content_policy_violation` 错误</li>
+                    <li>不会产生任务、余额扣减或上游请求</li>
+                    <li>失败调用会保留在 API 日志中供审计</li>
+                  </ul>
+                </div>
               </div>
             </section>
 

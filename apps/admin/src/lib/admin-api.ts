@@ -27,6 +27,9 @@ export type PortalUser = {
   status: string;
   syncSize: boolean;
   credits: number;
+  lastLoginIp?: string;
+  lastApiIp?: string;
+  activeLast30Days?: boolean;
   emailVerifiedAt?: string | null;
   createdAt?: string;
   subscription?: Subscription | null;
@@ -106,6 +109,9 @@ export type UsageLog = {
   userEmail?: string;
   keyName?: string;
   keyPrefix?: string;
+  accessIp?: string;
+  accessHost?: string;
+  accessAddress?: string;
   endpoint: string;
   model: string;
   size: string;
@@ -557,7 +563,7 @@ export type UpstreamMaintenanceState = {
 
 type Envelope<T, TSummary = never> = {
   data: T;
-  pagination?: { total: number; page: number; pageSize: number };
+  pagination?: { total: number; page: number; pageSize: number; hasMore?: boolean; totalExact?: boolean };
   summary?: TSummary;
   mailDelivery?: MailBroadcastResult;
 };
@@ -608,16 +614,17 @@ export const portalApi = {
   updateUpstreamMaintenance: (enabled: boolean) => api<UpstreamMaintenanceState>('/api/admin/upstream-maintenance', { method: 'PATCH', body: JSON.stringify({ enabled }) }),
   users: () => api<PortalUser[]>('/api/users'),
   userOptions: (input: { keyword?: string; status?: string; limit?: number } = {}) => api<PortalUser[]>(`/api/users/options${query(input)}`),
-  adminUsers: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; billing?: string }, signal?: AbortSignal) => api<PortalUser[], { total: number; active: number; verified: number; subscribed: number }>(`/api/admin/users${query(input)}`, { signal }),
+  adminUsers: (input: { page?: number; pageSize?: number; keyword?: string; status?: string; billing?: string; activity?: string }, signal?: AbortSignal) => api<PortalUser[], { total: number; active: number; verified: number; subscribed: number; activeLast30Days: number }>(`/api/admin/users${query(input)}`, { signal }),
   createUser: (input: Record<string, unknown>) => api<PortalUser>('/api/users', { method: 'POST', body: JSON.stringify(input) }),
   updateUser: (id: string, input: Record<string, unknown>) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify(input) }),
-  updateUserBalance: (id: string, input: { balance: number; remark: string }) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/balance`, { method: 'PATCH', body: JSON.stringify(input) }),
+  updateUserBalance: (id: string, input: { amount: number; remark?: string }) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/balance`, { method: 'PATCH', body: JSON.stringify(input) }),
   userCreditLogs: (id: string, page = 1, pageSize = 10, type = 'all', sortBy?: string, sortOrder?: SortOrder) => api<CreditLog[]>(`/api/users/${encodeURIComponent(id)}/credit-logs${query({ page, pageSize, type: type === 'all' ? undefined : type, sortBy, sortOrder })}`),
   userConsumptionRanking: (days = 30, limit = 8) => api<ConsumptionRank[]>(`/api/admin/users/consumption-ranking${query({ days, limit })}`),
   userModelPriceOverrides: () => api<UserModelPriceOverride[]>('/api/admin/user-model-prices'),
   saveUserModelPriceOverride: (input: { userId: string; modelId: string; unitPrice: number }) => api<UserModelPriceOverride>('/api/admin/user-model-prices', { method: 'POST', body: JSON.stringify(input) }),
   deleteUserModelPriceOverride: (id: string) => api(`/api/admin/user-model-prices/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   deleteUser: (id: string) => api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+  deleteUsers: (userIds: string[]) => api<{ requested: number; deleted: number }>('/api/admin/users', { method: 'DELETE', body: JSON.stringify({ userIds }) }),
   verifyUserEmail: (id: string) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/verify-email`, { method: 'POST' }),
   grantSubscription: (id: string, input: Record<string, unknown>) => api(`/api/users/${encodeURIComponent(id)}/subscription`, { method: 'POST', body: JSON.stringify(input) }),
   cancelSubscription: (id: string) => api<PortalUser>(`/api/users/${encodeURIComponent(id)}/subscription`, { method: 'DELETE' }),

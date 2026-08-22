@@ -128,6 +128,7 @@ export default function AdminPricesPage() {
   const [overrideUserId, setOverrideUserId] = useState('');
   const [overrideModelId, setOverrideModelId] = useState('');
   const [overrideUnitPrice, setOverrideUnitPrice] = useState('');
+  const [editingOverride, setEditingOverride] = useState<UserModelPriceOverride | null>(null);
   const [overrideDeleteCandidate, setOverrideDeleteCandidate] = useState<UserModelPriceOverride | null>(null);
   const [overrideSort, setOverrideSort] = useState<SortState>({ key: 'updated', direction: 'desc' });
 
@@ -366,7 +367,10 @@ export default function AdminPricesPage() {
       });
       const user = overrideUsers.find((item) => item.id === selectedOverrideUserId);
       const model = overrideModels.find((item) => item.id === selectedOverrideModelId);
-      toast.success(`已为 ${user?.email || selectedOverrideUserId} 配置 ${model?.displayName || '该模型'} 的专属扣费`);
+      toast.success(editingOverride
+        ? `已更新 ${user?.email || selectedOverrideUserId} 的 ${model?.displayName || '该模型'} 单价`
+        : `已为 ${user?.email || selectedOverrideUserId} 配置 ${model?.displayName || '该模型'} 的专属扣费`);
+      setEditingOverride(null);
       setOverrideUnitPrice('');
       await reloadOverrides();
     } catch (requestError) {
@@ -374,6 +378,18 @@ export default function AdminPricesPage() {
     } finally {
       setOverrideSaving(false);
     }
+  };
+
+  const editOverride = (item: UserModelPriceOverride) => {
+    setEditingOverride(item);
+    setOverrideUserId(item.userId);
+    setOverrideModelId(item.modelId);
+    setOverrideUnitPrice(Number(item.unitPrice || 0).toFixed(4));
+  };
+
+  const cancelOverrideEdit = () => {
+    setEditingOverride(null);
+    setOverrideUnitPrice('');
   };
 
   const deleteOverride = async () => {
@@ -435,17 +451,20 @@ export default function AdminPricesPage() {
         <form onSubmit={saveOverride} className="grid grid-cols-1 gap-3 border-b border-[#EDF0EE] bg-[#FAFBFA] p-4 sm:grid-cols-[1fr_1fr_180px_auto] sm:items-end">
           <label>
             <span className="mb-1 block text-[11px] font-semibold text-zinc-500">指定用户</span>
-            <AppSelect value={selectedOverrideUserId} onValueChange={setOverrideUserId} disabled={!overrideUsers.length} placeholder="选择普通用户" ariaLabel="指定用户" options={overrideUsers.length ? overrideUsers.map((user) => ({ value: user.id, label: `${user.email}${user.status === 'disabled' ? '（已停用）' : ''}` })) : [{ value: '', label: '暂无普通用户' }]} />
+            <AppSelect value={selectedOverrideUserId} onValueChange={setOverrideUserId} disabled={!overrideUsers.length || Boolean(editingOverride)} placeholder="选择普通用户" ariaLabel="指定用户" options={overrideUsers.length ? overrideUsers.map((user) => ({ value: user.id, label: `${user.email}${user.status === 'disabled' ? '（已停用）' : ''}` })) : [{ value: '', label: '暂无普通用户' }]} />
           </label>
           <label>
             <span className="mb-1 block text-[11px] font-semibold text-zinc-500">指定模型</span>
-            <AppSelect value={selectedOverrideModelId} onValueChange={setOverrideModelId} disabled={!overrideModels.length} placeholder="选择生图模型" ariaLabel="指定模型" options={overrideModelOptions.length ? overrideModelOptions : [{ value: '', label: '暂无生图模型' }]} />
+            <AppSelect value={selectedOverrideModelId} onValueChange={setOverrideModelId} disabled={!overrideModels.length || Boolean(editingOverride)} placeholder="选择生图模型" ariaLabel="指定模型" options={overrideModelOptions.length ? overrideModelOptions : [{ value: '', label: '暂无生图模型' }]} />
           </label>
           <label>
             <span className="mb-1 block text-[11px] font-semibold text-zinc-500">单张扣费</span>
             <div className="relative"><span className="pointer-events-none absolute inset-y-0 left-2.5 flex items-center font-mono text-xs text-zinc-400">¥</span><input required min={MIN_OVERRIDE_PRICE} max={MAX_OVERRIDE_PRICE} step="0.0001" type="number" value={overrideUnitPrice} onChange={(event) => setOverrideUnitPrice(event.target.value)} placeholder="例如 0.008" className="w-full rounded-md border border-[#86EFAC] bg-white py-2 pl-6 pr-2 font-mono text-xs text-[#047857] outline-none focus:border-[#047857]" /></div>
           </label>
-          <button type="submit" disabled={overrideSaving || !overrideUsers.length || !overrideModels.length} className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white hover:bg-[#036b4f] disabled:opacity-50">{overrideSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}保存规则</button>
+          <div className="flex items-center gap-2">
+            <button type="submit" disabled={overrideSaving || !overrideUsers.length || !overrideModels.length} className="inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white hover:bg-[#036b4f] disabled:opacity-50 sm:flex-none">{overrideSaving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{editingOverride ? '更新单价' : '保存规则'}</button>
+            {editingOverride && <button type="button" onClick={cancelOverrideEdit} disabled={overrideSaving} className="inline-flex h-9 items-center justify-center rounded-md border border-[#DCE4DF] bg-white px-3 text-xs font-semibold text-zinc-600 hover:bg-zinc-50 disabled:opacity-50">取消</button>}
+          </div>
         </form>
         {overrideLoading ? (
           <div className="grid min-h-[120px] place-items-center"><Loader2 className="h-5 w-5 animate-spin text-[#12B76A]" /></div>
@@ -456,7 +475,7 @@ export default function AdminPricesPage() {
             <table className="min-w-[680px] w-full text-left text-xs">
               <thead className="border-b border-[#EDF0EE] bg-white text-[10px] font-semibold text-zinc-400"><tr>{overrideHeaders.map((header) => <SortableHeader key={header.key} header={header} sortState={overrideSort} onSort={handleOverrideSort} />)}</tr></thead>
               <tbody className="divide-y divide-[#EDF0EE]">
-                {sortedOverrides.map((item) => <tr key={item.id} className="hover:bg-[#FAFBFA]"><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.userEmail || item.userId}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.userId}</small></td><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.modelDisplayName || item.modelName}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.modelName}</small></td><td className="px-4 py-3 font-mono font-semibold text-[#047857]">{money(item.unitPrice)}<small className="ml-1 font-sans font-normal text-zinc-400">/ 张</small></td><td className="px-4 py-3 text-zinc-500">{formatDate(item.updatedAt || item.createdAt)}</td><td className="px-4 py-3 text-right"><button type="button" onClick={() => setOverrideDeleteCandidate(item)} disabled={overrideDeletingId === item.id} title="移除专属扣费" className="rounded p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button></td></tr>)}
+                {sortedOverrides.map((item) => <tr key={item.id} className="hover:bg-[#FAFBFA]"><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.userEmail || item.userId}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.userId}</small></td><td className="px-4 py-3"><strong className="block max-w-[220px] truncate font-medium">{item.modelDisplayName || item.modelName}</strong><small className="mt-0.5 block max-w-[220px] truncate font-mono text-[10px] text-zinc-400">{item.modelName}</small></td><td className="px-4 py-3 font-mono font-semibold text-[#047857]">{money(item.unitPrice)}<small className="ml-1 font-sans font-normal text-zinc-400">/ 张</small></td><td className="px-4 py-3 text-zinc-500">{formatDate(item.updatedAt || item.createdAt)}</td><td className="px-4 py-3 text-right"><div className="flex items-center justify-end gap-1"><button type="button" onClick={() => editOverride(item)} disabled={overrideSaving || overrideDeletingId === item.id} title="编辑专属单价" aria-label={`编辑 ${item.userEmail || item.userId} 的专属单价`} className="rounded p-1.5 text-zinc-600 hover:bg-zinc-100 disabled:opacity-40"><Pencil className="h-3.5 w-3.5" /></button><button type="button" onClick={() => setOverrideDeleteCandidate(item)} disabled={overrideDeletingId === item.id} title="移除专属扣费" aria-label={`移除 ${item.userEmail || item.userId} 的专属扣费`} className="rounded p-1.5 text-red-600 hover:bg-red-50 disabled:opacity-40"><Trash2 className="h-3.5 w-3.5" /></button></div></td></tr>)}
               </tbody>
             </table>
           </div>

@@ -57,6 +57,7 @@ interface DataTableProps<T> {
   currentPage?: number;
   totalPages?: number;
   totalItems?: number;
+  totalItemsLabel?: React.ReactNode;
   onPageChange?: (page: number) => void;
   pageSize?: number;
   clientSidePagination?: boolean;
@@ -165,6 +166,7 @@ export function DataTable<T>({
   currentPage,
   totalPages,
   totalItems,
+  totalItemsLabel,
   onPageChange,
   pageSize,
   clientSidePagination = false,
@@ -264,7 +266,7 @@ export function DataTable<T>({
       {showPagination && currentPage && totalPages && onPageChange && (
         <footer className="table-pagination" aria-label="分页">
           <span className="table-pagination-summary">
-            第 <strong>{currentPage}</strong> / <strong>{totalPages}</strong> 页 · 共 {resolvedTotalItems.toLocaleString('zh-CN')} 条
+            第 <strong>{currentPage}</strong> / <strong>{totalPages}</strong> 页 · {totalItemsLabel ?? `共 ${resolvedTotalItems.toLocaleString('zh-CN')} 条`}
           </span>
           <div className="table-pagination-controls">
             <button

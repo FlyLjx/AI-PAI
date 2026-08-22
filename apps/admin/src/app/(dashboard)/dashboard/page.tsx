@@ -32,9 +32,7 @@ import { formatCNY, formatDate } from '@/lib/common/utils';
 import {
   ADMIN_CHART_ACTIVE_DOT,
   ADMIN_CHART_AXIS,
-  ADMIN_CHART_BORDER,
   ADMIN_CHART_DOT,
-  ADMIN_CHART_GRID,
   ADMIN_CHART_MARGIN,
 } from '@/lib/chart-theme';
 
@@ -147,10 +145,11 @@ type DashboardData = {
 };
 
 const TASK_TREND_COLORS = {
-  success: '#72C99E',
-  failed: '#F0A7A7',
-  running: '#A8C5DF',
+  success: '#35C982',
+  failed: '#F27979',
 } as const;
+const TASK_TREND_GRID = '#D5E2DA';
+const TASK_TREND_BORDER = '#C1D2C6';
 
 // Keep the admin runtime health colors aligned with the user status page:
 // error rate < 5% is healthy, 5%-<10% is a warning, and >= 10% is danger.
@@ -328,7 +327,6 @@ export default function AdminDashboardPage() {
   const taskTrendSeries = [
     { key: 'success', label: '成功', value: taskTrendSummary.success, color: TASK_TREND_COLORS.success },
     { key: 'failed', label: '失败', value: taskTrendSummary.failed, color: TASK_TREND_COLORS.failed },
-    { key: 'running', label: '运行中', value: taskTrendSummary.running, color: TASK_TREND_COLORS.running },
   ] as const;
 
   const upstreamCode = Number(stability?.upstream_status_code || 0);
@@ -456,13 +454,12 @@ export default function AdminDashboardPage() {
             <div className="h-[220px] w-full px-1 pb-3 pt-3 sm:h-[260px] sm:px-3" aria-describedby="task-trend-description">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart accessibilityLayer data={taskTrend} margin={ADMIN_CHART_MARGIN}>
-                  <CartesianGrid stroke={ADMIN_CHART_GRID} vertical />
-                  <XAxis dataKey="date" tickFormatter={hourlyTrend ? shortHour : shortDate} tick={{ fill: ADMIN_CHART_AXIS, fontSize: 9 }} tickLine={false} axisLine={{ stroke: ADMIN_CHART_BORDER }} minTickGap={hourlyTrend ? 18 : 22} />
+                  <CartesianGrid stroke={TASK_TREND_GRID} vertical />
+                  <XAxis dataKey="date" tickFormatter={hourlyTrend ? shortHour : shortDate} tick={{ fill: ADMIN_CHART_AXIS, fontSize: 9 }} tickLine={false} axisLine={{ stroke: TASK_TREND_BORDER }} minTickGap={hourlyTrend ? 18 : 22} />
                   <YAxis allowDecimals={false} tick={{ fill: ADMIN_CHART_AXIS, fontSize: 9 }} tickLine={false} axisLine={false} width={44} />
-                  <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `${hourlyTrend ? '时间' : '日期'} ${String(label)}`} contentStyle={{ border: `1px solid ${ADMIN_CHART_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
+                  <Tooltip formatter={(value, name) => [Number(value || 0).toLocaleString('zh-CN'), String(name)]} labelFormatter={(label) => `${hourlyTrend ? '时间' : '日期'} ${String(label)}`} contentStyle={{ border: `1px solid ${TASK_TREND_BORDER}`, borderRadius: 6, boxShadow: '0 8px 24px rgba(23,32,27,.08)', fontSize: 11 }} />
                   <Line type="monotone" dataKey="success" name="成功" stroke={TASK_TREND_COLORS.success} strokeWidth={2} dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.success, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
                   <Line type="monotone" dataKey="failed" name="失败" stroke={TASK_TREND_COLORS.failed} strokeWidth={1.8} strokeDasharray="5 4" dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.failed, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
-                  <Line type="monotone" dataKey="running" name="运行中" stroke={TASK_TREND_COLORS.running} strokeWidth={1.8} dot={taskTrend.length <= 15 ? { ...ADMIN_CHART_DOT, fill: TASK_TREND_COLORS.running, strokeWidth: 0 } : false} activeDot={ADMIN_CHART_ACTIVE_DOT} isAnimationActive={false} />
                 </LineChart>
               </ResponsiveContainer>
             </div>

@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowRight,
   Check,
   ChevronLeft,
   ChevronRight,
@@ -57,6 +56,31 @@ function normalizeUserIDs(value: unknown): string[] {
 function sameUserIDs(left: string[], right: string[]) {
   return [...new Set(left)].sort().join(',') === [...new Set(right)].sort().join(',');
 }
+
+function SelectionCheckbox({
+  checked,
+  indeterminate = false,
+  disabled = false,
+  onChange,
+  ariaLabel,
+  className = '',
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+  ariaLabel: string;
+  className?: string;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (inputRef.current) inputRef.current.indeterminate = indeterminate;
+  }, [indeterminate]);
+
+  return <input ref={inputRef} type="checkbox" checked={checked} disabled={disabled} onChange={onChange} aria-label={ariaLabel} className={`user-selection-checkbox ${className}`} />;
+}
+
 const consumptionHeaders: TableHeader<ConsumptionRank>[] = [
   { key: 'user', label: '客户', sortValue: (item) => item.userEmail || item.userId },
   { key: 'creditsSpent', label: '消费金额', sortValue: (item) => Number(item.creditsSpent || 0) },
@@ -100,6 +124,48 @@ function subscriptionName(user: PortalUser) {
   return user.subscription?.planName || user.subscription?.tier || '订阅套餐';
 }
 
+function userInitials(email?: string) {
+  const localPart = String(email || '?').split('@')[0].trim();
+  return localPart.slice(0, 2).toUpperCase() || '?';
+}
+
+function UserStatusBadges({ user }: { user: PortalUser }) {
+  return (
+    <div className="mt-2 flex flex-nowrap items-center gap-1.5 overflow-x-auto text-[10px]">
+      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-semibold ${user.status === 'active' ? 'border-[#BDE8CC] bg-[#F0FBF4] text-[#087443]' : 'border-[#E2E8E4] bg-[#F6F8F6] text-[#6B756F]'}`}>
+        <i className={`h-1.5 w-1.5 rounded-full ${user.status === 'active' ? 'bg-[#18B969]' : 'bg-[#9AA49E]'}`} />
+        {user.status === 'active' ? '已启用' : '已停用'}
+      </span>
+      {user.activeLast30Days && (
+        <span className="inline-flex items-center gap-1 rounded-full border border-[#C6F0D5] bg-[#F5FCF7] px-2 py-0.5 font-semibold text-[#12814E]">
+          <span className="h-1.5 w-1.5 rounded-full bg-[#18B969]" />近30天活跃
+        </span>
+      )}
+      <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 ${user.emailVerifiedAt ? 'border-[#E2EDE6] bg-[#FBFDFC] text-[#6B756F]' : 'border-amber-200 bg-amber-50 text-amber-700'}`} title={user.emailVerifiedAt ? `验证时间：${formatDate(user.emailVerifiedAt)}` : undefined}>
+        <span className={`h-1.5 w-1.5 rounded-full ${user.emailVerifiedAt ? 'bg-[#9AA49E]' : 'bg-amber-500'}`} />
+        {user.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证'}
+      </span>
+    </div>
+  );
+}
+
+function UserIdentity({ user }: { user: PortalUser }) {
+  return (
+    <div className="flex min-w-0 items-center gap-3">
+      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#C9F0D7] bg-[#ECFAF1] text-[11px] font-extrabold tracking-wide text-[#087443]">
+        {userInitials(user.email)}
+      </span>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2">
+          <strong className="truncate text-[13px] font-semibold text-[#17201B]">{user.email}</strong>
+          {user.role === 'admin' && <span className="shrink-0 rounded-full border border-zinc-200 bg-zinc-50 px-2 py-0.5 text-[9px] font-semibold text-zinc-500">管理员</span>}
+        </div>
+        <UserStatusBadges user={user} />
+      </div>
+    </div>
+  );
+}
+
 function BillingSummary({ user }: { user: PortalUser }) {
   if (!subscriptionActive(user)) {
     const status = user.subscription?.status;
@@ -109,9 +175,9 @@ function BillingSummary({ user }: { user: PortalUser }) {
         ? '订阅已取消'
         : '未开通订阅';
     return (
-      <span className="inline-flex min-w-[150px] flex-col items-start gap-0.5 leading-tight">
-        <span className="whitespace-nowrap text-[11px] font-semibold text-zinc-700">余额计费</span>
-        <small className={`whitespace-nowrap text-[10px] ${status === 'expired' ? 'text-amber-700' : status === 'canceled' || status === 'cancelled' ? 'text-red-600' : 'text-zinc-400'}`}>{statusLabel}</small>
+      <span className="inline-flex max-w-full min-w-[150px] items-center gap-2 overflow-x-auto whitespace-nowrap rounded-lg border border-[#E2EEE6] bg-[#FBFDFC] px-2.5 py-2 leading-tight">
+        <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold text-[#33443A]"><CircleDollarSign className="h-3.5 w-3.5 text-[#18B969]" />余额计费</span>
+        <small className={`shrink-0 text-[10px] ${status === 'expired' ? 'text-amber-700' : status === 'canceled' || status === 'cancelled' ? 'text-red-600' : 'text-[#7A8A81]'}`}>· {statusLabel}</small>
       </span>
     );
   }
@@ -119,22 +185,22 @@ function BillingSummary({ user }: { user: PortalUser }) {
   const limit = Number(user.subscription?.quotaLimit ?? user.subscription?.quotaImages ?? 0);
   const usedPercent = limit > 0 ? Math.min(100, Math.max(0, ((limit - remaining) / limit) * 100)) : 0;
   const remainingPercent = limit > 0 ? Math.min(100, Math.max(0, (remaining / limit) * 100)) : 0;
-  const progressTone = remainingPercent <= 10 ? 'bg-red-500' : remainingPercent <= 30 ? 'bg-amber-500' : 'bg-emerald-500';
+  const progressTone = remainingPercent <= 10 ? 'bg-red-500' : remainingPercent <= 30 ? 'bg-amber-500' : 'bg-[#18B969]';
   return (
-    <span className="inline-flex min-w-[180px] flex-col items-start gap-1 leading-tight">
-      <span className="inline-flex max-w-[220px] items-center gap-1.5 text-[11px] font-semibold text-zinc-800">
-        <i className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500" />
+    <span className="inline-flex max-w-full min-w-[300px] items-center gap-2 overflow-x-auto whitespace-nowrap rounded-lg border border-[#D5F0DD] bg-[#F6FCF8] px-2.5 py-2 leading-tight">
+      <span className="inline-flex shrink-0 items-center gap-1.5 text-[11px] font-bold text-[#244B35]">
+        <i className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#18B969]" />
         <span className="truncate">{subscriptionName(user)}</span>
       </span>
-      <small className="max-w-[240px] truncate whitespace-nowrap font-mono text-[10px] text-zinc-400">
+      <small className="shrink-0 font-mono text-[10px] text-[#71877A]">
         剩余 {remaining.toLocaleString('zh-CN')} / {limit.toLocaleString('zh-CN')} · 至 {formatDate(user.subscription?.expiresAt || '', false)}
       </small>
       {limit > 0 && (
-        <span className="flex w-full max-w-[220px] items-center gap-2" title={`已使用 ${Math.round(usedPercent)}%`}>
-          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-100">
+        <span className="flex w-24 shrink-0 items-center gap-2" title={`已使用 ${Math.round(usedPercent)}%`}>
+          <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#DDEEE3]">
             <span className={`block h-full rounded-full transition-[width] duration-300 ${progressTone}`} style={{ width: `${usedPercent}%` }} />
           </span>
-          <small className="w-7 text-right font-mono text-[10px] text-zinc-400">{Math.round(usedPercent)}%</small>
+          <small className="w-7 text-right font-mono text-[10px] text-[#71877A]">{Math.round(usedPercent)}%</small>
         </span>
       )}
     </span>
@@ -159,9 +225,12 @@ export default function AdminUsersPage() {
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [billingFilter, setBillingFilter] = useState('all');
+  const [activityFilter, setActivityFilter] = useState('all');
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [total, setTotal] = useState(0);
-  const [summaryStats, setSummaryStats] = useState({ total: 0, active: 0, verified: 0, subscribed: 0 });
+  const [summaryStats, setSummaryStats] = useState({ total: 0, active: 0, verified: 0, subscribed: 0, activeLast30Days: 0 });
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<PortalUser | null>(null);
   const [draft, setDraft] = useState<UserDraft>(emptyDraft);
@@ -281,13 +350,14 @@ export default function AdminUsersPage() {
           keyword: search.trim() || undefined,
           status: statusFilter === 'all' ? undefined : statusFilter,
           billing: billingFilter === 'all' ? undefined : billingFilter,
+          activity: activityFilter === 'all' ? undefined : activityFilter,
         }, controller.signal),
         portalApi.adminPlans(),
       ]);
       if (controller.signal.aborted) return;
       setUsers(userResponse.data);
       setTotal(Number(userResponse.pagination?.total || 0));
-      setSummaryStats(userResponse.summary || { total: 0, active: 0, verified: 0, subscribed: 0 });
+      setSummaryStats(userResponse.summary || { total: 0, active: 0, verified: 0, subscribed: 0, activeLast30Days: 0 });
       setPlans(planResponse.data);
     } catch (requestError) {
       if (controller.signal.aborted) return;
@@ -298,7 +368,7 @@ export default function AdminUsersPage() {
       setRefreshing(false);
       hasLoadedUsersRef.current = true;
     }
-  }, [billingFilter, page, search, statusFilter]);
+  }, [activityFilter, billingFilter, page, search, statusFilter]);
 
   const loadConsumptionRanking = useCallback(async () => {
     setConsumptionLoading(true);
@@ -326,7 +396,10 @@ export default function AdminUsersPage() {
     const timer = window.setTimeout(() => {
       setSearch((current) => {
         const next = searchInput.trim();
-        if (current !== next) setPage(1);
+        if (current !== next) {
+          setPage(1);
+          setSelectedUserIds([]);
+        }
         return next;
       });
     }, 350);
@@ -386,8 +459,10 @@ export default function AdminUsersPage() {
   const creditLogTotalPages = Math.max(1, Math.ceil(creditLogTotal / creditLogPageSize));
   const activePlans = plans.filter((plan) => plan.status === 'active');
   const currentBalance = Number(balanceUser?.credits || 0);
-  const nextBalance = Number(balanceValue);
-  const balanceDelta = Number.isFinite(nextBalance) ? nextBalance - currentBalance : 0;
+  const adjustmentAmount = Number(balanceValue);
+  const nextBalance = Number.isFinite(adjustmentAmount)
+    ? Math.round((currentBalance + adjustmentAmount) * 10000) / 10000
+    : Number.NaN;
   const currentQuotaLimit = Number(quotaUser?.subscription?.quotaLimit ?? quotaUser?.subscription?.quotaImages ?? 0);
   const currentQuotaUsed = Number(quotaUser?.subscription?.quotaUsed ?? 0);
   const currentQuotaRemaining = Number(quotaUser?.subscription?.effectiveQuotaRemaining ?? quotaUser?.subscription?.quotaRemaining ?? 0);
@@ -409,7 +484,10 @@ export default function AdminUsersPage() {
     return sortItems(consumptionRanking, header, consumptionSort.direction);
   }, [consumptionRanking, consumptionSort.direction, consumptionSort.key]);
 
-  const resetPage = () => setPage(1);
+  const resetPage = () => {
+    setPage(1);
+    setSelectedUserIds([]);
+  };
   const updateDraft = <K extends keyof UserDraft>(key: K, value: UserDraft[K]) => setDraft((current) => ({ ...current, [key]: value }));
 
   const openCreate = () => {
@@ -496,7 +574,7 @@ export default function AdminUsersPage() {
 
   const openBalance = (user: PortalUser) => {
     setBalanceUser(user);
-    setBalanceValue(String(Math.round(Number(user.credits || 0) * 10000) / 10000));
+    setBalanceValue('');
     setBalanceRemark('');
   };
 
@@ -549,16 +627,16 @@ export default function AdminUsersPage() {
   const updateBalance = async (event: React.FormEvent) => {
     event.preventDefault();
     if (!balanceUser) return;
-    if (!balanceValue.trim()) return toast.error('请填写调整后的余额');
-    const value = Number(balanceValue);
-    if (!Number.isFinite(value) || value < 0 || value > 99999999.9999) return toast.error('余额必须在 0 到 99999999.9999 之间');
-    if (Math.abs(value - Number(balanceUser.credits || 0)) < 0.00005) return toast.error('调整后余额没有变化');
-    if (!balanceRemark.trim() || balanceRemark.trim().length > 120) return toast.error('请填写 1-120 字的调整备注');
+    if (!balanceValue.trim()) return toast.error('请填写调整金额');
+    if (!Number.isFinite(adjustmentAmount)) return toast.error('请输入有效的调整金额');
+    if (!Number.isFinite(nextBalance) || nextBalance < 0 || nextBalance > 99999999.9999) return toast.error('调整后余额必须在 0 到 99999999.9999 之间');
+    if (Math.abs(adjustmentAmount) < 0.00005) return toast.error('调整金额不能为 0');
+    if (balanceRemark.trim().length > 120) return toast.error('备注不能超过 120 个字');
     setSaving(true);
     try {
-      const response = await portalApi.updateUserBalance(balanceUser.id, { balance: value, remark: balanceRemark.trim() });
+      const response = await portalApi.updateUserBalance(balanceUser.id, { amount: adjustmentAmount, remark: balanceRemark.trim() || undefined });
       setUsers((items) => items.map((item) => (item.id === balanceUser.id ? { ...item, credits: response.data.credits } : item)));
-      toast.success(`已更新 ${balanceUser.email} 的余额`);
+      toast.success(`已为 ${balanceUser.email}${adjustmentAmount > 0 ? '增加' : '扣减'} ${formatCNY(Math.abs(adjustmentAmount))}`);
       setBalanceUser(null);
     } catch (requestError) {
       toast.error(requestError instanceof Error ? requestError.message : '余额更新失败');
@@ -611,6 +689,33 @@ export default function AdminUsersPage() {
     }
   };
 
+  const selectableUsers = users.filter((user) => user.role !== 'admin');
+  const allCurrentUsersSelected = selectableUsers.length > 0 && selectableUsers.every((user) => selectedUserIds.includes(user.id));
+  const someCurrentUsersSelected = selectableUsers.some((user) => selectedUserIds.includes(user.id)) && !allCurrentUsersSelected;
+  const toggleUserSelection = (userId: string) => {
+    setSelectedUserIds((current) => current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId]);
+  };
+  const toggleCurrentPageSelection = () => {
+    const currentIds = selectableUsers.map((user) => user.id);
+    setSelectedUserIds((current) => allCurrentUsersSelected
+      ? current.filter((id) => !currentIds.includes(id))
+      : Array.from(new Set([...current, ...currentIds])));
+  };
+  const bulkDeleteUsers = async () => {
+    if (selectedUserIds.length === 0) return;
+    setSaving(true);
+    try {
+      const response = await portalApi.deleteUsers(selectedUserIds);
+      toast.success(`已删除 ${Number(response.data?.deleted || 0)} 个用户`);
+      setSelectedUserIds([]);
+      await load();
+    } catch (requestError) {
+      toast.error(requestError instanceof Error ? requestError.message : '批量删除失败');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const rowActions = (user: PortalUser) => (
     <div className="flex min-w-0 flex-wrap items-center justify-end gap-1 md:min-w-[250px] md:flex-nowrap">
       <button type="button" onClick={() => openCreditLogs(user)} title="查看积分明细" aria-label={`查看 ${user.email} 的积分明细`} className="inline-flex h-7 items-center gap-1 rounded-md border border-blue-200 bg-blue-50 px-2 text-[10px] font-semibold text-blue-700 hover:border-blue-300 hover:bg-blue-100"><ReceiptText className="h-3 w-3" />积分明细</button>
@@ -656,6 +761,7 @@ export default function AdminUsersPage() {
               <span className="inline-flex items-center gap-1.5 text-emerald-700"><i className="h-1.5 w-1.5 rounded-full bg-emerald-500" />启用 <strong className="font-semibold">{summary.active.toLocaleString('zh-CN')}</strong> 位</span>
               <span className="inline-flex items-center gap-1.5 text-sky-700"><i className="h-1.5 w-1.5 rounded-full bg-sky-500" />邮箱已验证 <strong className="font-semibold">{summary.verified.toLocaleString('zh-CN')}</strong> 位</span>
               <span className="inline-flex items-center gap-1.5 text-amber-700"><i className="h-1.5 w-1.5 rounded-full bg-amber-500" />有效订阅 <strong className="font-semibold">{summary.subscribed.toLocaleString('zh-CN')}</strong> 位</span>
+              <span className="inline-flex items-center gap-1.5 text-violet-700"><i className="h-1.5 w-1.5 rounded-full bg-violet-500" />近30天活跃 <strong className="font-semibold">{summary.activeLast30Days.toLocaleString('zh-CN')}</strong> 位</span>
             </span>
           )}
       >
@@ -824,9 +930,12 @@ export default function AdminUsersPage() {
       ) : (
         <DataTable
           headers={[
+            { key: 'select', label: '选择', sortable: false, className: 'w-12' },
             { key: 'account', label: '用户', sortValue: (item) => item.email },
             { key: 'billing', label: '计费与订阅', className: 'min-w-[180px]', sortValue: (item) => subscriptionActive(item) ? item.subscription?.planName || item.subscription?.tier || '订阅' : '余额计费' },
             { key: 'balance', label: '余额', className: 'min-w-[150px] text-right', sortValue: (item) => Number(item.credits || 0) },
+            { key: 'loginIp', label: '登录 IP', className: 'min-w-[140px]', sortValue: (item) => item.lastLoginIp || '' },
+            { key: 'apiIp', label: 'Key 调用 IP', className: 'min-w-[140px]', sortValue: (item) => item.lastApiIp || '' },
             { key: 'created', label: '注册时间', sortValue: (item) => Date.parse(item.createdAt || '') || 0 },
             { key: 'actions', label: '操作', sortable: false, className: 'text-right' },
           ]}
@@ -859,47 +968,60 @@ export default function AdminUsersPage() {
                   { value: 'disabled', label: '已停用' },
                 ]}
               />
+              <AppSelect
+                compact
+                value={activityFilter}
+                onValueChange={(value) => { setActivityFilter(value); resetPage(); }}
+                ariaLabel="活跃状态筛选"
+                options={[
+                  { value: 'all', label: '全部活跃状态' },
+                  { value: 'active', label: '近30天活跃' },
+                  { value: 'inactive', label: '近30天非活跃' },
+                ]}
+              />
+              <label className="inline-flex h-8 items-center gap-1.5 rounded-md border border-[#DCE4DF] bg-white px-2.5 text-[11px] font-semibold text-zinc-600">
+                <SelectionCheckbox checked={allCurrentUsersSelected} indeterminate={someCurrentUsersSelected} onChange={toggleCurrentPageSelection} ariaLabel="全选当前页用户" className="user-selection-checkbox--small" />
+                全选本页
+              </label>
+              {selectedUserIds.length > 0 && <button type="button" onClick={() => setBulkDeleteOpen(true)} disabled={saving} className="inline-flex h-8 items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-2.5 text-[11px] font-semibold text-red-700 hover:border-red-300 hover:bg-red-100 disabled:opacity-50"><Trash2 className="h-3.5 w-3.5" />删除选中 {selectedUserIds.length}</button>}
               {searching || refreshing ? <span className="inline-flex items-center gap-1 text-[11px] text-zinc-400"><Loader2 className="h-3 w-3 animate-spin" />{searching ? '正在搜索' : '正在更新'}</span> : <span className="text-[11px] text-zinc-400">共 {total.toLocaleString('zh-CN')} 条</span>}
             </>
           )}
           currentPage={Math.min(page, totalPages)}
           totalPages={totalPages}
           totalItems={total}
-          onPageChange={(nextPage) => setPage(nextPage)}
+          onPageChange={(nextPage) => { setSelectedUserIds([]); setPage(nextPage); }}
           paginationLoading={refreshing}
           emptyState={<EmptyState title="暂无用户" description="调整筛选条件或创建一个 API 客户。" icon={UserRoundCog} />}
           renderRow={(user) => (
-            <tr key={user.id} className="hover:bg-[#FAFBFA]">
-              <td className="px-4 py-3.5">
-                <div className="flex max-w-[260px] items-center gap-2">
-                  <strong className="truncate font-medium">{user.email}</strong>
-                  {user.role === 'admin' && <span className="shrink-0 rounded border border-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500">管理员</span>}
-                </div>
-                <small className="mt-0.5 block max-w-[260px] truncate font-mono text-[10px] text-zinc-400">{user.id}</small>
-                <div className="mt-1.5 flex items-center gap-3 text-[10px]">
-                  <span className={`inline-flex items-center gap-1 ${user.status === 'active' ? 'text-emerald-700' : 'text-zinc-500'}`}><i className={`h-1.5 w-1.5 rounded-full ${user.status === 'active' ? 'bg-emerald-500' : 'bg-zinc-400'}`} />{user.status === 'active' ? '已启用' : '已停用'}</span>
-                  <span className={user.emailVerifiedAt ? 'text-zinc-500' : 'text-amber-700'} title={user.emailVerifiedAt ? `验证时间：${formatDate(user.emailVerifiedAt)}` : undefined}>{user.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证'}</span>
-                </div>
-              </td>
-              <td className="px-4 py-3.5 align-middle"><BillingSummary user={user} /></td>
-              <td className="px-4 py-3.5 text-right align-middle">
-                <button type="button" onClick={() => openBalance(user)} className="inline-flex items-center gap-1 whitespace-nowrap font-mono text-[11px] font-semibold text-[#047857] hover:underline" title={`修改 ${user.email} 的余额`} aria-label={`修改 ${user.email} 的余额`}>
-                  <span>{formatCNY(Number(user.credits || 0))}</span><Pencil className="h-3 w-3" /><span className="font-sans text-[10px]">修改</span>
+            <tr key={user.id} className={`group whitespace-nowrap transition-colors ${selectedUserIds.includes(user.id) ? 'bg-[#F2FBF5]' : 'hover:bg-[#FBFEFC]'}`}>
+              <td className="w-12 px-4 py-4 align-middle"><SelectionCheckbox checked={selectedUserIds.includes(user.id)} disabled={user.role === 'admin'} onChange={() => toggleUserSelection(user.id)} ariaLabel={`选择 ${user.email}`} /></td>
+              <td className="min-w-[280px] px-4 py-4 align-middle"><UserIdentity user={user} /></td>
+              <td className="px-4 py-4 align-middle"><BillingSummary user={user} /></td>
+              <td className="px-4 py-4 text-right align-middle">
+                  <button type="button" onClick={() => openBalance(user)} className="group/balance inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-[#DDEEE3] bg-[#FBFDFC] px-2.5 py-2 text-right transition-colors hover:border-[#8AD9A8] hover:bg-[#F1FBF5]" title={`修改 ${user.email} 的余额`} aria-label={`修改 ${user.email} 的余额`}>
+                  <span className="text-[10px] font-semibold text-[#829087]">账户余额</span>
+                  <span className="inline-flex items-center gap-1.5 font-mono text-[12px] font-bold text-[#087443]"><strong>{formatCNY(Number(user.credits || 0))}</strong><Pencil className="h-3 w-3 opacity-60 transition-opacity group-hover/balance:opacity-100" /></span>
                 </button>
               </td>
-              <td className="whitespace-nowrap px-4 py-3.5 text-zinc-500">{formatDate(user.createdAt || '')}</td>
-              <td className="px-4 py-3.5">{rowActions(user)}</td>
+              <td className="px-4 py-4 align-middle"><code className="inline-flex max-w-[140px] truncate rounded-md border border-[#E5ECE7] bg-[#FAFCFB] px-2 py-1 font-mono text-[10px] text-[#617169]" title={user.lastLoginIp || '暂无登录记录'}>{user.lastLoginIp || '-'}</code></td>
+              <td className="px-4 py-4 align-middle"><code className="inline-flex max-w-[140px] truncate rounded-md border border-[#E5ECE7] bg-[#FAFCFB] px-2 py-1 font-mono text-[10px] text-[#617169]" title={user.lastApiIp || '暂无 Key 调用记录'}>{user.lastApiIp || '-'}</code></td>
+              <td className="whitespace-nowrap px-4 py-4 align-middle text-[11px] text-[#829087]">{formatDate(user.createdAt || '')}</td>
+              <td className="px-4 py-4 align-middle">{rowActions(user)}</td>
             </tr>
           )}
           renderMobileItem={(user) => (
-            <article key={user.id} className="rounded-md border border-[#DCE4DF] bg-white p-3.5">
+            <article key={user.id} className={`rounded-xl border p-3.5 shadow-[0_2px_12px_rgba(28,72,46,0.04)] transition-colors ${selectedUserIds.includes(user.id) ? 'border-[#8AD9A8] bg-[#F4FCF6]' : 'border-[#DCE8DF] bg-white'}`}>
               <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0"><div className="flex items-center gap-2"><strong className="truncate text-sm">{user.email}</strong>{user.role === 'admin' && <span className="rounded border border-zinc-200 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-500">管理员</span>}</div><small className="block truncate font-mono text-[10px] text-zinc-400">{user.id}</small></div>
-                <span className={`mt-0.5 inline-flex shrink-0 items-center gap-1 text-[10px] font-semibold ${user.status === 'active' ? 'text-emerald-700' : 'text-zinc-500'}`}><i className={`h-1.5 w-1.5 rounded-full ${user.status === 'active' ? 'bg-emerald-500' : 'bg-zinc-400'}`} />{user.status === 'active' ? '已启用' : '已停用'}</span>
+                <div className="flex min-w-0 items-center gap-2"><SelectionCheckbox checked={selectedUserIds.includes(user.id)} disabled={user.role === 'admin'} onChange={() => toggleUserSelection(user.id)} ariaLabel={`选择 ${user.email}`} /><UserIdentity user={user} /></div>
               </div>
               <div className="mt-3 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 border-y border-[#EDF0EE] py-3">
                 <BillingSummary user={user} />
-                <span className="text-right"><small className="block text-[10px] text-zinc-400">账户余额</small><button type="button" onClick={() => openBalance(user)} title={`修改 ${user.email} 的余额`} aria-label={`修改 ${user.email} 的余额`} className="mt-0.5 inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-[#047857]"><strong>{formatCNY(Number(user.credits || 0))}</strong><Pencil className="h-3 w-3" /></button></span>
+                <button type="button" onClick={() => openBalance(user)} title={`修改 ${user.email} 的余额`} aria-label={`修改 ${user.email} 的余额`} className="inline-flex items-center gap-2 whitespace-nowrap rounded-lg border border-[#DDEEE3] bg-[#FBFDFC] px-2.5 py-2 text-right"><span className="text-[10px] font-semibold text-[#829087]">账户余额</span><span className="inline-flex items-center gap-1.5 font-mono text-[12px] font-bold text-[#087443]"><strong>{formatCNY(Number(user.credits || 0))}</strong><Pencil className="h-3 w-3 opacity-60" /></span></button>
+              </div>
+              <div className="mt-3 grid grid-cols-2 gap-3 border-b border-[#EDF0EE] pb-3">
+                <span className="min-w-0"><small className="block text-[10px] font-semibold text-[#829087]">登录 IP</small><code className="mt-1 block truncate rounded-md border border-[#E5ECE7] bg-[#FAFCFB] px-2 py-1 font-mono text-[10px] text-[#617169]" title={user.lastLoginIp || '暂无登录记录'}>{user.lastLoginIp || '-'}</code></span>
+                <span className="min-w-0"><small className="block text-[10px] font-semibold text-[#829087]">Key 调用 IP</small><code className="mt-1 block truncate rounded-md border border-[#E5ECE7] bg-[#FAFCFB] px-2 py-1 font-mono text-[10px] text-[#617169]" title={user.lastApiIp || '暂无 Key 调用记录'}>{user.lastApiIp || '-'}</code></span>
               </div>
               <div className="mt-2 flex items-center justify-between gap-3"><small className={`text-[10px] ${user.emailVerifiedAt ? 'text-zinc-400' : 'text-amber-700'}`}>{user.emailVerifiedAt ? '邮箱已验证' : '邮箱未验证'}</small><small className="text-[10px] text-zinc-400">{formatDate(user.createdAt || '')}</small></div>
               <div className="mt-2 border-t border-[#EDF0EE] pt-2">{rowActions(user)}</div>
@@ -994,18 +1116,20 @@ export default function AdminUsersPage() {
               <button type="button" onClick={() => setBalanceUser(null)} title="关闭" className="rounded p-1 text-zinc-500 hover:bg-zinc-100"><X className="h-4 w-4" /></button>
             </div>
             <div className="space-y-4 p-5">
-              <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 border-y border-[#EDF0EE] bg-[#FAFBFA] px-4 py-3">
-                <span><small className="block text-[10px] font-semibold text-zinc-400">当前余额</small><strong className="mt-1 block font-mono text-sm text-zinc-700">{formatCNY(currentBalance)}</strong></span>
-                <ArrowRight className="h-4 w-4 text-zinc-300" />
-                <span className="text-right"><small className="block text-[10px] font-semibold text-zinc-400">调整后</small><strong className={`mt-1 block font-mono text-sm ${balanceDelta < 0 ? 'text-red-600' : 'text-[#047857]'}`}>{Number.isFinite(nextBalance) ? formatCNY(nextBalance) : '--'}</strong></span>
+              <div className="grid grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-2 border-y border-[#EDF0EE] bg-[#FAFBFA] px-4 py-3">
+                <span><small className="block text-[10px] font-semibold text-zinc-400">原本余额</small><strong className="mt-1 block font-mono text-sm text-zinc-700">{formatCNY(currentBalance)}</strong></span>
+                <span className="text-sm font-semibold text-zinc-300">+</span>
+                <span><small className="block text-[10px] font-semibold text-zinc-400">本次修改</small><strong className={`mt-1 block font-mono text-sm ${adjustmentAmount < 0 ? 'text-red-600' : 'text-[#047857]'}`}>{Number.isFinite(adjustmentAmount) && adjustmentAmount !== 0 ? `${adjustmentAmount > 0 ? '+' : '-'}${formatCNY(Math.abs(adjustmentAmount))}` : '--'}</strong></span>
+                <span className="text-sm font-semibold text-zinc-300">=</span>
+                <span className="text-right"><small className="block text-[10px] font-semibold text-zinc-400">总余额</small><strong className={`mt-1 block font-mono text-sm ${adjustmentAmount < 0 ? 'text-red-600' : 'text-[#047857]'}`}>{Number.isFinite(nextBalance) ? formatCNY(nextBalance) : '--'}</strong></span>
               </div>
-              <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">调整后余额</span><input required autoFocus min={0} max={99999999.9999} step={0.0001} type="number" value={balanceValue} onChange={(event) => setBalanceValue(event.target.value)} className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /></label>
-              <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">调整备注</span><textarea required maxLength={120} rows={3} value={balanceRemark} onChange={(event) => setBalanceRemark(event.target.value)} placeholder="例如：活动补发、退款或余额修正" className="w-full resize-none rounded-md border border-[#DCE4DF] px-3 py-2 text-xs leading-5 outline-none focus:border-[#12B76A]" /><small className="mt-1 block text-right font-mono text-[10px] text-zinc-400">{balanceRemark.length}/120</small></label>
-              {Number.isFinite(nextBalance) && Math.abs(balanceDelta) >= 0.00005 && (
-                <div className={`flex items-center justify-between border-t border-[#EDF0EE] pt-3 text-xs ${balanceDelta < 0 ? 'text-red-600' : 'text-[#047857]'}`}><span>{balanceDelta < 0 ? '本次扣减' : '本次增加'}</span><strong className="font-mono">{formatCNY(Math.abs(balanceDelta))}</strong></div>
+              <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">调整金额</span><input required autoFocus step={0.0001} type="number" value={balanceValue} onChange={(event) => setBalanceValue(event.target.value)} placeholder="例如：10 或 -10" className="w-full rounded-md border border-[#DCE4DF] px-3 py-2 font-mono text-xs outline-none focus:border-[#12B76A]" /><small className="mt-1 block text-[10px] text-zinc-400">正数增加余额，负数扣减余额</small></label>
+              <label><span className="mb-1 block text-[11px] font-semibold text-zinc-500">调整备注 <span className="font-normal text-zinc-400">（可选）</span></span><textarea maxLength={120} rows={3} value={balanceRemark} onChange={(event) => setBalanceRemark(event.target.value)} placeholder="例如：活动补发、退款或余额修正" className="w-full resize-none rounded-md border border-[#DCE4DF] px-3 py-2 text-xs leading-5 outline-none focus:border-[#12B76A]" /><small className="mt-1 block text-right font-mono text-[10px] text-zinc-400">{balanceRemark.length}/120</small></label>
+              {Number.isFinite(nextBalance) && Math.abs(adjustmentAmount) >= 0.00005 && (
+                <div className={`flex items-center justify-between border-t border-[#EDF0EE] pt-3 text-xs ${adjustmentAmount < 0 ? 'text-red-600' : 'text-[#047857]'}`}><span>{adjustmentAmount < 0 ? '本次扣减' : '本次增加'}</span><strong className="font-mono">{formatCNY(Math.abs(adjustmentAmount))}</strong></div>
               )}
             </div>
-            <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setBalanceUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving || !balanceValue.trim() || !balanceRemark.trim() || !Number.isFinite(nextBalance) || nextBalance < 0 || nextBalance > 99999999.9999 || Math.abs(balanceDelta) < 0.00005} className="inline-flex h-8 items-center gap-2 rounded-md bg-[#047857] px-4 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}确认修改</button></div>
+            <div className="flex justify-end gap-2 border-t border-[#DCE4DF] bg-[#F8FAF8] px-5 py-3"><button type="button" onClick={() => setBalanceUser(null)} className="h-8 rounded-md border border-[#DCE4DF] bg-white px-4 text-xs font-semibold">取消</button><button type="submit" disabled={saving || !balanceValue.trim() || !Number.isFinite(nextBalance) || nextBalance < 0 || nextBalance > 99999999.9999 || Math.abs(adjustmentAmount) < 0.00005} className="inline-flex items-center gap-2 rounded-md bg-[#047857] px-4 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving && <Loader2 className="h-3.5 w-3.5 animate-spin" />}确认调整</button></div>
           </form>
         </div>
       )}
@@ -1060,6 +1184,15 @@ export default function AdminUsersPage() {
         title="删除用户"
         description={`确定删除 ${deleteCandidate?.email || '该用户'} 吗？关联历史数据将按数据库现有约束处理。`}
         confirmText="删除"
+        type="danger"
+      />
+      <ConfirmDialog
+        isOpen={bulkDeleteOpen}
+        onClose={() => setBulkDeleteOpen(false)}
+        onConfirm={() => void bulkDeleteUsers()}
+        title="批量删除用户"
+        description={`确定删除选中的 ${selectedUserIds.length} 个用户吗？删除后将无法登录，关联历史数据将按数据库现有约束处理。`}
+        confirmText="批量删除"
         type="danger"
       />
     </div>

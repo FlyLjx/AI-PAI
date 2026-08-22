@@ -37,11 +37,13 @@ export function TrendDateRangePicker({
   endDate,
   maxDate,
   onChange,
+  ariaLabel = '选择调用趋势日期范围',
 }: {
   startDate: string;
   endDate: string;
   maxDate: string;
   onChange: (startDate: string, endDate: string) => void;
+  ariaLabel?: string;
 }) {
   const dialogId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -137,7 +139,7 @@ export function TrendDateRangePicker({
             style={{ left: position.left, top: position.top, width: position.width }}
             role="dialog"
             aria-modal="true"
-            aria-label="选择调用趋势日期范围"
+            aria-label={ariaLabel}
             tabIndex={-1}
           >
             <div className="trend-date-picker">

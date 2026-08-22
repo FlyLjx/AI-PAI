@@ -11,19 +11,22 @@ var (
 )
 
 type User struct {
-	ID              string
-	Email           string
-	InviteCode      string
-	InvitedBy       string
-	InvitedIP       string
-	PasswordHash    string
-	Credits         float64
-	Role            string
-	Status          string
-	SyncSize        bool
-	EmailVerifiedAt *time.Time
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
+	ID               string
+	Email            string
+	InviteCode       string
+	InvitedBy        string
+	InvitedIP        string
+	PasswordHash     string
+	Credits          float64
+	Role             string
+	Status           string
+	SyncSize         bool
+	LastLoginIP      string
+	LastAPIIP        string
+	ActiveLast30Days bool
+	EmailVerifiedAt  *time.Time
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
 }
 
 type CreditLog struct {
@@ -37,32 +40,37 @@ type CreditLog struct {
 }
 
 type PublicUser struct {
-	ID              string  `json:"id"`
-	Email           string  `json:"email"`
-	Credits         float64 `json:"credits"`
-	InviteCode      string  `json:"inviteCode"`
-	Role            string  `json:"role"`
-	Status          string  `json:"status"`
-	SyncSize        bool    `json:"syncSize"`
-	EmailVerifiedAt *string `json:"emailVerifiedAt"`
-	CreatedAt       string  `json:"createdAt"`
-	UpdatedAt       string  `json:"updatedAt"`
-	Subscription    any     `json:"subscription"`
+	ID               string  `json:"id"`
+	Email            string  `json:"email"`
+	Credits          float64 `json:"credits"`
+	InviteCode       string  `json:"inviteCode"`
+	Role             string  `json:"role"`
+	Status           string  `json:"status"`
+	SyncSize         bool    `json:"syncSize"`
+	LastLoginIP      string  `json:"lastLoginIp,omitempty"`
+	LastAPIIP        string  `json:"lastApiIp,omitempty"`
+	ActiveLast30Days bool    `json:"activeLast30Days,omitempty"`
+	EmailVerifiedAt  *string `json:"emailVerifiedAt"`
+	CreatedAt        string  `json:"createdAt"`
+	UpdatedAt        string  `json:"updatedAt"`
+	Subscription     any     `json:"subscription"`
 }
 
 type AdminUserPageInput struct {
 	Keyword  string
 	Status   string
 	Billing  string
+	Activity string
 	Page     int
 	PageSize int
 }
 
 type AdminUserPageStats struct {
-	Total      int `json:"total"`
-	Active     int `json:"active"`
-	Verified   int `json:"verified"`
-	Subscribed int `json:"subscribed"`
+	Total            int `json:"total"`
+	Active           int `json:"active"`
+	Verified         int `json:"verified"`
+	Subscribed       int `json:"subscribed"`
+	ActiveLast30Days int `json:"activeLast30Days"`
 }
 
 func RequireEmailVerifiedForAPIKey(user *User) error {
@@ -79,16 +87,19 @@ func ToPublicUser(user *User) PublicUser {
 		verifiedAt = &value
 	}
 	return PublicUser{
-		ID:              user.ID,
-		Email:           user.Email,
-		Credits:         user.Credits,
-		InviteCode:      user.InviteCode,
-		Role:            user.Role,
-		Status:          user.Status,
-		SyncSize:        user.SyncSize,
-		EmailVerifiedAt: verifiedAt,
-		CreatedAt:       user.CreatedAt.Format(time.RFC3339),
-		UpdatedAt:       user.UpdatedAt.Format(time.RFC3339),
-		Subscription:    nil,
+		ID:               user.ID,
+		Email:            user.Email,
+		Credits:          user.Credits,
+		InviteCode:       user.InviteCode,
+		Role:             user.Role,
+		Status:           user.Status,
+		SyncSize:         user.SyncSize,
+		LastLoginIP:      user.LastLoginIP,
+		LastAPIIP:        user.LastAPIIP,
+		ActiveLast30Days: user.ActiveLast30Days,
+		EmailVerifiedAt:  verifiedAt,
+		CreatedAt:        user.CreatedAt.Format(time.RFC3339),
+		UpdatedAt:        user.UpdatedAt.Format(time.RFC3339),
+		Subscription:     nil,
 	}
 }
